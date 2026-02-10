@@ -6,10 +6,13 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.session import get_db_session
+
+_bearer_scheme = HTTPBearer()
 
 
 async def db_session(session: AsyncSession = Depends(get_db_session)) -> AsyncGenerator[AsyncSession, None]:
@@ -18,17 +21,11 @@ async def db_session(session: AsyncSession = Depends(get_db_session)) -> AsyncGe
 
 
 async def get_current_user_id(
-    authorization: str = Header(..., alias="Authorization"),
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
 ) -> str:
     """
     Extract and verify the Bearer token from the Authorization header.
     Returns the authenticated user_id (UUID string).
     """
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Bearer token",
-        )
-    token = authorization[7:]
     from api.auth import verify_token
-    return verify_token(token)
+    return verify_token(credentials.credentials)
