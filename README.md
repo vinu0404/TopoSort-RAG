@@ -4,6 +4,24 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 
 ### Dynamic routing of agents with TopoSort without using any frameworks like LangChain or LangGraph
 
+### Frontend:
+- http://127.0.0.1:8000/
+![Login](images/frontend_login.png)
+![Register](images/frontend_register.png)
+![Chat](images/frontend-chat.png)
+
+
+- http://localhost:8080/dashboard.html  
+```
+run frontend/dashboard.py then open dashboard.html
+```
+![Database Dashboard](images/dashboard.png)
+
+
+### Backend:
+- http://localhost:8000/docs#/
+![Backend Screenshot](images/backend.png)
+
 ---
 
 ## System Architecture

@@ -810,13 +810,18 @@ function finalizeAssistant(msgEl, sources) {
     const block = sourcesMatch[1];
     const lines = block.trim().split('\n');
     for (const line of lines) {
-      const m = line.match(/^\[(\d+)\]\s*(.+?)(?:\s*\((.+?)\))?\s*$/);
+      // FIX: Use a greedy match for the URL to consume the full URL including
+      // any internal parentheses, then strip only the final closing ')'.
+      // Pattern: [N] title (url)  — the url may itself contain '(' and ')'
+      const m = line.match(/^\[(\d+)\]\s*(.+?)(?:\s*\((.+)\))?\s*$/);
       if (m) {
         const idx = parseInt(m[1]) - 1;
+        // Strip any accidental trailing ')' or whitespace from the captured URL
+        const rawUrl = m[3] ? m[3].replace(/\)+$/, '').trim() : null;
         if (!sources[idx]) {
-          sources[idx] = { source: m[2].trim(), url: m[3] || null };
-        } else if (!sources[idx].url && m[3]) {
-          sources[idx].url = m[3];
+          sources[idx] = { source: m[2].trim(), url: rawUrl };
+        } else if (!sources[idx].url && rawUrl) {
+          sources[idx].url = rawUrl;
         }
       }
     }
