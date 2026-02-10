@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent Registry — consumed by MasterAgent to know what agents are available
+# ─────────────────────────────────────────────────────────────────────────────
+
+agents:
+  rag_agent:
+    description: "Retrieves information from user's document collection"
+    capabilities:
+      - document_search
+      - semantic_retrieval
+      - question_answering
+    tools:
+      - vector_search
+      - hybrid_search
+      - rerank_chunks
+    typical_use_cases:
+      - "Find information in uploaded documents"
+      - "Answer questions based on user's files"
+      - "Search company knowledge base"
+    default_timeout: 30
+    max_retries: 2
+
+  code_agent:
+    description: "Generates and executes code"
+    capabilities:
+      - code_generation
+      - code_execution
+      - data_analysis
+    tools:
+      - execute_code
+      - code_linter
+    typical_use_cases:
+      - "Write Python scripts"
+      - "Analyze data and create visualizations"
+      - "Perform calculations"
+    default_timeout: 60
+    max_retries: 3
+
+  mail_agent:
+    description: "Gmail integration — search inbox/sent/drafts, send emails, draft emails, reply to threads"
+    capabilities:
+      - email_search
+      - email_composition
+      - email_sending
+      - email_reply
+      - draft_management
+    tools:
+      - search_messages
+      - search_sent_messages
+      - search_drafts
+      - send_email
+      - draft_email
+      - get_message_by_id
+      - reply_to_message
+    typical_use_cases:
+      - "Find emails from a specific person"
+      - "Search inbox for emails about a topic"
+      - "Check sent emails from last week"
+      - "Search draft messages"
+      - "Send an email to someone"
+      - "Draft a professional email"
+      - "Reply to an email thread"
+      - "Read the full content of an email"
+    default_timeout: 30
+    max_retries: 2
+
+  web_search_agent:
+    description: "Tavily-powered web search — fast general search, news search, deep research, and URL content extraction"
+    capabilities:
+      - web_search
+      - news_search
+      - deep_research
+      - url_fetching
+      - fact_checking
+    tools:
+      - web_search
+      - web_search_news
+      - web_search_deep
+      - fetch_url
+    typical_use_cases:
+      - "Find current information online"
+      - "Research topics not in uploaded documents"
+      - "Get recent news about a topic"
+      - "Deep-dive into a technical subject"
+      - "Verify facts or claims"
+      - "Extract content from a specific URL"
+    default_timeout: 30
+    max_retries: 2

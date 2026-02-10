@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MRAG</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #fff;
+    color: #000;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Auth ──────────────────────────────────────────────── */
+  .auth-overlay {
+    position: fixed; inset: 0;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .auth-overlay.hidden { display: none; }
+  .auth-card {
+    width: 320px;
+    max-width: 90vw;
+  }
+  .auth-card h2 {
+    font-size: 1.5rem;
+    margin-bottom: 24px;
+    font-weight: 600;
+  }
+  .auth-tabs {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .auth-tab {
+    padding: 8px 0;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 0.9rem;
+    cursor: pointer;
+    color: #999;
+  }
+  .auth-tab.active {
+    color: #000;
+    border-bottom-color: #000;
+  }
+  .auth-field {
+    margin-bottom: 16px;
+  }
+  .auth-field label {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 6px;
+    color: #666;
+  }
+  .auth-field input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    outline: none;
+  }
+  .auth-field input:focus {
+    border-color: #000;
+  }
+  .auth-btn {
+    width: 100%;
+    padding: 12px;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .auth-btn:hover { opacity: 0.8; }
+  .auth-btn:disabled { opacity: 0.3; }
+  .auth-error {
+    color: #ff3b30;
+    font-size: 0.85rem;
+    margin-top: 12px;
+    min-height: 20px;
+  }
+
+  /* ── Header ────────────────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+  .header h1 {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .user-info {
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .btn-logout {
+    background: none;
+    border: none;
+    font-size: 0.85rem;
+    color: #666;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .btn-logout:hover { color: #000; }
+  
+  .health-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: background 0.3s;
+  }
+  .health-dot.ok {
+    background: #4ade80;
+  }
+  .health-dot.err {
+    background: #ff3b30;
+  }
+
+  /* ── Layout ────────────────────────────────────────────── */
+  .container {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ───────────────────────────────────────────── */
+  .sidebar {
+    width: 240px;
+    border-right: 1px solid #e0e0e0;
+    padding: 24px;
+    overflow-y: auto;
+  }
+  .sidebar h3 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #999;
+    margin-bottom: 12px;
+  }
+  .upload-zone {
+    border: 1px dashed #ccc;
+    border-radius: 4px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    margin-bottom: 24px;
+    position: relative;
+  }
+  .upload-zone:hover {
+    border-color: #000;
+    background: #fafafa;
+  }
+  .upload-zone input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .upload-zone p {
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .upload-status {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 8px;
+    min-height: 18px;
+  }
+
+  /* ── Pipeline ──────────────────────────────────────────── */
+  .pipeline-section {
+    margin-top: 24px;
+    display: none;
+  }
+  .pipeline-section.visible {
+    display: block;
+  }
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pipeline-agent {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .pipeline-agent .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    flex-shrink: 0;
+  }
+  .pipeline-agent .dot.active {
+    background: #000;
+    animation: pulse 1s infinite;
+  }
+  .pipeline-agent .dot.done {
+    background: #4ade80;
+    animation: none;
+  }
+  .pipeline-agent .dot.error {
+    background: #ff3b30;
+    animation: none;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Info section ──────────────────────────────────────── */
+  .info-section {
+    margin-top: 24px;
+  }
+  .info-section p {
+    font-size: 0.8rem;
+    color: #666;
+    line-height: 1.6;
+    margin-bottom: 8px;
+  }
+  .info-section ul {
+    font-size: 0.8rem;
+    color: #666;
+    line-height: 1.6;
+    padding-left: 20px;
+  }
+
+  /* ── Chat ──────────────────────────────────────────────── */
+  .chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .msg {
+    margin-bottom: 16px;
+    max-width: 600px;
+  }
+  .msg.user {
+    margin-left: auto;
+  }
+  .msg-label {
+    font-size: 0.75rem;
+    color: #999;
+    margin-bottom: 4px;
+  }
+  .msg-content {
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+  .msg.user .msg-content {
+    background: #000;
+    color: #fff;
+  }
+  .msg.assistant .msg-content {
+    background: #f5f5f5;
+    color: #000;
+  }
+  .msg.system {
+    text-align: center;
+    color: #999;
+    font-size: 0.85rem;
+  }
+  
+  .inline-ref {
+    color: #666;
+    cursor: pointer;
+    text-decoration: none;
+    font-weight: 500;
+    border-bottom: 1px dotted #999;
+  }
+  .inline-ref:hover {
+    color: #000;
+    border-bottom-color: #000;
+  }
+
+  /* ── Welcome ───────────────────────────────────────────── */
+  .welcome {
+    text-align: center;
+    padding: 48px 24px;
+    color: #999;
+  }
+  .welcome h2 {
+    font-size: 1.5rem;
+    color: #000;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .welcome p {
+    font-size: 0.9rem;
+    margin-bottom: 24px;
+  }
+  .examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+  .example {
+    padding: 8px 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: #666;
+  }
+  .example:hover {
+    border-color: #000;
+    color: #000;
+  }
+
+  /* ── Input ─────────────────────────────────────────────── */
+  .input-area {
+    padding: 16px 24px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+  }
+  .input-area textarea {
+    flex: 1;
+    resize: none;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    outline: none;
+    min-height: 44px;
+    max-height: 120px;
+  }
+  .input-area textarea:focus {
+    border-color: #000;
+  }
+  .btn-send {
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 10px 20px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-send:hover { opacity: 0.8; }
+  .btn-send:disabled { opacity: 0.3; }
+
+  .typing {
+    display: none;
+    gap: 4px;
+    padding: 12px 16px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    width: fit-content;
+    margin-bottom: 16px;
+  }
+  .typing.visible { display: flex; }
+  .typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #999;
+    animation: bounce 1.4s infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-4px); }
+  }
+
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Auth ────────────────────────────────────────────────── -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card">
+    <h2>MRAG</h2>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="switchTab('login')">Login</button>
+      <button class="auth-tab" id="tabRegister" onclick="switchTab('register')">Register</button>
+    </div>
+
+    <div id="loginForm">
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com">
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="Enter password">
+      </div>
+      <button class="auth-btn" id="loginBtn" onclick="doLogin()">Login</button>
+    </div>
+
+    <div id="registerForm" style="display:none;">
+      <div class="auth-field">
+        <label>Username</label>
+        <input type="text" id="regUsername" placeholder="Your name">
+      </div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input type="email" id="regEmail" placeholder="you@example.com">
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input type="password" id="regPassword" placeholder="Min 4 characters">
+      </div>
+      <button class="auth-btn" id="regBtn" onclick="doRegister()">Create Account</button>
+    </div>
+
+    <div class="auth-error" id="authError"></div>
+  </div>
+</div>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<div class="header">
+  <h1>MRAG</h1>
+  <div class="header-right">
+    <span class="user-info" id="userName">User</span>
+    <button class="btn-logout" onclick="doLogout()">Logout</button>
+    <div class="health-dot" id="healthDot" title="Server health"></div>
+  </div>
+</div>
+
+<!-- ── Main ────────────────────────────────────────────────── -->
+<div class="container">
+  <aside class="sidebar">
+    <h3>Upload</h3>
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json">
+      <p>Drop file or click</p>
+    </div>
+    <div class="upload-status" id="uploadStatus"></div>
+
+    <div class="pipeline-section" id="pipelineSection">
+      <h3>Agent Pipeline</h3>
+      <div class="pipeline" id="pipeline"></div>
+    </div>
+
+    <div class="info-section">
+      <h3>Info</h3>
+      <p><strong>Agents:</strong> RAG, Code, Mail, Web Search</p>
+      <p><strong>Features:</strong></p>
+      <ul>
+        <li>Streaming responses</li>
+        <li>Document upload (RAG)</li>
+        <li>Long-term memory</li>
+        <li>Multi-agent orchestration</li>
+      </ul>
+    </div>
+  </aside>
+
+  <main class="chat">
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <h2>Multi-Agentic RAG</h2>
+        <p>Ask anything</p>
+        <div class="examples">
+          <div class="example" onclick="fillQuery('What was our Q3 revenue?')">Q3 revenue</div>
+          <div class="example" onclick="fillQuery('Search for AI trends')">AI trends</div>
+          <div class="example" onclick="fillQuery('Write Python code')">Code</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="typing" id="typingIndicator">
+      <span></span><span></span><span></span>
+    </div>
+
+    <div class="input-area">
+      <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
+      <button class="btn-send" id="sendBtn" onclick="sendQuery()">Send</button>
+    </div>
+  </main>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────
+const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
+const API = `${BASE}/api/v1`;
+
+let currentUser = null;
+let currentSessionId = null;
+let isProcessing = false;
+
+const authOverlay = document.getElementById('authOverlay');
+const authError = document.getElementById('authError');
+const messagesEl = document.getElementById('messages');
+const welcomeEl = document.getElementById('welcome');
+const queryInput = document.getElementById('queryInput');
+const sendBtn = document.getElementById('sendBtn');
+const userNameEl = document.getElementById('userName');
+const healthDot = document.getElementById('healthDot');
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const uploadStatus = document.getElementById('uploadStatus');
+const pipelineSection = document.getElementById('pipelineSection');
+const pipelineEl = document.getElementById('pipeline');
+const typingInd = document.getElementById('typingIndicator');
+
+// ── Auth ────────────────────────────────────────────────────
+function getStoredAuth() {
+  try {
+    const raw = localStorage.getItem('mrag_auth');
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function setStoredAuth(data) {
+  localStorage.setItem('mrag_auth', JSON.stringify(data));
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem('mrag_auth');
+}
+
+function authHeaders() {
+  if (!currentUser) return {};
+  return { 'Authorization': `Bearer ${currentUser.token}` };
+}
+
+function switchTab(tab) {
+  document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+  document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
+  document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+  authError.textContent = '';
+}
+
+async function doRegister() {
+  const username = document.getElementById('regUsername').value.trim();
+  const email = document.getElementById('regEmail').value.trim();
+  const password = document.getElementById('regPassword').value;
+  authError.textContent = '';
+
+  if (!username || !email || !password) {
+    authError.textContent = 'All fields required';
+    return;
+  }
+  if (password.length < 4) {
+    authError.textContent = 'Password too short';
+    return;
+  }
+
+  document.getElementById('regBtn').disabled = true;
+  try {
+    const r = await fetch(`${API}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      authError.textContent = data.detail || 'Registration failed';
+      return;
+    }
+    onLoginSuccess(data);
+  } catch (err) {
+    authError.textContent = `Error: ${err.message}`;
+  } finally {
+    document.getElementById('regBtn').disabled = false;
+  }
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  authError.textContent = '';
+
+  if (!email || !password) {
+    authError.textContent = 'Email and password required';
+    return;
+  }
+
+  document.getElementById('loginBtn').disabled = true;
+  try {
+    const r = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      authError.textContent = data.detail || 'Login failed';
+      return;
+    }
+    onLoginSuccess(data);
+  } catch (err) {
+    authError.textContent = `Error: ${err.message}`;
+  } finally {
+    document.getElementById('loginBtn').disabled = false;
+  }
+}
+
+function onLoginSuccess(data) {
+  currentUser = data;
+  setStoredAuth(data);
+  authOverlay.classList.add('hidden');
+  userNameEl.textContent = data.display_name || 'User';
+  currentSessionId = null; // Let backend create new session
+}
+
+function doLogout() {
+  currentUser = null;
+  currentSessionId = null;
+  clearStoredAuth();
+  authOverlay.classList.remove('hidden');
+  messagesEl.innerHTML = '';
+  messagesEl.appendChild(welcomeEl);
+  welcomeEl.style.display = '';
+}
+
+// Init
+(function() {
+  const stored = getStoredAuth();
+  if (stored && stored.token) {
+    currentUser = stored;
+    authOverlay.classList.add('hidden');
+    userNameEl.textContent = stored.display_name || 'User';
+  }
+})();
+
+document.getElementById('loginPassword').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+document.getElementById('regPassword').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doRegister();
+});
+
+// ── Health check ────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    healthDot.className = r.ok ? 'health-dot ok' : 'health-dot err';
+    healthDot.title = r.ok ? 'Server running' : 'Server error';
+  } catch {
+    healthDot.className = 'health-dot err';
+    healthDot.title = 'Server unreachable';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 15000);
+
+// ── Examples ────────────────────────────────────────────────
+function fillQuery(text) {
+  queryInput.value = text;
+  queryInput.focus();
+}
+
+// ── Pipeline ────────────────────────────────────────────────
+function showPipeline(agents) {
+  pipelineSection.classList.add('visible');
+  pipelineEl.innerHTML = agents.map(a => `
+    <div class="pipeline-agent" data-agent="${a.agent_id || a.agent_name}">
+      <div class="dot active"></div>
+      <span>${a.agent_name}</span>
+    </div>
+  `).join('');
+}
+
+function updatePipelineAgent(agentId, done) {
+  const el = pipelineEl.querySelector(`[data-agent="${agentId}"] .dot`);
+  if (el) {
+    el.classList.remove('active');
+    el.classList.add(done ? 'done' : 'error');
+  }
+}
+
+function clearPipeline() {
+  pipelineSection.classList.remove('visible');
+  pipelineEl.innerHTML = '';
+}
+
+// ── Textarea auto-resize ────────────────────────────────────
+queryInput.addEventListener('input', () => {
+  queryInput.style.height = 'auto';
+  queryInput.style.height = Math.min(queryInput.scrollHeight, 120) + 'px';
+});
+queryInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuery();
+  }
+});
+
+// ── File upload ─────────────────────────────────────────────
+uploadZone.addEventListener('dragover', (e) => e.preventDefault());
+uploadZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+});
+
+async function uploadFile(file) {
+  if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
+  uploadStatus.textContent = `Uploading ${file.name}...`;
+  const form = new FormData();
+  form.append('user_id', currentUser.user_id);
+  form.append('file', file);
+  try {
+    const r = await fetch(`${API}/documents/upload`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+    });
+    const data = await r.json();
+    if (r.ok) {
+      uploadStatus.textContent = `Uploaded: ${file.name}`;
+      addSystemMessage(`Document uploaded`);
+    } else if (r.status === 401) {
+      doLogout();
+    } else {
+      uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`;
+    }
+  } catch (err) {
+    uploadStatus.textContent = `Error: ${err.message}`;
+  }
+  fileInput.value = '';
+}
+
+// ── Messages ────────────────────────────────────────────────
+function addUserMessage(text) {
+  welcomeEl.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = `
+    <div class="msg-label">You</div>
+    <div class="msg-content">${escapeHtml(text)}</div>
+  `;
+  messagesEl.appendChild(div);
+  scrollToBottom();
+}
+
+function addSystemMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'msg system';
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  scrollToBottom();
+}
+
+function createAssistantMessage() {
+  welcomeEl.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.innerHTML = `
+    <div class="msg-label">Assistant</div>
+    <div class="msg-content"></div>
+  `;
+  messagesEl.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function appendToAssistant(msgEl, text) {
+  const content = msgEl.querySelector('.msg-content');
+  content.textContent += text;
+  scrollToBottom();
+}
+
+function finalizeAssistant(msgEl, sources) {
+  const content = msgEl.querySelector('.msg-content');
+  let rawText = content.textContent || '';
+
+  // Parse any trailing "Sources:" block
+  const sourcesMatch = rawText.match(/\n\n?Sources:\n([\s\S]*)$/);
+  if (sourcesMatch) {
+    const block = sourcesMatch[1];
+    const lines = block.trim().split('\n');
+    for (const line of lines) {
+      const m = line.match(/^\[(\d+)\]\s*(.+?)(?:\s*\((.+?)\))?\s*$/);
+      if (m) {
+        const idx = parseInt(m[1]) - 1;
+        if (!sources[idx]) {
+          sources[idx] = { source: m[2].trim(), url: m[3] || null };
+        } else if (!sources[idx].url && m[3]) {
+          sources[idx].url = m[3];
+        }
+      }
+    }
+    rawText = rawText.slice(0, sourcesMatch.index).trimEnd();
+  }
+
+  // Escape HTML and make [1], [2] etc clickable
+  const escaped = rawText
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  const withRefs = escaped.replace(/\[(\d+)\]/g, (match, num) => {
+    const idx = parseInt(num) - 1;
+    const src = sources[idx];
+    if (src && src.url) {
+      return `<a class="inline-ref" href="${src.url}" target="_blank" title="${src.source || src.url}">[${num}]</a>`;
+    }
+    return `<span class="inline-ref" title="Source ${num}">[${num}]</span>`;
+  });
+  
+  content.innerHTML = withRefs;
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Send query ──────────────────────────────────────────────
+async function sendQuery() {
+  const query = queryInput.value.trim();
+  if (!query || isProcessing) return;
+  if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
+
+  isProcessing = true;
+  sendBtn.disabled = true;
+  queryInput.value = '';
+  queryInput.style.height = 'auto';
+
+  addUserMessage(query);
+  clearPipeline();
+
+  await sendStreaming(query);
+
+  isProcessing = false;
+  sendBtn.disabled = false;
+  queryInput.focus();
+}
+
+async function sendStreaming(query) {
+  typingInd.classList.add('visible');
+  let msgEl = null;
+  let sources = [];
+
+  try {
+    const response = await fetch(`${API}/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ 
+        query, 
+        user_id: currentUser.user_id,
+        session_id: currentSessionId
+      }),
+    });
+
+    if (!response.ok) {
+      typingInd.classList.remove('visible');
+      if (response.status === 401) {
+        doLogout();
+        return;
+      }
+      const err = await response.json();
+      addSystemMessage(`Error: ${err.detail || response.statusText}`);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let eventType = null;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          const data = line.slice(6);
+          handleSSE(eventType, data);
+          eventType = null;
+        }
+      }
+    }
+
+    typingInd.classList.remove('visible');
+  } catch (err) {
+    typingInd.classList.remove('visible');
+    addSystemMessage(`Error: ${err.message}`);
+  }
+
+  function handleSSE(event, rawData) {
+    let data;
+    try { data = JSON.parse(rawData); } catch { data = rawData; }
+
+    switch (event) {
+      case 'status':
+        if (data.phase === 'planning') {
+          addSystemMessage('Planning...');
+        } else if (data.phase === 'executing') {
+          addSystemMessage('Running agents...');
+        } else if (data.phase === 'composing') {
+          typingInd.classList.remove('visible');
+          if (!msgEl) msgEl = createAssistantMessage();
+        }
+        break;
+
+      case 'plan':
+        if (data.agents) showPipeline(data.agents);
+        if (data.intent) addSystemMessage(`Intent: ${data.intent}`);
+        break;
+
+      case 'token':
+        if (!msgEl) {
+          typingInd.classList.remove('visible');
+          msgEl = createAssistantMessage();
+        }
+        appendToAssistant(msgEl, data.text || '');
+        break;
+
+      case 'agent_result':
+        updatePipelineAgent(data.agent, data.done);
+        if (data.sources && Array.isArray(data.sources)) {
+          sources.push(...data.sources);
+        }
+        break;
+
+      case 'done':
+        typingInd.classList.remove('visible');
+        if (msgEl) finalizeAssistant(msgEl, sources);
+        break;
+
+      case 'error':
+        typingInd.classList.remove('visible');
+        addSystemMessage(`Error: ${data.message || data}`);
+        break;
+    }
+  }
+}
+</script>
+</body>
+</html>
