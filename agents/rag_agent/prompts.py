@@ -105,7 +105,7 @@ Your job is to answer the user's question using ONLY the provided document sourc
     @staticmethod
     def query_expansion_prompt(query: str, entities: Dict[str, Any]) -> str:
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
-        return f"""You are a Query Expansion Expert. Generate 2-3 alternative search queries
+        return f"""You are a Query Expansion Expert. Generate a alternative search querie
 that capture different aspects of the user's information need.
 
 ### Original Query
@@ -115,9 +115,9 @@ that capture different aspects of the user's information need.
 {entity_str}
 
 ### Instructions
-- Each alternative should approach the topic from a different angle.
-- Include synonyms, related terms, or more specific/general versions.
-- Keep each query concise (under 15 words).
+- alternative should approach the topic from a different angle.
+- Include synonyms, related terms like dates or persons or any important context, or more specific/general versions.
+- Keep query concise (under 15 words).
 
 ### Output (JSON)
-Return: {{"queries": ["alt query 1", "alt query 2", "alt query 3"]}}"""
+Return: {{"queries":"enhanced query"}}"""

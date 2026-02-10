@@ -1,5 +1,5 @@
 """
-Document processor — orchestrates parse → chunk → embed → store,
+Document processor – orchestrates parse → chunk → embed → store,
 including LLM-generated document descriptions.
 """
 
@@ -44,16 +44,13 @@ async def process_document(
     Full pipeline: parse → describe → chunk → store.
     """
 
-
     parsed = await parse_document(file_path, file_bytes)
 
     description = await generate_document_description(
         parsed["metadata"]["filename"],
         parsed["content"],
     )
-
-    llm = get_llm_provider(config.rag_model_provider, default_model=config.rag_model)
-    chunker = StructureAwareChunker(llm_provider=llm)
+    chunker = StructureAwareChunker(chunk_size=1024)
     chunks = await chunker.chunk_document(parsed)
 
     store = get_vector_store()

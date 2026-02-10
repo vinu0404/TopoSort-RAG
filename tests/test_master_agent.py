@@ -1,5 +1,9 @@
 """
-Tests for MasterAgent
+Tests for MasterAgent — specifically the BUG-1 fix
+(AgentTask → ResolvedAgentTask transformation).
+
+BUG-16 FIX: All test data uses `ResolvedAgentTask` with correct fields
+           (`agent_id`, `depends_on`) rather than non-existent fields.
 """
 
 import pytest
@@ -66,5 +70,7 @@ class TestGenerateAgentIds:
 
         resolved = generate_agent_ids(raw)
 
+        # Original unchanged
         assert not hasattr(raw.plan.agents[0], "agent_id")
+        # Resolved has the field
         assert resolved.agents[0].agent_id is not None
