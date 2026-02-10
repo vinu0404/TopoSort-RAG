@@ -24,6 +24,7 @@ class MailPrompts:
         entities: Dict[str, Any],
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -34,6 +35,14 @@ class MailPrompts:
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
 
         profile_section = format_user_profile(long_term_memory or {}, header="User Profile (use for sign-off name and email tone)")
+
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n### Conversation History\n"
+            for turn in conversation_history[-6:]:
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:300]
+                conv_section += f"  {role}: {content}\n"
 
         return f"""You are the Gmail Action Planner for a multi-agent RAG system.
 
@@ -47,6 +56,7 @@ Determine what Gmail action to take for the user's request and provide the neede
 {entity_str}
 {dep_context}
 {profile_section}
+{conv_section}
 
 ### Available Actions
 | Action           | When to use                                         |
@@ -97,6 +107,7 @@ Return EXACTLY this JSON:
         dependency_outputs: Dict[str, Any] | None = None,
         draft_email: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -110,6 +121,14 @@ Return EXACTLY this JSON:
 
         profile_section = format_user_profile(long_term_memory or {}, header="User Profile (use for sign-off name and email tone)")
 
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n### Conversation History\n"
+            for turn in conversation_history[-6:]:
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:300]
+                conv_section += f"  {role}: {content}\n"
+
         return f"""You are a Professional Email Composer for a multi-agent RAG system.
 
 ### Task
@@ -120,6 +139,7 @@ Return EXACTLY this JSON:
 {dep_context}
 {existing}
 {profile_section}
+{conv_section}
 ### Instructions
 1. Write a clear, professional, and appropriately toned email.
 2. **Personalise using User Profile**: Use the user's name for the sign-off, match their

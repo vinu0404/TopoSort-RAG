@@ -198,6 +198,57 @@ async def save_document_record(
     await session.flush()
 
 
+async def load_conversation_messages(
+    session: AsyncSession,
+    conversation_id: str,
+    limit: int = 50,
+) -> list[dict[str, str]]:
+    """
+    Load the most recent messages for a conversation from PostgreSQL.
+
+    Returns pairs of user/assistant messages ordered chronologically,
+    capped at *limit* rows to bound token usage.
+    """
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(Message)
+        .where(Message.conversation_id == cid)
+        .order_by(Message.created_at.asc())
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    return [
+        {"role": row.role, "content": row.content}
+        for row in rows
+    ]
+
+
+async def load_conversation_summaries(
+    session: AsyncSession,
+    conversation_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Load persisted conversation summaries for a conversation.
+
+    Returns dicts with 'summary_text' and 'turns_covered', ordered by
+    creation time.
+    """
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(ConversationSummary)
+        .where(ConversationSummary.conversation_id == cid)
+        .order_by(ConversationSummary.created_at.asc())
+    )
+    rows = result.scalars().all()
+    return [
+        {
+            "summary_text": row.summary_text,
+            "turns_covered": row.turns_covered,
+        }
+        for row in rows
+    ]
+
+
 async def save_conversation_summary(
     session: AsyncSession,
     conversation_id: str,

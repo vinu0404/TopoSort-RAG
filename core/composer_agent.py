@@ -76,7 +76,7 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
 {ci.long_term_memory.model_dump() if hasattr(ci.long_term_memory, 'model_dump') else ci.long_term_memory}
 
 ### Conversation History
-{ci.conversation_history}
+{self._format_conversation_history(ci.conversation_history)}
 
 ### Successful Agent Outputs
 {self._format_agent_outputs(successful)}
@@ -129,6 +129,19 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
                 f"    Data: {str(data)[:1000]}\n"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_conversation_history(turns) -> str:
+        if not turns:
+            return "(no prior conversation)"
+        lines = []
+        for t in turns[-6:]:
+            if hasattr(t, "user_query"):
+                lines.append(f"  User: {t.user_query[:300]}")
+                lines.append(f"  Assistant: {t.composer_answer[:300]}")
+            elif isinstance(t, dict):
+                lines.append(f"  {t.get('role', 'user')}: {str(t.get('content', ''))[:300]}")
+        return "\n".join(lines) if lines else "(no prior conversation)"
 
     @staticmethod
     def _format_sources_for_prompt(sources: List[Source]) -> str:

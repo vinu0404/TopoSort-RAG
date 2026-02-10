@@ -50,6 +50,7 @@ class MailAgent(BaseAgent):
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
+                conversation_history=task_config.conversation_history,
             )
             plan = await self.llm.generate(
                 prompt=plan_prompt,
@@ -121,6 +122,7 @@ class MailAgent(BaseAgent):
                             dependency_outputs=task_config.dependency_outputs,
                             draft_email=email,
                             long_term_memory=task_config.long_term_memory,
+                            conversation_history=task_config.conversation_history,
                         )
                         email = await self.llm.generate(
                             prompt=compose_prompt,
@@ -155,6 +157,7 @@ class MailAgent(BaseAgent):
                     dependency_outputs=task_config.dependency_outputs,
                     draft_email=email,
                     long_term_memory=task_config.long_term_memory,
+                    conversation_history=task_config.conversation_history,
                 )
                 email = await self.llm.generate(
                     prompt=compose_prompt,

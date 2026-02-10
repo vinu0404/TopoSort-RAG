@@ -350,6 +350,16 @@
     cursor: pointer;
     text-decoration: underline dotted;
   }
+  .cell-text-long {
+    color: var(--text);
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-decoration-color: var(--muted2);
+  }
+  .cell-text-long:hover {
+    text-decoration-color: var(--accent);
+    color: var(--accent);
+  }
   .cell-number { color: var(--accent2); }
   .cell-badge {
     display: inline-block;
@@ -439,6 +449,12 @@
     font-family: 'Syne', sans-serif;
     font-weight: 700;
     font-size: 0.85rem;
+  }
+  .modal-body pre.text-content {
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.8;
   }
   .modal-close {
     background: none; border: none;
@@ -631,6 +647,10 @@ let currentPage = 1;
 const PAGE_SIZE = 50;
 const BACKEND_URL = 'http://localhost:8080';
 
+// Store cell data for safe modal display (avoids inline escaping issues)
+let _cellDataStore = {};
+let _cellDataId = 0;
+
 // ── Auto-connect on page load ─────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   autoConnect();
@@ -754,6 +774,10 @@ function renderTable() {
   if (!activeTable) return;
   const rows = DB[activeTable] || [];
 
+  // Reset cell data store each render to avoid memory leak
+  _cellDataStore = {};
+  _cellDataId = 0;
+
   // ── derive columns ──
   const allCols = new Set();
   rows.forEach(r => Object.keys(r).forEach(k => allCols.add(k)));
@@ -844,10 +868,7 @@ function sortBy(col) {
 }
 
 function changePage(delta) {
-  const rows = DB[activeTable] || [];
-  const total = rows.length;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  currentPage = Math.max(1, Math.min(totalPages, currentPage + delta));
+  currentPage += delta;
   renderTable();
 }
 
@@ -891,7 +912,8 @@ function renderCell(col, val) {
   if (typeof val === 'object') {
     const json = JSON.stringify(val);
     const preview = json.length > 40 ? json.slice(0, 40) + '…' : json;
-    return `<span class="cell-json" onclick="showJson(${esc(JSON.stringify(json))})">${esc(preview)}</span>`;
+    const id = _storeCellData(json, 'json');
+    return `<span class="cell-json" onclick="showCellData(${id})">${esc(preview)}</span>`;
   }
 
   // Number
@@ -899,13 +921,42 @@ function renderCell(col, val) {
     return `<span class="cell-number">${val}</span>`;
   }
 
-  // Long text — truncate
+  // Long text — clickable to show full content
   const s = String(val);
   if (s.length > 80) {
-    return `<span title="${esc(s)}">${esc(s.slice(0, 80))}…</span>`;
+    const id = _storeCellData(s, 'text', col);
+    return `<span class="cell-text-long" onclick="showCellData(${id})">${esc(s.slice(0, 80))}…</span>`;
   }
 
   return esc(s);
+}
+
+function _storeCellData(value, type, colName) {
+  const id = ++_cellDataId;
+  _cellDataStore[id] = { value, type, colName };
+  return id;
+}
+
+function showCellData(id) {
+  const entry = _cellDataStore[id];
+  if (!entry) return;
+  const pre = document.getElementById('jsonModalContent');
+  const title = document.querySelector('.modal-header span');
+
+  if (entry.type === 'json') {
+    title.textContent = 'JSON Value';
+    pre.className = '';
+    try {
+      pre.textContent = JSON.stringify(JSON.parse(entry.value), null, 2);
+    } catch {
+      pre.textContent = entry.value;
+    }
+  } else {
+    title.textContent = entry.colName || 'Full Content';
+    pre.className = 'text-content';
+    pre.textContent = entry.value;
+  }
+  document.getElementById('jsonModal').classList.add('open');
 }
 
 function esc(s) {
@@ -914,14 +965,10 @@ function esc(s) {
     .replace(/"/g,'&quot;');
 }
 
+// Legacy — kept for backward compat, delegates to new store
 function showJson(jsonStr) {
-  try {
-    const pretty = JSON.stringify(JSON.parse(jsonStr), null, 2);
-    document.getElementById('jsonModalContent').textContent = pretty;
-  } catch {
-    document.getElementById('jsonModalContent').textContent = jsonStr;
-  }
-  document.getElementById('jsonModal').classList.add('open');
+  const id = _storeCellData(jsonStr, 'json');
+  showCellData(id);
 }
 
 function closeModal(e) {

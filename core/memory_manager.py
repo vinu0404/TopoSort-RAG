@@ -77,11 +77,95 @@ class MemoryManager:
 
         return turn
 
-    async def get_agent_history(self, user_id: str) -> AgentConversationHistory:
+    async def _hydrate_from_db(
+        self,
+        user_id: str,
+        db_session: AsyncSession,
+        conversation_id: str,
+    ) -> None:
+        """
+        One-time load of conversation history from PostgreSQL into the
+        in-memory cache.  Called only when ``_turns[user_id]`` is empty
+        (cold start / process restart).  After hydration the normal
+        in-memory path takes over — no repeated DB reads per request.
+        """
+        from database.helpers import (
+            load_conversation_messages,
+            load_conversation_summaries,
+        )
+
+        # ── Load messages → rebuild _turns ───────────────────────────────
+        raw_messages = await load_conversation_messages(
+            db_session, conversation_id,
+        )
+        turns: List[ConversationTurn] = []
+        turn_num = 0
+        i = 0
+        while i < len(raw_messages):
+            msg = raw_messages[i]
+            if msg["role"] == "user":
+                user_q = msg["content"]
+                assistant_a = ""
+                if i + 1 < len(raw_messages) and raw_messages[i + 1]["role"] == "assistant":
+                    assistant_a = raw_messages[i + 1]["content"]
+                    i += 1
+                turn_num += 1
+                turns.append(ConversationTurn(
+                    turn=turn_num,
+                    user_query=user_q,
+                    composer_answer=assistant_a,
+                    timestamp="",
+                ))
+            i += 1
+
+        if turns:
+            self._turns[user_id] = turns
+            logger.info(
+                "Hydrated %d conversation turns from DB for user %s",
+                len(turns), user_id,
+            )
+
+        # ── Load summaries → rebuild _summaries ──────────────────────────
+        raw_summaries = await load_conversation_summaries(
+            db_session, conversation_id,
+        )
+        summaries: List[ConversationSummary] = []
+        covered_so_far = 0
+        for rs in raw_summaries:
+            n = rs["turns_covered"]
+            turn_ids = list(range(covered_so_far + 1, covered_so_far + n + 1))
+            covered_so_far += n
+            summaries.append(ConversationSummary(
+                turns=turn_ids,
+                summary=rs["summary_text"],
+                key_points=[],
+                timestamp="",
+            ))
+
+        if summaries:
+            self._summaries[user_id] = summaries
+            logger.info(
+                "Hydrated %d conversation summaries from DB for user %s",
+                len(summaries), user_id,
+            )
+
+    async def get_agent_history(
+        self,
+        user_id: str,
+        *,
+        db_session: AsyncSession | None = None,
+        conversation_id: str | None = None,
+    ) -> AgentConversationHistory:
         """
         Build the history object that every agent receives.
 
+        On first call (cache empty), hydrates from PostgreSQL if a
+        ``db_session`` and ``conversation_id`` are provided.
         """
+        # Hydrate from DB on cold start
+        if user_id not in self._turns and db_session and conversation_id:
+            await self._hydrate_from_db(user_id, db_session, conversation_id)
+
         summaries = self._summaries.get(user_id, [])
         turns = self._turns.get(user_id, [])
         interval = config.conversation_summary_interval
@@ -97,6 +181,49 @@ class MemoryManager:
             recent_turns=recent_turns,
             recent_unsummarized_turns=unsummarised,
         )
+
+    async def get_conversation_history_for_agents(
+        self,
+        user_id: str,
+        *,
+        db_session: AsyncSession | None = None,
+        conversation_id: str | None = None,
+    ) -> List[Dict[str, str]]:
+        """
+        Build the flat List[Dict] conversation history that agents receive
+        via AgentInput.conversation_history.
+
+        Format: [{"role": "user"|"assistant"|"system", "content": "..."}, ...]
+
+        Includes:
+          1. Summaries (as system messages) — compressed older context
+          2. Recent turns from the last summary group
+          3. Unsummarised turns — most recent context
+
+        Falls back to PostgreSQL on first call if cache is cold.
+        """
+        agent_history = await self.get_agent_history(
+            user_id,
+            db_session=db_session,
+            conversation_id=conversation_id,
+        )
+        history: List[Dict[str, str]] = []
+
+        for summary in agent_history.summaries:
+            history.append({
+                "role": "system",
+                "content": f"[Conversation summary] {summary.summary}",
+            })
+
+        for turn in agent_history.recent_turns:
+            history.append({"role": "user", "content": turn.user_query})
+            history.append({"role": "assistant", "content": turn.composer_answer})
+
+        for turn in agent_history.recent_unsummarized_turns:
+            history.append({"role": "user", "content": turn.user_query})
+            history.append({"role": "assistant", "content": turn.composer_answer})
+
+        return history
 
     async def get_long_term_memory(
         self, user_id: str, db_session: AsyncSession | None = None

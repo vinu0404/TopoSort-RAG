@@ -55,6 +55,10 @@ async def handle_query(
     master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
     memory_mgr = MemoryManager(llm_provider=master_llm)
     long_term = await memory_mgr.get_long_term_memory(user_id, db_session=session)
+    conversation_history = await memory_mgr.get_conversation_history_for_agents(
+        user_id, db_session=session, conversation_id=conv_id,
+    )
+
     agent_registry = AgentRegistry()
     master = MasterAgent(agent_registry=agent_registry, llm_provider=master_llm)
     extractor = MemoryExtractor(llm_provider=master_llm)
@@ -62,6 +66,7 @@ async def handle_query(
     plan_coro = master.plan(
         request.query,
         user_id,
+        conversation_history=conversation_history,
         long_term_memory=long_term.model_dump(),
     )
     extract_coro = extractor.extract_and_store(
@@ -72,18 +77,23 @@ async def handle_query(
     )
 
     plan, _ = await asyncio.gather(plan_coro, extract_coro)
-    registry = ToolRegistry()
-    agent_instances = build_agent_instances(registry)
-    orchestrator = Orchestrator(agent_instances=agent_instances)
-    context = {
-        "user_id": user_id,
-        "query_id": plan.query_id,
-        "session_id": sess_id,
-        "long_term_memory": long_term.model_dump(),
-        "conversation_history": [],
-    }
-    results = await orchestrator.execute_plan(plan.execution_plan, context)
-    await save_agent_executions(session, conv_id, results)
+    # Skip orchestration for conversation_memory queries (no agents needed)
+    if plan.execution_plan.agents:
+        registry = ToolRegistry()
+        agent_instances = build_agent_instances(registry)
+        orchestrator = Orchestrator(agent_instances=agent_instances)
+        context = {
+            "user_id": user_id,
+            "query_id": plan.query_id,
+            "session_id": sess_id,
+            "long_term_memory": long_term.model_dump(),
+            "conversation_history": conversation_history,
+        }
+        results = await orchestrator.execute_plan(plan.execution_plan, context)
+        await save_agent_executions(session, conv_id, results)
+    else:
+        logger.info("[Query] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)
+        results = {}
 
     composer_llm = get_llm_provider(config.composer_model_provider, default_model=config.composer_model)
     composer = ComposerAgent(llm_provider=composer_llm)
@@ -105,6 +115,7 @@ async def handle_query(
         agent_results=agent_outputs,
         all_sources=all_sources,
         long_term_memory=long_term,
+        conversation_history=memory_mgr._turns.get(user_id, []),
     )
     output = await composer.compose(composer_input)
 

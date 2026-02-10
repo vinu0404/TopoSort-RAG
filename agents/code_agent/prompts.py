@@ -17,6 +17,7 @@ class CodePrompts:
         entities: Dict[str, Any],
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -28,6 +29,14 @@ class CodePrompts:
 
         profile_section = format_user_profile(long_term_memory or {})
 
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n### Conversation History\n"
+            for turn in conversation_history[-6:]:
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:300]
+                conv_section += f"  {role}: {content}\n"
+
         return f"""You are an Expert in Many programming languages Developer in a multi-agent RAG system.
 
 ### Task
@@ -37,6 +46,7 @@ class CodePrompts:
 {entity_str}
 {dep_context}
 {profile_section}
+{conv_section}
 ### Instructions
 1. Write **clean, production-quality code** that accomplishes the task.
 2. Return ONLY the code — no markdown fences, no explanations, no comments about what the code does.

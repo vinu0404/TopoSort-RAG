@@ -170,7 +170,14 @@ Your job is to analyse the user's query, extract entities, and create an optimal
 **Step 2 — Intent Classification**:
 Choose the primary intent:
   `data_retrieval` | `code_generation` | `email_search` | `email_composition` |
-  `web_research` | `multi_step_analysis` | `comparison` | `summarisation`
+  `web_research` | `multi_step_analysis` | `comparison` | `summarisation` |
+  `conversation_memory`
+
+⚠ **`conversation_memory`** — Use this intent when the user is asking about the
+  conversation itself (e.g. "what did I ask before?", "repeat my last question",
+  "summarise our conversation", "what topics have we discussed?").
+  These questions can be answered entirely from the **Recent Conversation** context
+  above — no agents are needed. Return an **empty** `agents` list in the plan.
 
 **Step 3 — Complexity Assessment**:
   `simple` — single agent, no dependencies
@@ -178,6 +185,7 @@ Choose the primary intent:
   `complex` — 3+ agents, multi-step dependencies
 
 **Step 4 — Execution Plan**:
+- If intent is `conversation_memory`, return `"agents": []` (no agents needed).
 - Select the minimum set of agents needed. Don't over-plan.
 - For Gmail tasks: use **mail_agent** (it can search inbox, sent, drafts, send, draft, reply).
 - For web lookups: use **web_search_agent** (Tavily-powered search + URL extraction).

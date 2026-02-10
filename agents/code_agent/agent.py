@@ -32,6 +32,7 @@ class CodeAgent(BaseAgent):
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
+                conversation_history=task_config.conversation_history,
             )
             code: str = await self.llm.generate(
                 prompt=prompt,
