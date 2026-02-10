@@ -56,7 +56,7 @@ class StructureAwareChunker:
 
         for section_idx, section in enumerate(sections):
             if section.get("type") == "table":
-                chunks.append(self._create_table_chunk(section, document, section_idx))
+                chunks.extend(self._create_table_chunks(section, document, section_idx))
             else:
                 chunks.extend(self._chunk_section(section, document, section_idx))
 
@@ -111,8 +111,24 @@ class StructureAwareChunker:
             para = para.strip()
             if not para:
                 continue
-                
+
             para_tokens = len(self.tokenizer.encode(para))
+
+            # If a single paragraph exceeds chunk_size, split it further
+            if para_tokens > self.chunk_size:
+                if current_chunk:
+                    chunks.append(
+                        self._create_chunk(current_chunk, document, section, section_idx, len(chunks))
+                    )
+                    current_chunk = ""
+                    current_tokens = 0
+                sub_parts = self._split_oversized_text(para)
+                for sp in sub_parts:
+                    chunks.append(
+                        self._create_chunk(sp, document, section, section_idx, len(chunks))
+                    )
+                continue
+
             if current_tokens + para_tokens > self.chunk_size and current_chunk:
                 chunks.append(
                     self._create_chunk(current_chunk, document, section, section_idx, len(chunks))
@@ -122,7 +138,7 @@ class StructureAwareChunker:
             else:
                 if current_chunk:
                     current_chunk += "\n\n" + para
-                    current_tokens += para_tokens + 2 
+                    current_tokens += para_tokens + 2
                 else:
                     current_chunk = para
                     current_tokens = para_tokens
@@ -133,6 +149,14 @@ class StructureAwareChunker:
             )
 
         return chunks
+
+    def _split_oversized_text(self, text: str) -> List[str]:
+        """Split text that exceeds chunk_size into token-bounded pieces."""
+        tokens = self.tokenizer.encode(text)
+        parts: List[str] = []
+        for i in range(0, len(tokens), self.chunk_size):
+            parts.append(self.tokenizer.decode(tokens[i : i + self.chunk_size]))
+        return parts
 
     def _create_chunk(
         self,
@@ -164,29 +188,34 @@ class StructureAwareChunker:
             },
         }
 
-    def _create_table_chunk(
+    def _create_table_chunks(
         self,
         section: Dict[str, Any],
         document: Dict[str, Any],
-        section_idx: int
-    ) -> Dict[str, Any]:
+        section_idx: int,
+    ) -> List[Dict[str, Any]]:
         """
-        Create a chunk for table content.
-        
-        Tables are kept as single chunks to preserve structure.
+        Create chunk(s) for table content.
+
+        Small tables stay as a single chunk.  Large ones are split on
+        token boundaries so no chunk exceeds ``self.chunk_size``.
         """
-        chunk = self._create_chunk(
-            section.get("content", ""),
-            document,
-            section,
-            section_idx,
-            0
-        )
-        chunk["metadata"]["is_table"] = True
-        if "description" in section:
-            chunk["metadata"]["table_description"] = section["description"]
-        
-        return chunk
+        text = section.get("content", "")
+        token_count = len(self.tokenizer.encode(text))
+
+        if token_count <= self.chunk_size:
+            parts = [text]
+        else:
+            parts = self._split_oversized_text(text)
+
+        chunks: List[Dict[str, Any]] = []
+        for idx, part in enumerate(parts):
+            chunk = self._create_chunk(part, document, section, section_idx, idx)
+            chunk["metadata"]["is_table"] = True
+            if "description" in section:
+                chunk["metadata"]["table_description"] = section["description"]
+            chunks.append(chunk)
+        return chunks
 
     @staticmethod
     def _add_relationships(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

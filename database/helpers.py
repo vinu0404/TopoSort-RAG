@@ -5,6 +5,7 @@ Database helper functions — ensure parent records exist and persist data.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from database.models import (
     Session,
     User,
 )
+from database.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,41 @@ async def save_messages(
         )
     )
     await session.flush()
+
+
+# ── Background (fire-and-forget) wrappers ───────────────────────────
+
+
+async def bg_save_messages(
+    conversation_id: str,
+    user_query: str,
+    assistant_answer: str,
+    metadata: Dict[str, Any] | None = None,
+) -> None:
+    """Fire-and-forget: persist messages with an independent DB session."""
+    try:
+        async with async_session_factory() as session:
+            await save_messages(session, conversation_id, user_query, assistant_answer, metadata)
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Background save_messages failed for conversation %s", conversation_id,
+        )
+
+
+async def bg_save_agent_executions(
+    conversation_id: str,
+    agent_results: Dict[str, Any],
+) -> None:
+    """Fire-and-forget: persist agent executions with an independent DB session."""
+    try:
+        async with async_session_factory() as session:
+            await save_agent_executions(session, conversation_id, agent_results)
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "Background save_agent_executions failed for conversation %s", conversation_id,
+        )
 
 
 async def save_agent_executions(

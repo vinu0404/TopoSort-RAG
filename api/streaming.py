@@ -24,11 +24,11 @@ from core.memory_manager import MemoryManager
 from core.agent_factory import build_agent_instances
 from core.orchestrator import Orchestrator
 from database.helpers import (
+    bg_save_agent_executions,
+    bg_save_messages,
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
-    save_agent_executions,
-    save_messages,
 )
 from tools.registry import ToolRegistry
 from utils.schemas import Source
@@ -76,6 +76,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
         conv_id = await get_or_create_conversation(
             session, user_id, sess_id, title=request.query[:120],
         )
+        await session.commit()
         yield _sse_event("status", {"phase": "planning"})
 
         master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
@@ -121,7 +122,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
                 "conversation_history": conversation_history,
             }
             results = await orchestrator.execute_plan(plan.execution_plan, context)
-            await save_agent_executions(session, conv_id, results)
+            asyncio.create_task(bg_save_agent_executions(conv_id, results))
         else:
             logger.info("[Stream] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)
             results = {}
@@ -165,10 +166,8 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
             user_id, request.query, composer_answer,
             db_session=session, conversation_id=conv_id,
         )
-        await save_messages(
-            session, conv_id, request.query, composer_answer,
-            metadata={"sources": [s.model_dump() for s in all_sources]} if all_sources else {},
-        )
+        metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
+        asyncio.create_task(bg_save_messages(conv_id, request.query, composer_answer, metadata))
         elapsed = time.perf_counter() - start_time
         yield _sse_event("done", {
             "total_time": round(elapsed, 3),

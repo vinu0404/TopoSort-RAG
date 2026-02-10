@@ -5,6 +5,7 @@ Vector store adapter — Qdrant.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -102,20 +103,25 @@ class VectorStore:
         )
 
         chunk_points = []
-        for chunk in chunks:
-            embedding = await embed_fn(chunk["text"])
-            cid = chunk.get("chunk_id", str(uuid.uuid4()))
-            chunk_points.append(
-                PointStruct(
-                    id=cid,
-                    vector=embedding,
-                    payload={
-                        "type": "chunk",
-                        "text": chunk["text"],
-                        "metadata": chunk.get("metadata", {}),
-                    },
-                )
+        _EMBED_BATCH = 15
+        for i in range(0, len(chunks), _EMBED_BATCH):
+            batch = chunks[i:i + _EMBED_BATCH]
+            embeddings = await asyncio.gather(
+                *[embed_fn(c["text"]) for c in batch]
             )
+            for chunk, embedding in zip(batch, embeddings):
+                cid = chunk.get("chunk_id", str(uuid.uuid4()))
+                chunk_points.append(
+                    PointStruct(
+                        id=cid,
+                        vector=embedding,
+                        payload={
+                            "type": "chunk",
+                            "text": chunk["text"],
+                            "metadata": chunk.get("metadata", {}),
+                        },
+                    )
+                )
 
         await self.client.upsert(
             collection_name=collection_name,

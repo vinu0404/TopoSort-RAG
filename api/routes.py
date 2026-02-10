@@ -21,12 +21,12 @@ from core.memory_manager import MemoryManager
 from core.agent_factory import build_agent_instances
 from core.orchestrator import Orchestrator
 from database.helpers import (
+    bg_save_agent_executions,
+    bg_save_messages,
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
-    save_agent_executions,
     save_document_record,
-    save_messages,
 )
 from document_pipeline.document_processor import process_document
 from tools.registry import ToolRegistry
@@ -52,6 +52,8 @@ async def handle_query(
     conv_id = await get_or_create_conversation(
         session, user_id, sess_id, title=request.query[:120],
     )
+    # Commit parent records so background tasks (new sessions) can reference them
+    await session.commit()
     master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
     memory_mgr = MemoryManager(llm_provider=master_llm)
     long_term = await memory_mgr.get_long_term_memory(user_id, db_session=session)
@@ -89,7 +91,7 @@ async def handle_query(
             "conversation_history": conversation_history,
         }
         results = await orchestrator.execute_plan(plan.execution_plan, context)
-        await save_agent_executions(session, conv_id, results)
+        asyncio.create_task(bg_save_agent_executions(conv_id, results))
     else:
         logger.info("[Query] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)
         results = {}
@@ -122,14 +124,14 @@ async def handle_query(
         user_id, request.query, output.answer,
         db_session=session, conversation_id=conv_id,
     )
-    await save_messages(
-        session, conv_id, request.query, output.answer,
-        metadata={"sources": [s.model_dump() for s in output.sources]},
+    sources_data = [s.model_dump() for s in output.sources]
+    asyncio.create_task(
+        bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}),
     )
 
     return {
         "answer": output.answer,
-        "sources": [s.model_dump() for s in output.sources],
+        "sources": sources_data,
         "agents_used": list(results.keys()),
     }
 
