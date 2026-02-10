@@ -19,7 +19,8 @@ from agents.base_agent import BaseAgent
 from agents.mail_agent.prompts import MailPrompts
 from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
-
+import logging
+logger = logging.getLogger("mail_agent")
 
 class MailAgent(BaseAgent):
     def __init__(self, tool_registry, llm_provider):
@@ -41,8 +42,7 @@ class MailAgent(BaseAgent):
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start = time.perf_counter()
 
-        import logging
-        logger = logging.getLogger("mail_agent")
+
         logger.info(f"[MailAgent] Input: {task_config}")
         try:
             plan_prompt = self.prompts.action_plan_prompt(
@@ -200,10 +200,6 @@ class MailAgent(BaseAgent):
                 result_data["error"] = f"Unknown action: {action}"
                 status = "failed"
 
-            summary = await self._summarise_result(
-                task_config.task, action, result_data, task_config.long_term_memory
-            )
-
             logger.info(f"[MailAgent] Output: {result_data}")
             return AgentOutput(
                 agent_id=task_config.agent_id,
@@ -211,7 +207,7 @@ class MailAgent(BaseAgent):
                 task_description=task_config.task,
                 status=status,
                 task_done=status == "success",
-                result=summary,
+                result=result_data.get("sent") or result_data.get("draft") or result_data.get("reply") or result_data.get("messages") or result_data.get("drafts") or result_data.get("message"),
                 data=result_data,
                 confidence_score=0.9 if status == "success" else 0.4,
                 resource_usage={
@@ -224,16 +220,3 @@ class MailAgent(BaseAgent):
             logger.exception(f"[MailAgent] Error for input: {task_config}")
             raise
 
-
-    async def _summarise_result(
-        self, task: str, action: str, data: Dict[str, Any],
-        long_term_memory: Dict[str, Any] | None = None,
-    ) -> str:
-        """Ask LLM to produce a human-readable summary of the action outcome."""
-        prompt = self.prompts.summarise_result_prompt(task, action, data, long_term_memory)
-        summary = await self.llm.generate(
-            prompt=prompt,
-            temperature=0.3,
-            model=config.mail_model,
-        )
-        return str(summary).strip()

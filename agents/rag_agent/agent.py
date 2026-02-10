@@ -37,13 +37,13 @@ class RAGAgent(BaseAgent):
 
             original_query = task_config.task
             entities = task_config.entities
+            dependency_outputs = task_config.dependency_outputs
             user_id = task_config.metadata.get("user_id", "default")
-            enhanced_query = await self._expand_query(original_query, entities)
+            enhanced_query = await self._expand_query(original_query, entities, dependency_outputs)
             tokens_used += 100  
             
             logger.info(f"[RAGAgent] Original query: {original_query}")
             logger.info(f"[RAGAgent] Enhanced query: {enhanced_query}")
-
             filters = self._build_filters(entities)
             chunks = await hybrid_search(
                 query=enhanced_query,
@@ -52,16 +52,34 @@ class RAGAgent(BaseAgent):
                 top_k=20,
             )
 
-            reranked_chunks = await rerank(query=original_query, chunks=chunks, top_k=8)
+            reranked_chunks = await rerank(query=enhanced_query, chunks=chunks, top_k=8)
             sources = self._extract_sources(reranked_chunks)
-
-            logger.info(f"[RAGAgent] Output: {reranked_chunks}")
+            conversation_context = task_config.conversation_history
+            
+            synthesis_prompt = self.prompts.synthesis_prompt(
+                query=enhanced_query,  
+                chunks=reranked_chunks,
+                conversation_context=conversation_context,
+                long_term_memory=task_config.long_term_memory,
+            )
+            
+            final_answer = await self.llm.generate(
+                prompt=synthesis_prompt,
+                temperature=config.rag_temperature if hasattr(config, 'rag_temperature') else 0.3,
+                model=config.rag_model,
+            )
+            tokens_used += 500 
+            
+            logger.info(f"[RAGAgent] Generated answer: {final_answer[:200]}...")
+            
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=task_config.task,
                 task_done=True,
+                result=final_answer, 
                 data={
+                    "answer": final_answer,  
                     "chunks": reranked_chunks,
                     "sources": sources,
                     "query": original_query
@@ -71,9 +89,7 @@ class RAGAgent(BaseAgent):
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start_time) * 1000),
                     "tokens_used": tokens_used,
-                    "api_calls_made": 3,  
-                    "cache_hits": 0,
-                    "estimated_cost": tokens_used * 0.00001,
+                    "api_calls_made": 4,  # hybrid_search + rerank + query_expansion + synthesis
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
                 metadata={"sources": sources, "model_used": config.rag_model},
@@ -87,20 +103,25 @@ class RAGAgent(BaseAgent):
             logger.exception(f"[RAGAgent] Error for input: {task_config}")
             raise  
 
-    async def _expand_query(self, query: str, entities: Dict[str, Any]) -> str:
+
+
+
+
+    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> str:
         """
         Expand the original query using LLM to generate a more comprehensive search query.
         
         Args:
             query: Original user query
             entities: Extracted entities from the query
+            dependency_outputs: Outputs from dependent agents that may provide additional context for query expansion
             
         Returns:
             Enhanced query string for better retrieval
         """
         
         try:
-            prompt = self.prompts.query_expansion_prompt(query, entities)
+            prompt = self.prompts.query_expansion_prompt(query, entities, dependency_outputs)
             
             response = await self.llm.generate(
                 prompt=prompt,
@@ -131,6 +152,11 @@ class RAGAgent(BaseAgent):
             logger.warning(f"[RAGAgent] Query expansion failed: {e}. Using original query.")
             return query
 
+
+
+
+
+
     def _build_filters(self, entities: Dict[str, Any]) -> Dict[str, Any]:
         filters: Dict[str, Any] = {}
         if entities.get("date_range"):
@@ -140,6 +166,7 @@ class RAGAgent(BaseAgent):
         if entities.get("metric"):
             filters["metadata.topic"] = entities["metric"]
         return filters
+
 
     @staticmethod
     def _extract_sources(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -160,6 +187,7 @@ class RAGAgent(BaseAgent):
                 )
         return sources
 
+
     @staticmethod
     def _calculate_confidence(chunks: List[Dict[str, Any]]) -> float:
         if not chunks:
@@ -167,20 +195,3 @@ class RAGAgent(BaseAgent):
         scores = [c.get("score", 0.0) for c in chunks]
         return min(1.0, sum(scores) / max(len(scores), 1))
 
-    def _create_partial_response(
-        self, task_config: AgentInput, chunks: List[Dict[str, Any]]
-    ) -> AgentOutput:
-        return AgentOutput(
-            agent_id=task_config.agent_id,
-            agent_name=self.agent_name,
-            task_description=task_config.task,
-            task_done=False,
-            partial_data={
-                "documents_found": len(chunks),
-                "results": chunks[:3] if chunks else [],
-                "search_completed": False,
-            },
-            error="timeout",
-            confidence_score=0.0,
-            depends_on=list(task_config.dependency_outputs.keys()),
-        )

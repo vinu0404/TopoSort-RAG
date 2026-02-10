@@ -18,6 +18,7 @@ class WebSearchPrompts:
         entities: Dict[str, Any],
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: str = "",
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -26,11 +27,13 @@ class WebSearchPrompts:
                 dep_context += f"- **{aid}**: {str(data)[:400]}\n"
 
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        long_term_memory_str=" \n\n### User Profile\n" + format_user_profile(long_term_memory or {}) if long_term_memory else ""
+        conversation_history_str = f"\n\n### Conversation History\n{conversation_history}\n" if conversation_history else ""
 
         return f"""You are the Web Search Strategist for a multi-agent RAG system.
 
 ### Your Task
-Decide the best search strategy and generate an optimised search query for the task below.
+Decide the best search strategy and generate an optimised search query for the task below.Use the context from other agents, user profile, and conversation history to inform your decision.
 
 ### Task
 {task}
@@ -38,6 +41,8 @@ Decide the best search strategy and generate an optimised search query for the t
 ### Extracted Entities
 {entity_str}
 {dep_context}
+{long_term_memory_str}
+{conversation_history_str}
 
 ### Available Search Types
 1. **basic**  — Fast general web search (default for most queries)
@@ -67,6 +72,7 @@ Return EXACTLY this JSON structure, nothing else:
         fetched_pages: List[Dict[str, Any]] | None = None,
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: str = "",
     ) -> str:
         # Format search results
         results_text = ""
@@ -94,20 +100,22 @@ Return EXACTLY this JSON structure, nothing else:
                 dep_context += f"- **{aid}**: {str(data)[:400]}\n"
 
         profile_section = format_user_profile(long_term_memory or {})
+        conversation_history_str = f"\n\n### Conversation History\n{conversation_history}\n" if conversation_history else ""
 
-        return f"""You are a Research Synthesis Expert in a multi-agent RAG system.
+        return f"""You are a Research Synthesis Expert in a multi-agent RAG system.Your job is to answer the user's question by synthesising information from the web search results and any fetched page content. Use the context from other agents, user profile, and conversation history to inform your answer.
 
 ### Original Task
 {task}
 {dep_context}
 {tavily_section}
 {profile_section}
+{conversation_history_str}
 ### Search Results
 {results_text}
 {pages_text}
 
 ### Instructions
-1. **Answer the task** using information from the search results and fetched pages above.
+1. **Answer the task** using information from the search results and fetched pages above and using the context provided. Be specific and detailed in your answer.
 2. **Cite sources** using inline references like [1], [2] matching the result numbers.
 3. **Be specific** — include dates, numbers, names, and direct quotes when available.
 4. **Acknowledge gaps** — if the search results don't fully answer the question, say so.
@@ -118,7 +126,6 @@ Return EXACTLY this JSON structure, nothing else:
 
 ### Answer"""
 
-    # Keep backward compatibility for simpler uses
     @staticmethod
     def search_query_prompt(task: str, entities: Dict[str, Any]) -> str:
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"

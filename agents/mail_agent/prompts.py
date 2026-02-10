@@ -10,7 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 from utils.prompt_utils import format_user_profile
@@ -138,45 +138,3 @@ Return EXACTLY:
     "cc": "<cc address or null>",
     "html": false
 }}"""
-
-    @staticmethod
-    def summarise_result_prompt(
-        task: str,
-        action: str,
-        data: Dict[str, Any],
-        long_term_memory: Dict[str, Any] | None = None,
-    ) -> str:
-        # Truncate data for prompt
-        data_str = json.dumps(data, default=str)
-        if len(data_str) > 3000:
-            data_str = data_str[:3000] + "... (truncated)"
-
-        prefs = (long_term_memory or {}).get("preferences", {})
-        tone = prefs.get("tone", "professional")
-        detail = prefs.get("detail_level", "concise")
-        lang = prefs.get("language", "en")
-
-        return f"""You are a concise assistant summarising the outcome of a Gmail action.
-
-### Original User Request
-{task}
-
-### Action Taken
-{action}
-
-### Raw Result
-{data_str}
-
-### Personalisation
-Tone: {tone} | Detail level: {detail} | Language: {lang}
-
-### Instructions
-1. Provide a clear, human-readable summary of what happened.
-2. For **search** results: list the most relevant messages (sender, subject, date, snippet).
-   Mention the total count.
-3. For **send/draft**: confirm what was sent/drafted, to whom, with what subject.
-4. For **reply**: confirm the reply was sent and to which thread.
-5. For **errors**: explain what went wrong in plain language.
-6. Keep it concise — 2-5 sentences max, plus a bullet list if there are multiple items.
-
-### Summary"""

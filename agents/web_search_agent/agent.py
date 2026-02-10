@@ -5,13 +5,15 @@ Web Search Agent — real-time web search via Tavily API
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from agents.base_agent import BaseAgent
 from agents.web_search_agent.prompts import WebSearchPrompts
 from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
 
+import logging
+logger = logging.getLogger("web_search_agent")
 
 class WebSearchAgent(BaseAgent):
     def __init__(self, tool_registry, llm_provider):
@@ -25,8 +27,6 @@ class WebSearchAgent(BaseAgent):
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start = time.perf_counter()
 
-        import logging
-        logger = logging.getLogger("web_search_agent")
         logger.info(f"[WebSearchAgent] Input: {task_config}")
         try:
             search = self.get_tool("web_search")
@@ -39,7 +39,12 @@ class WebSearchAgent(BaseAgent):
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
+                conversation_history=task_config.conversation_history,
             )
+            logger.info(f"========================================")
+            logger.info(f"[WebSearchAgent] conversation_history: {task_config.conversation_history}")
+
+            logger.info(f"========================================")
             strategy: str = await self.llm.generate(
                 prompt=strategy_prompt,
                 temperature=config.web_temperature,
@@ -87,6 +92,7 @@ class WebSearchAgent(BaseAgent):
                 fetched_pages=fetched_contents,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
+                conversation_history=task_config.conversation_history,
             )
             final_answer: str = await self.llm.generate(
                 prompt=synthesis_prompt,

@@ -237,9 +237,6 @@ def generate_agent_ids(master_output: MasterAgentOutput) -> ResolvedMasterOutput
     Convert index-based deps (`depends_on_indices`) into concrete
     agent-id-based deps (`depends_on`), producing a wholly new
     `ResolvedMasterOutput` with `ResolvedAgentTask` items.
-
-    *No* runtime mutation of frozen Pydantic models.
-    *No* delattr / setattr.
     """
     index_to_id: Dict[int, str] = {}
     resolved_tasks: List[ResolvedAgentTask] = []

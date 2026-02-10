@@ -57,7 +57,7 @@ return fewer.
     def synthesis_prompt(
         query: str,
         chunks: List[Dict[str, Any]],
-        conversation_context: str = "",
+        conversation_context: str ,
         long_term_memory: Dict[str, Any] | None = None,
     ) -> str:
         context = ""
@@ -103,16 +103,20 @@ Your job is to answer the user's question using ONLY the provided document sourc
 ### Answer"""
 
     @staticmethod
-    def query_expansion_prompt(query: str, entities: Dict[str, Any]) -> str:
+    def query_expansion_prompt(query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> str:
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        dependency_str = ", ".join(f"{k}={v}" for k, v in dependency_outputs.items()) if dependency_outputs else "none"
         return f"""You are a Query Expansion Expert. Generate a alternative search querie
-that capture different aspects of the user's information need.
+that capture different aspects of the user's information need.You can use the original query, the extracted entities, and outputs from other agents to create a more comprehensive query for document retrieval.
 
 ### Original Query
 {query}
 
 ### Extracted Entities
 {entity_str}
+
+### Dependency Outputs from other agents
+{dependency_str}
 
 ### Instructions
 - alternative should approach the topic from a different angle.

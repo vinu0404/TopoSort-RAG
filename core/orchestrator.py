@@ -32,8 +32,6 @@ class Orchestrator:
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Run all stages sequentially; agents within each stage in parallel.
-
         Returns the shared_state mapping agent_id → AgentOutput.
         """
         agent_dicts = [task.model_dump() for task in execution_plan.agents]
