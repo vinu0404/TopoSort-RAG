@@ -165,7 +165,10 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
             user_id, request.query, composer_answer,
             db_session=session, conversation_id=conv_id,
         )
-        await save_messages(session, conv_id, request.query, composer_answer)
+        await save_messages(
+            session, conv_id, request.query, composer_answer,
+            metadata={"sources": [s.model_dump() for s in all_sources]} if all_sources else {},
+        )
         elapsed = time.perf_counter() - start_time
         yield _sse_event("done", {
             "total_time": round(elapsed, 3),

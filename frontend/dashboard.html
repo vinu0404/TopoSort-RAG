@@ -3,582 +3,523 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MRAG · Database Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<title>MRAG · Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:       #0a0b0e;
-    --surface:  #111318;
-    --border:   #1e2028;
-    --border2:  #2a2d38;
-    --accent:   #00e5a0;
-    --accent2:  #0099ff;
-    --warn:     #ff6b35;
-    --text:     #e8eaf0;
-    --muted:    #5a5f72;
-    --muted2:   #3a3f52;
-    --header-h: 56px;
-    --sidebar-w: 220px;
+    --bg:        #0b0d11;
+    --surface:   #12151b;
+    --surface2:  #181c24;
+    --border:    #1f2330;
+    --border2:   #282d3a;
+    --accent:    #00d992;
+    --accent-bg: rgba(0,217,146,0.08);
+    --accent-b:  rgba(0,217,146,0.25);
+    --blue:      #3b82f6;
+    --blue-bg:   rgba(59,130,246,0.08);
+    --blue-b:    rgba(59,130,246,0.25);
+    --amber:     #f59e0b;
+    --amber-bg:  rgba(245,158,11,0.08);
+    --red:       #ef4444;
+    --red-bg:    rgba(239,68,68,0.08);
+    --purple:    #a78bfa;
+    --purple-bg: rgba(167,139,250,0.08);
+    --text:      #e4e7ee;
+    --text2:     #a0a6b8;
+    --text3:     #636a80;
+    --text4:     #3e4458;
+    --radius:    6px;
+    --header-h:  52px;
+    --sidebar-w: 240px;
   }
-
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
   body {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     background: var(--bg);
     color: var(--text);
     height: 100vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* ── Top bar ─────────────────────────────────────────── */
+  /* ── Topbar ────────────────────────────────────────── */
   .topbar {
     height: var(--header-h);
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 0 20px;
-    gap: 16px;
-    flex-shrink: 0;
-    position: relative;
-    z-index: 10;
+    display: flex; align-items: center;
+    padding: 0 20px; gap: 14px;
+    flex-shrink: 0; z-index: 20;
   }
   .logo {
-    font-family: 'Syne', sans-serif;
-    font-weight: 800;
-    font-size: 1.1rem;
+    font-weight: 700; font-size: 1rem;
     color: var(--accent);
-    letter-spacing: -0.5px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    display: flex; align-items: center; gap: 8px;
+    letter-spacing: -0.3px;
   }
-  .logo::before {
-    content: '';
-    width: 8px; height: 8px;
+  .logo .dot {
+    width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent);
-    border-radius: 50%;
-    box-shadow: 0 0 12px var(--accent);
+    box-shadow: 0 0 10px var(--accent);
   }
-  .topbar-sep { width: 1px; height: 24px; background: var(--border2); }
-  .topbar-label {
-    font-size: 0.7rem;
-    color: var(--muted);
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-
-  .db-config {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
-  }
-
-  .btn {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    padding: 6px 14px;
-    border-radius: 4px;
-    border: none;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-  }
-  .btn-primary {
-    background: var(--accent);
-    color: #000;
-  }
-  .btn-primary:hover { opacity: 0.85; }
-  .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
-  .btn-ghost {
-    background: transparent;
-    color: var(--muted);
+  .topbar-sep { width: 1px; height: 22px; background: var(--border2); }
+  .topbar-label { font-size: 0.7rem; color: var(--text3); letter-spacing: 0.5px; text-transform: uppercase; font-weight: 500; }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.68rem; color: var(--text3);
+    padding: 4px 10px; border-radius: 20px;
     border: 1px solid var(--border2);
+    background: var(--surface2);
   }
-  .btn-ghost:hover { color: var(--text); border-color: var(--muted2); }
-
-  .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--muted2);
-    transition: background 0.3s, box-shadow 0.3s;
-    flex-shrink: 0;
+  .status-pill .sdot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text4); transition: all 0.3s;
   }
-  .status-dot.connected { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-  .status-dot.error { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
-  .status-text { font-size: 0.7rem; color: var(--muted); }
+  .status-pill.connected .sdot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .status-pill.error .sdot { background: var(--red); box-shadow: 0 0 6px var(--red); }
 
-  /* ── Layout ──────────────────────────────────────────── */
-  .layout {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-  }
+  /* ── Layout ────────────────────────────────────────── */
+  .layout { flex: 1; display: flex; overflow: hidden; }
 
-  /* ── Sidebar ─────────────────────────────────────────── */
+  /* ── Sidebar ───────────────────────────────────────── */
   .sidebar {
-    width: var(--sidebar-w);
-    background: var(--surface);
+    width: var(--sidebar-w); background: var(--surface);
     border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    flex-shrink: 0;
+    display: flex; flex-direction: column;
+    overflow-y: auto; flex-shrink: 0;
   }
-  .sidebar-section {
-    padding: 16px 14px 8px;
+  .sidebar-section { padding: 16px 12px 8px; }
+  .sidebar-heading {
+    font-size: 0.6rem; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 1.2px;
+    margin-bottom: 6px; padding-left: 8px;
   }
-  .sidebar-section-title {
-    font-size: 0.6rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    margin-bottom: 8px;
-    padding-left: 4px;
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; margin: 1px 0;
+    border-radius: var(--radius); cursor: pointer;
+    font-size: 0.78rem; color: var(--text2);
+    transition: all 0.12s; border: 1px solid transparent;
   }
-  .table-nav-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 0.78rem;
-    color: var(--muted);
-    transition: all 0.15s;
-    gap: 8px;
-    border: 1px solid transparent;
+  .nav-item:hover { background: rgba(255,255,255,0.03); color: var(--text); }
+  .nav-item.active {
+    background: var(--accent-bg); color: var(--accent);
+    border-color: var(--accent-b);
   }
-  .table-nav-item:hover { background: var(--border); color: var(--text); }
-  .table-nav-item.active {
-    background: rgba(0,229,160,0.08);
-    color: var(--accent);
-    border-color: rgba(0,229,160,0.2);
+  .nav-item .icon { font-size: 0.85rem; width: 22px; text-align: center; flex-shrink: 0; opacity: 0.6; }
+  .nav-item.active .icon { opacity: 1; }
+  .nav-item .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nav-badge {
+    font-size: 0.6rem; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    background: var(--surface2); color: var(--text3);
+    min-width: 22px; text-align: center;
   }
-  .table-nav-item .tname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .table-badge {
-    font-size: 0.6rem;
-    padding: 2px 6px;
-    border-radius: 10px;
-    background: var(--border2);
-    color: var(--muted);
-    flex-shrink: 0;
-    min-width: 24px;
-    text-align: center;
-  }
-  .table-nav-item.active .table-badge {
-    background: rgba(0,229,160,0.15);
-    color: var(--accent);
-  }
-  .table-nav-item .t-icon {
-    font-size: 0.75rem;
-    opacity: 0.5;
-    flex-shrink: 0;
-  }
+  .nav-item.active .nav-badge { background: var(--accent-bg); color: var(--accent); }
 
+  /* Stats */
   .sidebar-stats {
-    margin-top: auto;
-    padding: 14px;
+    margin-top: auto; padding: 14px 12px;
     border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 4px;
   }
   .stat-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.68rem;
-    color: var(--muted);
-    padding: 3px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.68rem; color: var(--text3); padding: 2px 8px;
   }
-  .stat-row span:last-child { color: var(--accent); }
+  .stat-row .sv { color: var(--accent); font-weight: 600; }
 
-  /* ── Main ────────────────────────────────────────────── */
-  .main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  /* ── Main ──────────────────────────────────────────── */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-  /* ── Table toolbar ───────────────────────────────────── */
-  .table-toolbar {
-    height: 48px;
+  /* ── Summary cards ─────────────────────────────────── */
+  .summary-bar {
+    display: flex; gap: 10px; padding: 14px 20px;
     border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 0 20px;
-    gap: 12px;
-    flex-shrink: 0;
-    background: var(--surface);
+    flex-shrink: 0; background: var(--surface);
+    overflow-x: auto;
   }
-  .table-title {
-    font-family: 'Syne', sans-serif;
-    font-weight: 700;
+  .summary-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-radius: var(--radius);
+    border: 1px solid var(--border2); background: var(--surface2);
+    min-width: 140px; flex-shrink: 0;
+  }
+  .summary-card .sc-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
     font-size: 0.9rem;
-    color: var(--text);
   }
-  .table-title .schema-prefix { color: var(--muted); font-weight: 400; }
-  .row-count {
-    font-size: 0.68rem;
-    color: var(--muted);
-    padding: 3px 8px;
-    border: 1px solid var(--border2);
-    border-radius: 3px;
-  }
+  .summary-card .sc-data { display: flex; flex-direction: column; }
+  .summary-card .sc-val { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+  .summary-card .sc-lbl { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
 
-  .search-wrap {
-    position: relative;
-    margin-left: auto;
+  /* ── Toolbar ───────────────────────────────────────── */
+  .toolbar {
+    display: none; height: 46px; border-bottom: 1px solid var(--border);
+    align-items: center; padding: 0 20px; gap: 10px;
+    flex-shrink: 0; background: var(--surface);
   }
-  .search-wrap input {
-    background: var(--bg);
-    border: 1px solid var(--border2);
-    color: var(--text);
+  .toolbar.visible { display: flex; }
+  .tb-title { font-weight: 600; font-size: 0.85rem; color: var(--text); display: flex; align-items: center; gap: 6px; }
+  .tb-title .schema { color: var(--text3); font-weight: 400; }
+  .tb-count {
+    font-size: 0.65rem; color: var(--text3); padding: 3px 8px;
+    border: 1px solid var(--border2); border-radius: 3px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    padding: 5px 10px 5px 28px;
-    border-radius: 4px;
-    outline: none;
-    width: 200px;
-    transition: border-color 0.2s, width 0.2s;
   }
-  .search-wrap input:focus { border-color: var(--accent); width: 260px; }
-  .search-wrap::before {
-    content: '⌕';
-    position: absolute;
-    left: 8px; top: 50%;
-    transform: translateY(-50%);
-    color: var(--muted);
-    font-size: 0.85rem;
-    pointer-events: none;
+  .tb-spacer { flex: 1; }
+  .tb-search { position: relative; }
+  .tb-search input {
+    background: var(--bg); border: 1px solid var(--border2);
+    color: var(--text); font-family: 'Inter', sans-serif;
+    font-size: 0.72rem; padding: 6px 12px 6px 30px;
+    border-radius: var(--radius); outline: none; width: 200px;
+    transition: all 0.2s;
   }
-
-  .btn-refresh {
-    background: transparent;
-    border: 1px solid var(--border2);
-    color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    padding: 5px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s;
+  .tb-search input:focus { border-color: var(--accent); width: 280px; box-shadow: 0 0 0 2px rgba(0,217,146,0.1); }
+  .tb-search .s-icon {
+    position: absolute; left: 9px; top: 50%;
+    transform: translateY(-50%); color: var(--text4);
+    font-size: 0.78rem; pointer-events: none;
+  }
+  .tb-btn {
+    font-family: 'Inter', sans-serif; font-size: 0.68rem; font-weight: 500;
+    padding: 5px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border2); background: transparent;
+    color: var(--text3); cursor: pointer;
     display: flex; align-items: center; gap: 5px;
+    transition: all 0.12s;
   }
-  .btn-refresh:hover { color: var(--text); border-color: var(--muted2); }
-  .btn-refresh.spinning svg { animation: spin 0.6s linear infinite; }
+  .tb-btn:hover { color: var(--text); border-color: var(--text4); background: var(--surface2); }
+  .tb-btn.spinning svg { animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Table wrapper ───────────────────────────────────── */
-  .table-wrap {
-    flex: 1;
-    overflow: auto;
-    padding: 0;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.75rem;
-  }
-  thead {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-  }
-  thead th {
-    background: var(--surface);
-    padding: 10px 14px;
-    text-align: left;
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-    font-weight: 500;
-    cursor: pointer;
-    user-select: none;
-    transition: color 0.15s;
-  }
-  thead th:hover { color: var(--text); }
-  thead th .sort-icon { opacity: 0.3; margin-left: 4px; }
-  thead th.sort-asc .sort-icon,
-  thead th.sort-desc .sort-icon { opacity: 1; color: var(--accent); }
-
-  tbody tr {
-    border-bottom: 1px solid var(--border);
-    transition: background 0.1s;
-  }
-  tbody tr:hover { background: rgba(255,255,255,0.025); }
-  tbody td {
-    padding: 9px 14px;
-    color: var(--text);
-    max-width: 280px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: middle;
-    border-right: 1px solid rgba(30,32,40,0.5);
-  }
-  tbody td:last-child { border-right: none; }
-
-  /* Cell type styling */
-  .cell-uuid {
-    font-size: 0.65rem;
-    color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-  }
-  .cell-uuid .uuid-short {
-    color: var(--accent2);
-    font-weight: 500;
-  }
-  .cell-bool-true {
-    color: var(--accent);
-    font-weight: 500;
-  }
-  .cell-bool-false { color: var(--warn); }
-  .cell-null { color: var(--muted2); font-style: italic; font-size: 0.65rem; }
-  .cell-date { color: #a78bfa; font-size: 0.7rem; }
-  .cell-json {
-    color: #fbbf24;
-    font-size: 0.65rem;
-    cursor: pointer;
-    text-decoration: underline dotted;
-  }
-  .cell-text-long {
-    color: var(--text);
-    cursor: pointer;
-    text-decoration: underline dotted;
-    text-decoration-color: var(--muted2);
-  }
-  .cell-text-long:hover {
-    text-decoration-color: var(--accent);
-    color: var(--accent);
-  }
-  .cell-number { color: var(--accent2); }
-  .cell-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 0.65rem;
-    font-weight: 500;
-  }
-  .badge-success { background: rgba(0,229,160,0.1); color: var(--accent); border: 1px solid rgba(0,229,160,0.2); }
-  .badge-failed  { background: rgba(255,107,53,0.1); color: var(--warn); border: 1px solid rgba(255,107,53,0.2); }
-  .badge-pending { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--border2); }
-  .badge-running { background: rgba(0,153,255,0.1); color: var(--accent2); border: 1px solid rgba(0,153,255,0.2); }
-  .badge-user    { background: rgba(0,153,255,0.08); color: var(--accent2); }
-  .badge-assistant { background: rgba(0,229,160,0.08); color: var(--accent); }
-  .badge-system  { background: rgba(255,255,255,0.05); color: var(--muted); }
-
-  /* ── Empty / loading / error states ─────────────────── */
-  .state-box {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 0.8rem;
-  }
-  .state-box .state-icon { font-size: 2rem; opacity: 0.3; }
-  .state-box p { max-width: 320px; text-align: center; line-height: 1.6; }
-  .state-box .state-err { color: var(--warn); font-size: 0.72rem; max-width: 380px; }
-
-  /* Loading bar */
-  .loading-bar {
-    height: 2px;
-    background: var(--border);
-    position: relative;
-    overflow: hidden;
-  }
+  /* ── Loading ───────────────────────────────────────── */
+  .loading-bar { height: 2px; background: var(--border); position: relative; overflow: hidden; display: none; }
+  .loading-bar.active { display: block; }
   .loading-bar::after {
-    content: '';
-    position: absolute;
-    height: 100%;
-    width: 40%;
+    content: ''; position: absolute; height: 100%; width: 35%;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
     animation: loadbar 1s ease-in-out infinite;
   }
-  @keyframes loadbar {
-    0% { left: -40%; }
-    100% { left: 100%; }
-  }
+  @keyframes loadbar { 0%{left:-35%} 100%{left:100%} }
 
-  /* ── JSON viewer modal ───────────────────────────────── */
-  .modal-backdrop {
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.7);
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    backdrop-filter: blur(3px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
+  /* ── Table ─────────────────────────────────────────── */
+  .table-wrap { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+  thead { position: sticky; top: 0; z-index: 4; }
+  thead th {
+    background: var(--surface2); padding: 0;
+    text-align: left; font-size: 0.62rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.8px; color: var(--text3);
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap; user-select: none;
+    position: relative;
   }
-  .modal-backdrop.open { opacity: 1; pointer-events: all; }
-  .modal {
-    background: var(--surface);
-    border: 1px solid var(--border2);
-    border-radius: 8px;
-    width: 560px;
-    max-width: 90vw;
-    max-height: 70vh;
-    display: flex;
-    flex-direction: column;
-    transform: translateY(8px);
-    transition: transform 0.2s;
+  thead th .th-inner {
+    display: flex; align-items: center; gap: 4px;
+    padding: 9px 14px; cursor: pointer; transition: color 0.12s;
   }
-  .modal-backdrop.open .modal { transform: translateY(0); }
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 18px;
+  thead th .th-inner:hover { color: var(--text); }
+  thead th .sort-arrow { opacity: 0.25; font-size: 0.55rem; }
+  thead th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+
+  /* Column resize handle */
+  thead th .col-resize {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 4px;
+    cursor: col-resize; background: transparent;
+    transition: background 0.15s;
+  }
+  thead th .col-resize:hover,
+  thead th .col-resize.resizing { background: var(--accent); }
+
+  tbody tr {
     border-bottom: 1px solid var(--border);
+    transition: background 0.08s; cursor: pointer;
   }
-  .modal-header span {
-    font-family: 'Syne', sans-serif;
-    font-weight: 700;
-    font-size: 0.85rem;
-  }
-  .modal-body pre.text-content {
-    color: var(--text);
-    white-space: pre-wrap;
-    word-break: break-word;
-    line-height: 1.8;
-  }
-  .modal-close {
-    background: none; border: none;
-    color: var(--muted); cursor: pointer;
-    font-size: 1.2rem; line-height: 1;
-    transition: color 0.15s;
-  }
-  .modal-close:hover { color: var(--text); }
-  .modal-body {
-    padding: 16px 18px;
-    overflow-y: auto;
-    flex: 1;
-  }
-  .modal-body pre {
-    font-size: 0.72rem;
-    line-height: 1.7;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: #fbbf24;
+  tbody tr:nth-child(even) { background: rgba(255,255,255,0.012); }
+  tbody tr:hover { background: rgba(0,217,146,0.04); }
+  tbody tr.selected { background: var(--accent-bg); }
+  tbody td {
+    padding: 8px 14px; color: var(--text);
+    max-width: 320px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+    vertical-align: middle;
   }
 
-  /* ── Pagination ──────────────────────────────────────── */
-  .pagination {
-    height: 44px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 0 16px;
-    gap: 8px;
+  /* Cell types */
+  .c-uuid {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+    color: var(--text3); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .c-uuid:hover { color: var(--blue); }
+  .c-uuid .short { color: var(--blue); font-weight: 500; }
+  .c-uuid .copy-hint {
+    opacity: 0; font-size: 0.5rem; color: var(--text4);
+    transition: opacity 0.15s;
+  }
+  .c-uuid:hover .copy-hint { opacity: 1; }
+  .c-bool { font-weight: 600; font-size: 0.68rem; display: inline-flex; align-items: center; gap: 4px; }
+  .c-bool.t { color: var(--accent); }
+  .c-bool.f { color: var(--red); }
+  .c-null { color: var(--text4); font-style: italic; font-size: 0.65rem; }
+  .c-date { color: var(--purple); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; }
+  .c-num { color: var(--blue); font-family: 'JetBrains Mono', monospace; }
+  .c-json {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.62rem;
+    color: var(--amber); cursor: pointer; padding: 2px 6px;
+    border-radius: 3px; border: 1px solid rgba(245,158,11,0.15);
+    background: var(--amber-bg);
+    display: inline-block; max-width: 200px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .c-json:hover { border-color: var(--amber); }
+  .c-text-long {
+    cursor: pointer; position: relative;
+    text-decoration: none; border-bottom: 1px dashed var(--text4);
+    padding-bottom: 1px;
+  }
+  .c-text-long:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Pill / badge */
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 0.64rem; font-weight: 600;
+    letter-spacing: 0.3px; text-transform: capitalize;
+  }
+  .pill .pill-dot { width: 5px; height: 5px; border-radius: 50%; }
+  .pill-success { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-b); }
+  .pill-success .pill-dot { background: var(--accent); }
+  .pill-failed  { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
+  .pill-failed .pill-dot { background: var(--red); }
+  .pill-pending { background: var(--surface2); color: var(--text3); border: 1px solid var(--border2); }
+  .pill-pending .pill-dot { background: var(--text3); }
+  .pill-running { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-b); }
+  .pill-running .pill-dot { background: var(--blue); }
+  .pill-user      { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-b); }
+  .pill-assistant { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-b); }
+  .pill-system    { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(167,139,250,0.25); }
+
+  /* ── Row Detail Panel ──────────────────────────────── */
+  .detail-panel {
+    width: 0; overflow: hidden; flex-shrink: 0;
+    background: var(--surface); border-left: 1px solid var(--border);
+    transition: width 0.2s ease; display: flex; flex-direction: column;
+  }
+  .detail-panel.open { width: 420px; }
+  .dp-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    background: var(--surface);
   }
-  .page-info { font-size: 0.68rem; color: var(--muted); margin-right: auto; }
-  .page-btn {
-    background: transparent;
-    border: 1px solid var(--border2);
-    color: var(--muted);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    padding: 4px 10px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.15s;
+  .dp-header .dp-title { font-weight: 600; font-size: 0.82rem; color: var(--text); }
+  .dp-header .dp-subtitle { font-size: 0.62rem; color: var(--text3); margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+  .dp-close {
+    background: none; border: 1px solid var(--border2); color: var(--text3);
+    width: 28px; height: 28px; border-radius: var(--radius); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem; transition: all 0.12s;
   }
-  .page-btn:hover:not(:disabled) { color: var(--text); border-color: var(--muted2); }
-  .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-  .page-btn.active { background: rgba(0,229,160,0.1); color: var(--accent); border-color: rgba(0,229,160,0.3); }
+  .dp-close:hover { color: var(--text); border-color: var(--text4); }
+  .dp-body { flex: 1; overflow-y: auto; padding: 4px 0; }
+  .dp-field {
+    padding: 10px 16px; border-bottom: 1px solid rgba(31,35,48,0.5);
+    transition: background 0.08s;
+  }
+  .dp-field:hover { background: rgba(255,255,255,0.015); }
+  .dp-field-name {
+    font-size: 0.6rem; font-weight: 600; color: var(--text3);
+    text-transform: uppercase; letter-spacing: 0.8px;
+    margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .dp-field-val {
+    font-size: 0.78rem; color: var(--text); line-height: 1.65;
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .dp-field-val.mono {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
+  }
+  .dp-field-val.json-val {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+    color: var(--amber); background: var(--surface2);
+    padding: 8px 10px; border-radius: var(--radius);
+    max-height: 200px; overflow-y: auto;
+    border: 1px solid var(--border2); margin-top: 4px;
+  }
+  .dp-copy-btn {
+    font-family: 'Inter', sans-serif; font-size: 0.58rem; font-weight: 500;
+    padding: 2px 8px; border-radius: 3px;
+    border: 1px solid var(--border2); background: transparent;
+    color: var(--text3); cursor: pointer;
+    transition: all 0.12s;
+  }
+  .dp-copy-btn:hover { color: var(--accent); border-color: var(--accent-b); }
+  .dp-copy-btn.copied { color: var(--accent); border-color: var(--accent); }
 
-  /* ── Scrollbars ──────────────────────────────────────── */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
+  /* ── Pagination ────────────────────────────────────── */
+  .pagination {
+    height: 42px; border-top: 1px solid var(--border);
+    display: none; align-items: center; padding: 0 16px; gap: 6px;
+    flex-shrink: 0; background: var(--surface);
+  }
+  .pagination.visible { display: flex; }
+  .pg-info { font-size: 0.66rem; color: var(--text3); margin-right: auto; font-family: 'JetBrains Mono', monospace; }
+  .pg-btn {
+    font-family: 'Inter', sans-serif; font-size: 0.66rem; font-weight: 500;
+    padding: 4px 10px; border-radius: 4px;
+    border: 1px solid var(--border2); background: transparent;
+    color: var(--text3); cursor: pointer; transition: all 0.12s;
+  }
+  .pg-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text4); }
+  .pg-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .pg-btn.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-b); }
+
+  /* ── Modal ─────────────────────────────────────────── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.18s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal-box {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 10px; width: 640px; max-width: 92vw; max-height: 80vh;
+    display: flex; flex-direction: column;
+    transform: translateY(6px) scale(0.98);
+    transition: transform 0.18s;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .modal-overlay.open .modal-box { transform: translateY(0) scale(1); }
+  .modal-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+  }
+  .modal-top .m-title { font-weight: 600; font-size: 0.82rem; }
+  .modal-top .m-actions { display: flex; gap: 6px; }
+  .modal-top .m-btn {
+    font-family: 'Inter', sans-serif; font-size: 0.62rem; font-weight: 500;
+    padding: 4px 10px; border-radius: 4px;
+    border: 1px solid var(--border2); background: transparent;
+    color: var(--text3); cursor: pointer; transition: all 0.12s;
+  }
+  .modal-top .m-btn:hover { color: var(--text); border-color: var(--text4); }
+  .modal-content { padding: 16px 18px; overflow-y: auto; flex: 1; }
+  .modal-content pre {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+    line-height: 1.75; white-space: pre-wrap; word-break: break-word;
+  }
+  .modal-content pre.json-pre { color: var(--amber); }
+  .modal-content pre.text-pre { color: var(--text); }
+
+  /* ── Empty states ──────────────────────────────────── */
+  .empty-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; gap: 14px; color: var(--text3);
+  }
+  .empty-state .es-icon { font-size: 2.5rem; opacity: 0.2; }
+  .empty-state p { text-align: center; line-height: 1.7; font-size: 0.8rem; max-width: 340px; }
+
+  /* ── Connect screen ────────────────────────────────── */
+  .connect-screen {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    flex: 1; gap: 16px; padding: 40px;
+  }
+  .connect-screen h2 { font-size: 1.3rem; font-weight: 700; color: var(--text); }
+  .connect-screen p { font-size: 0.78rem; color: var(--text3); text-align: center; max-width: 420px; line-height: 1.7; }
+  .connect-screen .hint-box {
+    font-size: 0.7rem; padding: 10px 16px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: var(--radius); color: var(--text3);
+    max-width: 440px; width: 100%; text-align: center;
+  }
+  .connect-screen .hint-box strong { color: var(--accent); }
+  .connect-screen .hint-box code { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; }
+
+  /* ── Toast ─────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; z-index: 200;
+    background: var(--surface2); border: 1px solid var(--accent-b);
+    border-radius: var(--radius); padding: 10px 16px;
+    font-size: 0.72rem; color: var(--accent);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+    transform: translateY(80px); opacity: 0; transition: all 0.25s;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* ── Scrollbars ────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted2); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text4); }
 
-  /* ── Connection banner ───────────────────────────────── */
-  .conn-banner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    gap: 20px;
-    padding: 40px;
-  }
-  .conn-banner h2 {
-    font-family: 'Syne', sans-serif;
-    font-size: 1.4rem;
-    font-weight: 800;
-    color: var(--text);
-  }
-  .conn-banner p { font-size: 0.78rem; color: var(--muted); text-align: center; max-width: 400px; line-height: 1.7; }
-  .conn-banner .hint {
-    font-size: 0.7rem;
-    padding: 10px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border2);
-    border-radius: 5px;
-    color: var(--muted);
-    max-width: 500px;
-    width: 100%;
-    text-align: center;
-  }
-  .conn-banner .hint strong { color: var(--accent); }
-
-  /* responsive */
-  @media (max-width: 640px) {
+  /* ── Responsive ────────────────────────────────────── */
+  @media (max-width: 768px) {
     .sidebar { display: none; }
+    .detail-panel.open { width: 100%; position: absolute; right: 0; top: 0; bottom: 0; z-index: 30; }
+    .summary-bar { padding: 10px; }
+    .summary-card { min-width: 110px; padding: 8px 12px; }
   }
 </style>
 </head>
 <body>
 
-<!-- Top bar -->
+<!-- Topbar -->
 <div class="topbar">
-  <div class="logo">MRAG</div>
+  <div class="logo"><span class="dot"></span>MRAG</div>
   <div class="topbar-sep"></div>
-  <span class="topbar-label">Database Explorer</span>
-  <div class="db-config">
-    <div class="status-dot" id="statusDot"></div>
-    <span class="status-text" id="statusText">Loading...</span>
+  <span class="topbar-label">Admin Dashboard</span>
+  <div class="topbar-right">
+    <div class="status-pill" id="statusPill">
+      <span class="sdot"></span>
+      <span id="statusLabel">Connecting…</span>
+    </div>
   </div>
 </div>
 
 <!-- Layout -->
-<div class="layout" id="layoutArea" style="display:none">
-
+<div class="layout" id="mainLayout" style="display:none">
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Tables</div>
+      <div class="sidebar-heading">Tables</div>
       <div id="tableNav"></div>
     </div>
     <div class="sidebar-stats" id="sidebarStats"></div>
   </aside>
 
-  <!-- Main -->
+  <!-- Main area -->
   <div class="main">
-    <div class="table-toolbar" id="toolbar" style="display:none">
-      <span class="table-title" id="toolbarTitle">—</span>
-      <span class="row-count" id="toolbarCount">0 rows</span>
-      <div class="search-wrap">
-        <input type="text" id="searchInput" placeholder="filter rows…">
+    <!-- Summary cards -->
+    <div class="summary-bar" id="summaryBar"></div>
+
+    <!-- Toolbar -->
+    <div class="toolbar" id="toolbar">
+      <span class="tb-title" id="tbTitle"></span>
+      <span class="tb-count" id="tbCount"></span>
+      <span class="tb-spacer"></span>
+      <div class="tb-search">
+        <span class="s-icon">⌕</span>
+        <input type="text" id="searchInput" placeholder="Search rows…">
       </div>
-      <button class="btn-refresh" id="refreshBtn" onclick="refreshTable()">
+      <button class="tb-btn" id="colToggleBtn" onclick="toggleColumnPicker()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Columns
+      </button>
+      <button class="tb-btn" onclick="exportCSV()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Export
+      </button>
+      <button class="tb-btn" id="refreshBtn" onclick="refreshData()">
         <svg id="refreshIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="23 4 23 10 17 10"></polyline>
           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
@@ -587,46 +528,66 @@
       </button>
     </div>
 
-    <div id="loadingBar" class="loading-bar" style="display:none"></div>
+    <!-- Column picker dropdown -->
+    <div id="colPicker" style="display:none;position:absolute;z-index:15;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);padding:8px;max-height:300px;overflow-y:auto;box-shadow:0 8px 30px rgba(0,0,0,0.4);font-size:0.72rem;min-width:200px;"></div>
 
-    <div class="table-wrap" id="tableWrap">
-      <!-- connection screen -->
-      <div class="conn-banner" id="connBanner">
-        <h2>Connecting to Database...</h2>
-        <p>Fetching data from Docker containers automatically.</p>
-        <div class="hint">
-          Make sure <strong>dashboard_server.py</strong> is running on port 8080
+    <div class="loading-bar" id="loadingBar"></div>
+
+    <div style="flex:1;display:flex;overflow:hidden;">
+      <div class="table-wrap" id="tableWrap"></div>
+      <!-- Row detail panel -->
+      <div class="detail-panel" id="detailPanel">
+        <div class="dp-header">
+          <div>
+            <div class="dp-title" id="dpTitle">Row Details</div>
+            <div class="dp-subtitle" id="dpSubtitle"></div>
+          </div>
+          <button class="dp-close" onclick="closeDetail()">✕</button>
         </div>
-        <div class="hint" style="margin-top: 12px;">
-          <strong>Quick Start:</strong> Run <code style="color: var(--accent);">python dashboard_server.py</code> in your project directory
-        </div>
+        <div class="dp-body" id="dpBody"></div>
       </div>
     </div>
 
-    <div class="pagination" id="pagination" style="display:none">
-      <span class="page-info" id="pageInfo">Showing 0–0 of 0</span>
-      <button class="page-btn" id="prevBtn" onclick="changePage(-1)">← Prev</button>
-      <span id="pageNums" style="display:flex;gap:4px"></span>
-      <button class="page-btn" id="nextBtn" onclick="changePage(1)">Next →</button>
+    <div class="pagination" id="pagination">
+      <span class="pg-info" id="pgInfo"></span>
+      <button class="pg-btn" id="prevBtn" onclick="changePage(-1)">← Prev</button>
+      <span id="pgNums" style="display:flex;gap:3px;"></span>
+      <button class="pg-btn" id="nextBtn" onclick="changePage(1)">Next →</button>
     </div>
   </div>
 </div>
 
-<!-- JSON modal -->
-<div class="modal-backdrop" id="jsonModal" onclick="closeModal(event)">
-  <div class="modal">
-    <div class="modal-header">
-      <span>JSON Value</span>
-      <button class="modal-close" onclick="document.getElementById('jsonModal').classList.remove('open')">✕</button>
+<!-- Connect screen -->
+<div class="connect-screen" id="connectScreen">
+  <h2>Connecting to Database…</h2>
+  <p>Fetching data from the MRAG backend automatically.</p>
+  <div class="hint-box">Make sure <strong>dashboard_server.py</strong> is running<br>
+    <code>python dashboard_server.py</code></div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-top">
+      <span class="m-title" id="modalTitle">Value</span>
+      <div class="m-actions">
+        <button class="m-btn" id="copyModalBtn" onclick="copyModalContent()">Copy</button>
+        <button class="m-btn" onclick="closeModal()">✕ Close</button>
+      </div>
     </div>
-    <div class="modal-body">
-      <pre id="jsonModalContent"></pre>
+    <div class="modal-content">
+      <pre id="modalPre"></pre>
     </div>
   </div>
 </div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
 
 <script>
-// ── State ─────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════
+// Constants
+// ═════════════════════════════════════════════════════════════════
 const TABLES = [
   { name: 'users',                  icon: '👤' },
   { name: 'sessions',               icon: '🔗' },
@@ -638,346 +599,592 @@ const TABLES = [
   { name: 'user_long_term_memory',  icon: '🧠' },
 ];
 
-let DB = {};          // { tableName: rowsArray }
+const BACKEND = 'http://localhost:8080';
+const PAGE_SIZE = 50;
+
+// ═════════════════════════════════════════════════════════════════
+// State
+// ═════════════════════════════════════════════════════════════════
+let DB = {};
 let activeTable = null;
-let sortCol = null;
-let sortDir = 'asc';
+let sortCol = null, sortDir = 'asc';
 let searchQuery = '';
 let currentPage = 1;
-const PAGE_SIZE = 50;
-const BACKEND_URL = 'http://localhost:8080';
+let selectedRowIdx = null;
+let hiddenCols = new Set();
+let _cellStore = {}, _cellId = 0;
+let _colWidths = {};
 
-// Store cell data for safe modal display (avoids inline escaping issues)
-let _cellDataStore = {};
-let _cellDataId = 0;
-
-// ── Auto-connect on page load ─────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
-  autoConnect();
-});
+// ═════════════════════════════════════════════════════════════════
+// Init
+// ═════════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', autoConnect);
 
 async function autoConnect() {
   setStatus('connecting');
   try {
-    const response = await fetch(`${BACKEND_URL}/api/db-snapshot`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    const data = await response.json();
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-    
+    const r = await fetch(`${BACKEND}/api/db-snapshot`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
     ingestData(data);
-  } catch (err) {
+  } catch (e) {
     setStatus('error');
-    showConnError(`Failed to connect: ${err.message}\n\nMake sure dashboard_server.py is running:\npython dashboard_server.py`);
+    showConnError(e.message);
   }
 }
 
 function ingestData(payload) {
   DB = {};
-  for (const t of TABLES) {
-    const rows = payload[t.name];
-    DB[t.name] = Array.isArray(rows) ? rows : [];
-  }
+  for (const t of TABLES) DB[t.name] = Array.isArray(payload[t.name]) ? payload[t.name] : [];
   setStatus('connected');
-  document.getElementById('connBanner').style.display = 'none';
-  document.getElementById('layoutArea').style.display = 'flex';
+  document.getElementById('connectScreen').style.display = 'none';
+  document.getElementById('mainLayout').style.display = 'flex';
   buildSidebar();
-  // Auto-select first non-empty table
+  buildSummary();
   const first = TABLES.find(t => DB[t.name].length > 0) || TABLES[0];
   selectTable(first.name);
 }
 
 function showConnError(msg) {
-  const b = document.getElementById('connBanner');
-  b.innerHTML = `
-    <h2>Connection Failed</h2>
-    <p style="color:var(--warn);white-space:pre-wrap;font-family:'JetBrains Mono',monospace;font-size:0.7rem;max-width:500px;">${esc(msg)}</p>
-    <button class="btn btn-primary" onclick="autoConnect()" style="padding:10px 24px;margin-top:12px">
-      Retry Connection
-    </button>
+  document.getElementById('connectScreen').innerHTML = `
+    <h2 style="color:var(--red)">Connection Failed</h2>
+    <p style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:0.7rem;white-space:pre-wrap;max-width:480px;">${esc(msg)}</p>
+    <div class="hint-box" style="margin-top:8px;">Start the server: <code>python dashboard_server.py</code></div>
+    <button class="tb-btn" onclick="autoConnect()" style="padding:10px 28px;margin-top:16px;font-size:0.78rem;">↻ Retry</button>
   `;
 }
 
-function setStatus(state) {
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
-  dot.className = 'status-dot ' + (state === 'connected' ? 'connected' : state === 'error' ? 'error' : '');
-  txt.textContent = state === 'connected' ? 'Connected' : state === 'error' ? 'Connection Error' : 'Connecting…';
+function setStatus(s) {
+  const pill = document.getElementById('statusPill');
+  const lbl = document.getElementById('statusLabel');
+  pill.className = 'status-pill ' + (s === 'connected' ? 'connected' : s === 'error' ? 'error' : '');
+  lbl.textContent = s === 'connected' ? 'Connected' : s === 'error' ? 'Error' : 'Connecting…';
 }
 
-// ── Sidebar ───────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════
+// Sidebar
+// ═════════════════════════════════════════════════════════════════
 function buildSidebar() {
-  const nav = document.getElementById('tableNav');
-  nav.innerHTML = TABLES.map(t => `
-    <div class="table-nav-item" id="nav-${t.name}" onclick="selectTable('${t.name}')">
-      <span class="t-icon">${t.icon}</span>
-      <span class="tname">${t.name}</span>
-      <span class="table-badge">${DB[t.name].length}</span>
+  document.getElementById('tableNav').innerHTML = TABLES.map(t => `
+    <div class="nav-item" id="nav-${t.name}" onclick="selectTable('${t.name}')">
+      <span class="icon">${t.icon}</span>
+      <span class="label">${t.name}</span>
+      <span class="nav-badge">${DB[t.name].length}</span>
     </div>
   `).join('');
 
   const total = Object.values(DB).reduce((s, r) => s + r.length, 0);
   document.getElementById('sidebarStats').innerHTML = `
-    <div class="stat-row"><span>Total rows</span><span>${total}</span></div>
-    <div class="stat-row"><span>Tables</span><span>${TABLES.length}</span></div>
+    <div class="stat-row"><span>Total records</span><span class="sv">${total.toLocaleString()}</span></div>
+    <div class="stat-row"><span>Tables</span><span class="sv">${TABLES.length}</span></div>
   `;
 }
 
-// ── Table rendering ───────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════
+// Summary cards
+// ═════════════════════════════════════════════════════════════════
+function buildSummary() {
+  const cards = [
+    { icon: '👤', label: 'Users',       val: DB.users?.length || 0, bg: 'var(--blue-bg)',   bc: 'var(--blue-b)' },
+    { icon: '💬', label: 'Conversations', val: DB.conversations?.length || 0, bg: 'var(--accent-bg)', bc: 'var(--accent-b)' },
+    { icon: '📨', label: 'Messages',    val: DB.messages?.length || 0, bg: 'var(--amber-bg)', bc: 'rgba(245,158,11,0.25)' },
+    { icon: '🤖', label: 'Agent Runs',  val: DB.agent_executions?.length || 0, bg: 'var(--purple-bg)', bc: 'rgba(167,139,250,0.25)' },
+    { icon: '📄', label: 'Documents',   val: DB.documents?.length || 0, bg: 'var(--blue-bg)',  bc: 'var(--blue-b)' },
+    { icon: '🧠', label: 'Memories',    val: DB.user_long_term_memory?.length || 0, bg: 'var(--accent-bg)', bc: 'var(--accent-b)' },
+  ];
+  document.getElementById('summaryBar').innerHTML = cards.map(c => `
+    <div class="summary-card">
+      <div class="sc-icon" style="background:${c.bg};border:1px solid ${c.bc};">${c.icon}</div>
+      <div class="sc-data">
+        <span class="sc-val">${c.val.toLocaleString()}</span>
+        <span class="sc-lbl">${c.label}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Table logic
+// ═════════════════════════════════════════════════════════════════
 function selectTable(name) {
   activeTable = name;
   sortCol = null; sortDir = 'asc';
-  searchQuery = '';
-  currentPage = 1;
+  searchQuery = ''; currentPage = 1;
+  selectedRowIdx = null;
+  hiddenCols = new Set();
   document.getElementById('searchInput').value = '';
+  closeDetail();
+  closeColumnPicker();
 
-  document.querySelectorAll('.table-nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const nav = document.getElementById(`nav-${name}`);
   if (nav) nav.classList.add('active');
 
-  document.getElementById('toolbar').style.display = 'flex';
-  document.getElementById('pagination').style.display = 'flex';
-
+  document.getElementById('toolbar').classList.add('visible');
+  document.getElementById('pagination').classList.add('visible');
   renderTable();
 }
 
-async function refreshTable() {
-  if (!activeTable) return;
+async function refreshData() {
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('spinning');
-  
+  document.getElementById('loadingBar').classList.add('active');
   try {
-    const response = await fetch(`${BACKEND_URL}/api/db-snapshot`);
-    if (response.ok) {
-      const data = await response.json();
+    const r = await fetch(`${BACKEND}/api/db-snapshot`);
+    if (r.ok) {
+      const data = await r.json();
       ingestData(data);
-      selectTable(activeTable); // Re-select current table
+      if (activeTable) selectTable(activeTable);
+      toast('Data refreshed');
     }
-  } catch (err) {
-    console.error('Refresh failed:', err);
-  } finally {
-    setTimeout(() => btn.classList.remove('spinning'), 400);
+  } catch (e) { console.error(e); }
+  finally {
+    setTimeout(() => {
+      btn.classList.remove('spinning');
+      document.getElementById('loadingBar').classList.remove('active');
+    }, 400);
   }
 }
 
-document.getElementById('searchInput').addEventListener('input', (e) => {
+document.getElementById('searchInput').addEventListener('input', e => {
   searchQuery = e.target.value.toLowerCase();
   currentPage = 1;
   renderTable();
 });
 
-function renderTable() {
-  if (!activeTable) return;
+function getVisibleColumns() {
   const rows = DB[activeTable] || [];
-
-  // Reset cell data store each render to avoid memory leak
-  _cellDataStore = {};
-  _cellDataId = 0;
-
-  // ── derive columns ──
   const allCols = new Set();
   rows.forEach(r => Object.keys(r).forEach(k => allCols.add(k)));
-  const cols = [...allCols];
+  return [...allCols].filter(c => !hiddenCols.has(c));
+}
 
-  // ── filter ──
+function getAllColumns() {
+  const rows = DB[activeTable] || [];
+  const allCols = new Set();
+  rows.forEach(r => Object.keys(r).forEach(k => allCols.add(k)));
+  return [...allCols];
+}
+
+function getFilteredRows() {
+  const rows = DB[activeTable] || [];
+  const cols = getAllColumns();
   let filtered = rows;
   if (searchQuery) {
     filtered = rows.filter(r =>
       cols.some(c => {
         const v = r[c];
-        if (v === null || v === undefined) return false;
-        return String(typeof v === 'object' ? JSON.stringify(v) : v)
-          .toLowerCase().includes(searchQuery);
+        if (v == null) return false;
+        return String(typeof v === 'object' ? JSON.stringify(v) : v).toLowerCase().includes(searchQuery);
       })
     );
   }
-
-  // ── sort ──
   if (sortCol) {
     filtered = [...filtered].sort((a, b) => {
-      let va = a[sortCol], vb = b[sortCol];
-      if (va === null || va === undefined) va = '';
-      if (vb === null || vb === undefined) vb = '';
+      let va = a[sortCol] ?? '', vb = b[sortCol] ?? '';
       const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true });
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }
+  return filtered;
+}
 
-  // ── pagination ──
+function renderTable() {
+  if (!activeTable) return;
+  const rows = DB[activeTable] || [];
+  _cellStore = {}; _cellId = 0;
+
+  const cols = getVisibleColumns();
+  const filtered = getFilteredRows();
+
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   currentPage = Math.min(currentPage, totalPages);
   const start = (currentPage - 1) * PAGE_SIZE;
   const pageRows = filtered.slice(start, start + PAGE_SIZE);
 
-  // ── toolbar ──
-  document.getElementById('toolbarTitle').innerHTML =
-    `<span class="schema-prefix">public.</span>${activeTable}`;
-  document.getElementById('toolbarCount').textContent =
-    `${total} / ${rows.length} rows`;
+  // Toolbar
+  document.getElementById('tbTitle').innerHTML = `<span class="schema">public.</span>${activeTable}`;
+  document.getElementById('tbCount').textContent = searchQuery
+    ? `${total} / ${rows.length} rows` : `${rows.length} rows`;
 
-  // ── table HTML ──
-  if (cols.length === 0) {
-    document.getElementById('tableWrap').innerHTML =
-      `<div class="state-box"><div class="state-icon">○</div><p>No data in <strong>${activeTable}</strong></p></div>`;
-  } else {
-    const th = cols.map(c => {
-      const cls = sortCol === c ? (sortDir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
-      return `<th class="${cls}" onclick="sortBy('${c}')">
-        ${c} <span class="sort-icon">${sortDir === 'asc' && sortCol === c ? '↑' : '↓'}</span>
-      </th>`;
-    }).join('');
+  const wrap = document.getElementById('tableWrap');
 
-    const trs = pageRows.map(row => {
-      const tds = cols.map(c => `<td>${renderCell(c, row[c])}</td>`).join('');
-      return `<tr>${tds}</tr>`;
-    }).join('');
-
-    document.getElementById('tableWrap').innerHTML = pageRows.length === 0
-      ? `<div class="state-box"><div class="state-icon">⌀</div><p>No rows match your filter.</p></div>`
-      : `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+  if (cols.length === 0 || rows.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="es-icon">○</div><p>No data in <strong>${activeTable}</strong></p></div>`;
+    updatePagination(0, 0, 1);
+    return;
   }
 
-  // ── pagination controls ──
-  const pi = document.getElementById('pageInfo');
-  pi.textContent = `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, total)} of ${total}`;
+  if (pageRows.length === 0 && searchQuery) {
+    wrap.innerHTML = `<div class="empty-state"><div class="es-icon">⌀</div><p>No rows match "<strong>${esc(searchQuery)}</strong>"</p></div>`;
+    updatePagination(0, 0, 1);
+    return;
+  }
 
-  const pn = document.getElementById('pageNums');
+  // Build header
+  const thHtml = cols.map(c => {
+    const sorted = sortCol === c;
+    const arrow = sorted ? (sortDir === 'asc' ? '↑' : '↓') : '↕';
+    const w = _colWidths[activeTable + '.' + c];
+    const style = w ? `style="width:${w}px;min-width:${w}px;"` : '';
+    return `<th class="${sorted ? 'sorted' : ''}" ${style}>
+      <div class="th-inner" onclick="sortBy('${c}')">
+        ${esc(c)} <span class="sort-arrow">${arrow}</span>
+      </div>
+      <div class="col-resize" onmousedown="startResize(event,'${c}')"></div>
+    </th>`;
+  }).join('');
+
+  // Build rows
+  const trHtml = pageRows.map((row, i) => {
+    const globalIdx = start + i;
+    const selClass = selectedRowIdx === globalIdx ? ' selected' : '';
+    const tds = cols.map(c => `<td>${renderCell(c, row[c])}</td>`).join('');
+    return `<tr class="${selClass}" onclick="selectRow(${globalIdx}, event)">${tds}</tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table><thead><tr>${thHtml}</tr></thead><tbody>${trHtml}</tbody></table>`;
+  updatePagination(start, total, totalPages);
+}
+
+function updatePagination(start, total, totalPages) {
+  document.getElementById('pgInfo').textContent = total > 0
+    ? `${start + 1}–${Math.min(start + PAGE_SIZE, total)} of ${total}`
+    : '0 rows';
+  const pn = document.getElementById('pgNums');
   pn.innerHTML = '';
-  const window_ = 3;
-  for (let p = Math.max(1, currentPage - window_); p <= Math.min(totalPages, currentPage + window_); p++) {
+  const w = 3;
+  for (let p = Math.max(1, currentPage - w); p <= Math.min(totalPages, currentPage + w); p++) {
     const b = document.createElement('button');
-    b.className = 'page-btn' + (p === currentPage ? ' active' : '');
+    b.className = 'pg-btn' + (p === currentPage ? ' active' : '');
     b.textContent = p;
     b.onclick = () => { currentPage = p; renderTable(); };
     pn.appendChild(b);
   }
-
   document.getElementById('prevBtn').disabled = currentPage <= 1;
   document.getElementById('nextBtn').disabled = currentPage >= totalPages;
 }
 
 function sortBy(col) {
-  if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
   else { sortCol = col; sortDir = 'asc'; }
   renderTable();
 }
 
-function changePage(delta) {
-  currentPage += delta;
-  renderTable();
-}
+function changePage(d) { currentPage += d; renderTable(); }
 
-// ── Cell rendering ────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════
+// Cell rendering
+// ═════════════════════════════════════════════════════════════════
 function renderCell(col, val) {
-  if (val === null || val === undefined) return `<span class="cell-null">null</span>`;
+  if (val == null) return `<span class="c-null">NULL</span>`;
 
   // Boolean
   if (val === true || val === false) {
     return val
-      ? `<span class="cell-bool-true">✓ true</span>`
-      : `<span class="cell-bool-false">✗ false</span>`;
+      ? `<span class="c-bool t">● true</span>`
+      : `<span class="c-bool f">○ false</span>`;
   }
 
-  // Status badge
+  // Status pill
   if (col === 'status') {
-    const cls = { success:'badge-success', failed:'badge-failed', pending:'badge-pending', running:'badge-running' }[val] || 'badge-pending';
-    return `<span class="cell-badge ${cls}">${esc(val)}</span>`;
+    const cls = { success:'pill-success', failed:'pill-failed', pending:'pill-pending', running:'pill-running' }[val] || 'pill-pending';
+    return `<span class="pill ${cls}"><span class="pill-dot"></span>${esc(val)}</span>`;
   }
 
-  // Role badge
+  // Role pill
   if (col === 'role') {
-    const cls = { user:'badge-user', assistant:'badge-assistant', system:'badge-system' }[val] || '';
-    return `<span class="cell-badge ${cls}">${esc(val)}</span>`;
+    const cls = { user:'pill-user', assistant:'pill-assistant', system:'pill-system' }[val] || 'pill-pending';
+    return `<span class="pill ${cls}">${esc(val)}</span>`;
   }
 
-  // UUID columns
+  // UUID — click to copy
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (typeof val === 'string' && uuidRe.test(val)) {
-    return `<span class="cell-uuid"><span class="uuid-short">${val.slice(0, 8)}</span>…${val.slice(-4)}</span>`;
+    return `<span class="c-uuid" onclick="event.stopPropagation();copyText('${val}')" title="${val}">
+      <span class="short">${val.slice(0, 8)}</span>…${val.slice(-4)}
+      <span class="copy-hint">copy</span>
+    </span>`;
   }
 
   // Datetime
   if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
     const d = new Date(val);
-    const fmt = isNaN(d) ? val : d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-    return `<span class="cell-date" title="${esc(val)}">${fmt}</span>`;
+    if (!isNaN(d)) {
+      const fmt = d.toLocaleString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+      return `<span class="c-date" title="${esc(val)}">${fmt}</span>`;
+    }
   }
 
   // JSON object/array
   if (typeof val === 'object') {
     const json = JSON.stringify(val);
-    const preview = json.length > 40 ? json.slice(0, 40) + '…' : json;
-    const id = _storeCellData(json, 'json');
-    return `<span class="cell-json" onclick="showCellData(${id})">${esc(preview)}</span>`;
+    const preview = json.length > 50 ? json.slice(0, 50) + '…' : json;
+    const id = storeCell(json, 'json', col);
+    return `<span class="c-json" onclick="event.stopPropagation();showModal(${id})">${esc(preview)}</span>`;
   }
 
   // Number
-  if (typeof val === 'number') {
-    return `<span class="cell-number">${val}</span>`;
-  }
+  if (typeof val === 'number') return `<span class="c-num">${val.toLocaleString()}</span>`;
 
-  // Long text — clickable to show full content
+  // Long text
   const s = String(val);
-  if (s.length > 80) {
-    const id = _storeCellData(s, 'text', col);
-    return `<span class="cell-text-long" onclick="showCellData(${id})">${esc(s.slice(0, 80))}…</span>`;
+  if (s.length > 100) {
+    const id = storeCell(s, 'text', col);
+    return `<span class="c-text-long" onclick="event.stopPropagation();showModal(${id})">${esc(s.slice(0, 100))}…</span>`;
   }
 
   return esc(s);
 }
 
-function _storeCellData(value, type, colName) {
-  const id = ++_cellDataId;
-  _cellDataStore[id] = { value, type, colName };
+function storeCell(v, type, col) {
+  const id = ++_cellId;
+  _cellStore[id] = { value: v, type, col };
   return id;
 }
 
-function showCellData(id) {
-  const entry = _cellDataStore[id];
-  if (!entry) return;
-  const pre = document.getElementById('jsonModalContent');
-  const title = document.querySelector('.modal-header span');
+// ═════════════════════════════════════════════════════════════════
+// Row detail panel
+// ═════════════════════════════════════════════════════════════════
+function selectRow(idx, event) {
+  // Don't open detail if clicking interactive cells
+  if (event && (event.target.closest('.c-uuid') || event.target.closest('.c-json') || event.target.closest('.c-text-long'))) return;
+  selectedRowIdx = idx;
+  const filtered = getFilteredRows();
+  const row = filtered[idx];
+  if (!row) return;
 
-  if (entry.type === 'json') {
-    title.textContent = 'JSON Value';
-    pre.className = '';
-    try {
-      pre.textContent = JSON.stringify(JSON.parse(entry.value), null, 2);
-    } catch {
-      pre.textContent = entry.value;
+  const allCols = getAllColumns();
+  const panel = document.getElementById('detailPanel');
+  const body = document.getElementById('dpBody');
+
+  // Find a good title from ID column
+  const idCol = allCols.find(c => c.endsWith('_id') || c === 'id');
+  const idVal = idCol ? row[idCol] : null;
+  document.getElementById('dpTitle').textContent = 'Row Details';
+  document.getElementById('dpSubtitle').textContent = idVal ? `${idCol}: ${String(idVal).slice(0, 36)}` : `Row ${idx + 1}`;
+
+  body.innerHTML = allCols.map(c => {
+    const v = row[c];
+    const rawVal = v == null ? '' : (typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v));
+    const copyId = storeCell(rawVal, 'raw', c);
+    return `<div class="dp-field">
+      <div class="dp-field-name">
+        ${esc(c)}
+        <button class="dp-copy-btn" onclick="copyFieldValue(this, ${copyId})">Copy</button>
+      </div>
+      <div class="dp-field-val ${getDetailClass(c, v)}">${renderDetailValue(c, v)}</div>
+    </div>`;
+  }).join('');
+
+  panel.classList.add('open');
+  renderTable();
+}
+
+function getDetailClass(col, val) {
+  if (val == null) return '';
+  if (typeof val === 'object') return 'json-val mono';
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (typeof val === 'string' && uuidRe.test(val)) return 'mono';
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) return 'mono';
+  return '';
+}
+
+function renderDetailValue(col, val) {
+  if (val == null) return '<span style="color:var(--text4);font-style:italic;">NULL</span>';
+  if (typeof val === 'boolean') {
+    return val
+      ? '<span style="color:var(--accent);font-weight:600;">true</span>'
+      : '<span style="color:var(--red);font-weight:600;">false</span>';
+  }
+  if (typeof val === 'object') {
+    try { return esc(JSON.stringify(val, null, 2)); }
+    catch { return esc(String(val)); }
+  }
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
+    const d = new Date(val);
+    if (!isNaN(d)) {
+      return `<span style="color:var(--purple);">${d.toLocaleString('en-US', {
+        weekday:'short', year:'numeric', month:'short', day:'numeric',
+        hour:'2-digit', minute:'2-digit', second:'2-digit', timeZoneName:'short'
+      })}</span>`;
     }
+  }
+  return esc(String(val));
+}
+
+function closeDetail() {
+  selectedRowIdx = null;
+  document.getElementById('detailPanel').classList.remove('open');
+}
+
+function copyFieldValue(btn, id) {
+  const entry = _cellStore[id];
+  if (!entry) return;
+  copyText(entry.value);
+  btn.textContent = '✓ Copied';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Modal
+// ═════════════════════════════════════════════════════════════════
+function showModal(id) {
+  const entry = _cellStore[id];
+  if (!entry) return;
+  const pre = document.getElementById('modalPre');
+  const title = document.getElementById('modalTitle');
+  if (entry.type === 'json') {
+    title.textContent = entry.col ? `${entry.col} (JSON)` : 'JSON Value';
+    pre.className = 'json-pre';
+    try { pre.textContent = JSON.stringify(JSON.parse(entry.value), null, 2); }
+    catch { pre.textContent = entry.value; }
   } else {
-    title.textContent = entry.colName || 'Full Content';
-    pre.className = 'text-content';
+    title.textContent = entry.col || 'Full Content';
+    pre.className = 'text-pre';
     pre.textContent = entry.value;
   }
-  document.getElementById('jsonModal').classList.add('open');
+  document.getElementById('modal').classList.add('open');
 }
 
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+function copyModalContent() {
+  const text = document.getElementById('modalPre').textContent;
+  copyText(text);
+  const btn = document.getElementById('copyModalBtn');
+  btn.textContent = '✓ Copied';
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
 }
 
-// Legacy — kept for backward compat, delegates to new store
-function showJson(jsonStr) {
-  const id = _storeCellData(jsonStr, 'json');
-  showCellData(id);
+// ═════════════════════════════════════════════════════════════════
+// Column picker
+// ═════════════════════════════════════════════════════════════════
+function toggleColumnPicker() {
+  const el = document.getElementById('colPicker');
+  if (el.style.display !== 'none') { closeColumnPicker(); return; }
+  const allCols = getAllColumns();
+  el.innerHTML = `<div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;padding:2px 4px;font-weight:600;">Toggle Columns</div>`
+    + allCols.map(c => {
+      const checked = !hiddenCols.has(c) ? 'checked' : '';
+      return `<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;cursor:pointer;border-radius:3px;color:var(--text2);transition:background 0.1s;"
+                onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
+        <input type="checkbox" ${checked} onchange="toggleCol('${c}', this.checked)" style="accent-color:var(--accent);width:14px;height:14px;">
+        ${esc(c)}
+      </label>`;
+    }).join('');
+
+  const btn = document.getElementById('colToggleBtn');
+  const rect = btn.getBoundingClientRect();
+  el.style.left = Math.min(rect.left, window.innerWidth - 220) + 'px';
+  el.style.top = (rect.bottom + 4) + 'px';
+  el.style.display = 'block';
 }
 
-function closeModal(e) {
-  if (e.target.id === 'jsonModal') {
-    document.getElementById('jsonModal').classList.remove('open');
+function closeColumnPicker() { document.getElementById('colPicker').style.display = 'none'; }
+
+function toggleCol(col, show) {
+  if (show) hiddenCols.delete(col); else hiddenCols.add(col);
+  renderTable();
+}
+
+document.addEventListener('click', e => {
+  const picker = document.getElementById('colPicker');
+  const btn = document.getElementById('colToggleBtn');
+  if (picker.style.display !== 'none' && !picker.contains(e.target) && !btn.contains(e.target)) {
+    closeColumnPicker();
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════
+// Column resize
+// ═════════════════════════════════════════════════════════════════
+let _resizeCol = null, _resizeStart = 0, _resizeWidth = 0;
+
+function startResize(e, col) {
+  e.preventDefault(); e.stopPropagation();
+  _resizeCol = col;
+  _resizeStart = e.clientX;
+  _resizeWidth = e.target.parentElement.offsetWidth;
+  e.target.classList.add('resizing');
+  document.addEventListener('mousemove', onResize);
+  document.addEventListener('mouseup', endResize);
+}
+
+function onResize(e) {
+  if (!_resizeCol) return;
+  const diff = e.clientX - _resizeStart;
+  const newW = Math.max(60, _resizeWidth + diff);
+  _colWidths[activeTable + '.' + _resizeCol] = newW;
+  const cols = getVisibleColumns();
+  const idx = cols.indexOf(_resizeCol);
+  const ths = document.querySelectorAll('thead th');
+  if (idx >= 0 && ths[idx]) {
+    ths[idx].style.width = newW + 'px';
+    ths[idx].style.minWidth = newW + 'px';
   }
 }
+
+function endResize() {
+  document.querySelectorAll('.col-resize.resizing').forEach(el => el.classList.remove('resizing'));
+  _resizeCol = null;
+  document.removeEventListener('mousemove', onResize);
+  document.removeEventListener('mouseup', endResize);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Export CSV
+// ═════════════════════════════════════════════════════════════════
+function exportCSV() {
+  if (!activeTable) return;
+  const cols = getVisibleColumns();
+  const filtered = getFilteredRows();
+  let csv = cols.map(c => `"${c}"`).join(',') + '\n';
+  for (const row of filtered) {
+    csv += cols.map(c => {
+      let v = row[c];
+      if (v == null) return '';
+      if (typeof v === 'object') v = JSON.stringify(v);
+      return `"${String(v).replace(/"/g, '""')}"`;
+    }).join(',') + '\n';
+  }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${activeTable}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`Exported ${filtered.length} rows`);
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Utilities
+// ═════════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = '✓ ' + msg;
+  el.classList.add('show');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// Keyboard shortcuts
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('jsonModal').classList.remove('open');
+  if (e.key === 'Escape') { closeModal(); closeColumnPicker(); closeDetail(); }
 });
 </script>
 </body>
