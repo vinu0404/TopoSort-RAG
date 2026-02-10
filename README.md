@@ -264,7 +264,7 @@ flowchart TD
 
     subgraph Chunker["Structure-Aware Chunker"]
         direction TB
-        LLMParse["LLM analyses structure<br/><i>identify sections, tables,<br/>headings, hierarchy</i>"]
+        LLMParse["Regex based analyses structure<br/><i>identify sections, tables,<br/>headings, hierarchy</i>"]
         LLMParse --> SplitSections["Split into sections"]
         SplitSections --> TokenSplit["Token-based splitting<br/><i>1024 tokens per chunk<br/>respects paragraph boundaries</i>"]
         SplitSections --> TableChunk["Table chunks<br/><i>kept intact</i>"]
