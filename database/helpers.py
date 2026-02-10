@@ -101,6 +101,8 @@ async def get_or_create_conversation(
     )
     existing = result.scalar_one_or_none()
     if existing:
+        existing.updated_at = datetime.now(timezone.utc)
+        await session.flush()
         return str(existing.conversation_id)
 
     cid = uuid.uuid4()

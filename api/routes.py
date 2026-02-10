@@ -77,7 +77,6 @@ async def handle_query(
     )
 
     plan, _ = await asyncio.gather(plan_coro, extract_coro)
-    # Skip orchestration for conversation_memory queries (no agents needed)
     if plan.execution_plan.agents:
         registry = ToolRegistry()
         agent_instances = build_agent_instances(registry)

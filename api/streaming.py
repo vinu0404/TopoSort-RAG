@@ -109,8 +109,6 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
         })
 
         yield _sse_event("status", {"phase": "executing"})
-
-        # Skip orchestration for conversation_memory queries (no agents needed)
         if plan.execution_plan.agents:
             registry = ToolRegistry()
             agent_instances = build_agent_instances(registry)

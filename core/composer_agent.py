@@ -66,6 +66,37 @@ class ComposerAgent:
         partial = [r for r in failed if r.partial_data is not None]
         completely_failed = [r.agent_name for r in failed if r.partial_data is None]
 
+        # Detect conversation-memory queries (no agents dispatched)
+        is_memory_query = not successful and not partial and not completely_failed
+
+        if is_memory_query:
+            return f"""You are the Final Response Composer for a multi-agent RAG system.
+The user has asked a question about the conversation itself — no specialised agents were needed.
+Answer ENTIRELY from the conversation history and user profile below.
+
+### Original User Query
+{ci.original_query}
+
+### User Profile
+{ci.long_term_memory.model_dump() if hasattr(ci.long_term_memory, 'model_dump') else ci.long_term_memory}
+
+### Conversation History
+{self._format_conversation_history(ci.conversation_history)}
+
+### Instructions for Conversation-Memory Queries
+1. **Answer directly** from the conversation history above. Do NOT say "I don't have
+   access to that information" — the history IS your information source.
+2. If the user asks "what did I ask?", "what were my last questions?", "summarise our
+   chat", etc., list their previous queries clearly with any relevant answers.
+3. If the user asks "what topics have we discussed?", extract the key themes/topics
+   from the conversation history.
+4. Be precise — quote exact queries and answers when the user asks for them.
+5. Use a natural, conversational tone. Don't over-explain.
+6. **Address the user by name** if their name is available in the User Profile.
+7. **Language**: If the user profile specifies a preferred language, respond in that language.
+
+### Answer"""
+
         return f"""You are the Final Response Composer for a multi-agent RAG system.
 Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
 
