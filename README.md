@@ -454,6 +454,7 @@ flowchart TD
 | **`conversation_summaries`** | Rolling summaries of every 3 conversation turns | `summary_id` (UUID PK), `conversation_id` (FK), `summary_text`, `turns_covered` |
 | **`user_long_term_memory`** | Persistent user profile extracted by the Memory Extractor | `user_id` (UUID PK), `critical_facts` (JSONB), `preferences` (JSONB), `updated_at` |
 | **`hitl_requests`** | HITL approval requests for agents with dangerous tools | `request_id` (UUID PK), `conversation_id` (FK), `agent_id`, `agent_name`, `tool_names` (TEXT[]), `status` (`pending`/`approved`/`denied`/`timed_out`/`expired`), `user_instructions`, `expires_at` |
+| **`user_connections`** | OAuth connections per user per provider | `connection_id` (UUID PK), `user_id` (FK), `provider` (VARCHAR), `account_label`, `account_id`, `access_token` (encrypted), `refresh_token` (encrypted), `expires_at`, `scopes` (TEXT[]), `provider_meta` (JSONB), `status` (`active`/`expired`/`error`/`revoked`) |
 
 #### `user_long_term_memory` — JSONB Column Detail
 
@@ -635,6 +636,684 @@ User Query
 
 ---
 
+## Auth & Connectors Architecture
+
+The system uses a modular architecture for authentication and third-party OAuth integrations.
+
+### Project Structure
+
+```
+MRAG/
+├── auth/                            # User authentication module
+│   ├── __init__.py
+│   ├── routes.py                    # POST /register, /login
+│   ├── jwt.py                       # JWT create/verify (HMAC-SHA256)
+│   ├── models.py                    # User ORM (re-exports from database/models.py)
+│   ├── dependencies.py              # get_current_user_id() FastAPI dependency
+│   └── password.py                  # bcrypt hash/verify
+│
+├── connectors/                      # OAuth connector module
+│   ├── __init__.py
+│   ├── routes.py                    # /providers, /auth-url, /callback, /connections
+│   ├── base.py                      # BaseConnector abstract class
+│   ├── gmail.py                     # GmailConnector(BaseConnector)
+│   ├── models.py                    # UserConnection ORM (re-exports from database/models.py)
+│   ├── registry.py                  # ConnectorRegistry (auto-discover at startup)
+│   ├── token_manager.py             # get/store/refresh/revoke per-user tokens
+│   └── encryption.py                # Fernet AES encryption for tokens at rest
+│
+├── api/                             # AI routes (unchanged)
+│   ├── routes.py                    # /query, /hitl/respond
+│   ├── streaming.py                 # /query/stream (SSE)
+│   └── middleware.py
+│
+├── agents/                          # Agent implementations
+├── core/                            # Orchestrator, Master, Composer
+├── tools/                           # Tool functions (mail_tools uses connectors)
+└── ...
+```
+
+### Security Configuration
+
+All secrets are loaded from environment variables via `config/settings.py`:
+
+| Env Var | Purpose | Generate with |
+|---------|---------|---------------|
+| `JWT_SECRET` | HMAC-SHA256 signing key for auth tokens | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `JWT_EXPIRY_SECONDS` | Token TTL (default: 604800 = 7 days) | — |
+| `OAUTH_STATE_SECRET` | HMAC key for OAuth CSRF state tokens | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting OAuth tokens at rest | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+#### Password Hashing
+
+Passwords are hashed with **bcrypt** (work factor 12, auto-salted):
+
+```python
+# auth/password.py
+from auth.password import hash_password, verify_password
+
+hashed = hash_password("user-password")       # $2b$12$...
+ok     = verify_password("user-password", hashed)  # True
+```
+
+#### Token Encryption at Rest
+
+OAuth access tokens and refresh tokens are encrypted with **Fernet (AES-128-CBC + HMAC-SHA256)** before being stored in PostgreSQL. This is handled transparently by `connectors/encryption.py`:
+
+```
+Store flow:   plaintext_token → encrypt_token() → ciphertext → DB column
+Read flow:    DB column → ciphertext → decrypt_token() → plaintext_token
+```
+
+- If `TOKEN_ENCRYPTION_KEY` is not set, tokens are stored as plaintext (with a warning)
+- Tokens stored before encryption was enabled are handled gracefully (auto-detected and returned as-is)
+- All encryption/decryption is done inside `token_manager.py` — no other code needs to know about it
+
+### OAuth Connector Flow
+
+```mermaid
+sequenceDiagram
+    participant User as User (Frontend)
+    participant FE as Sidebar UI
+    participant API as /api/v1/connectors
+    participant Google as Google OAuth
+    participant DB as PostgreSQL
+
+    User->>FE: Click "Connect Gmail"
+    FE->>API: GET /gmail/auth-url
+    API-->>FE: {auth_url: "https://accounts.google.com/..."}
+    FE->>Google: Open popup → auth_url
+    Google-->>User: Consent screen
+    User->>Google: Approve
+    Google->>API: GET /gmail/callback?code=XXX&state=YYY
+    API->>API: Verify state (HMAC + TTL)
+    API->>Google: POST /token (exchange code)
+    Google-->>API: {access_token, refresh_token, expires_in}
+    API->>API: encrypt_token(access_token)
+    API->>DB: INSERT/UPDATE user_connections
+    API-->>Google: Return auto-closing HTML
+    Note over FE: postMessage('oauth-callback')
+    FE->>API: GET /connections (refresh list)
+    API-->>FE: [{provider: gmail, status: active, ...}]
+```
+
+### How Tools Use Connector Tokens
+
+When the Mail Agent runs, it needs a Gmail API token. The flow is:
+
+```
+mail_agent.execute()
+  → sets current_user_id ContextVar
+  → calls get_gmail_service_async(user_id)
+    → calls token_manager.get_active_token(user_id, "gmail")
+      → SELECT from user_connections WHERE user_id + provider
+      → decrypt_token(access_token)
+      → if expired: refresh via connector.refresh_access_token()
+      → return plaintext access_token
+    → builds Gmail API service object
+  → tools use the authenticated service
+```
+
+No tool function signatures change. The `current_user_id` ContextVar bridges the user context to per-user tokens.
+
+---
+
+## How to Add a New Connector
+
+Adding a new OAuth connector (Slack, Notion, GitHub, etc.) is a **5-step process**. Below is a complete walkthrough using **Slack** as the example, including HITL-protected tools.
+
+### Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Step 1 │ connectors/slack.py         — implement SlackConnector   │
+│  Step 2 │ connectors/registry.py      — register the connector     │
+│  Step 3 │ config/settings.py + .env   — add client_id / secret     │
+│  Step 4 │ tools/slack_tools.py        — implement tool functions   │
+│  Step 5 │ agents/slack_agent/         — agent.py + prompts.py      │
+│  Step 6 │ config/agent_registry.yaml  — register agent             │
+│  Step 7 │ core/agent_factory.py        — wire agent instance       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Step 1 — Create the Connector
+
+Create `connectors/slack.py` — subclass `BaseConnector` and implement the four OAuth methods:
+
+```python
+# connectors/slack.py
+
+"""SlackConnector — OAuth2 for Slack workspace access."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List
+from urllib.parse import urlencode
+
+import httpx
+
+from config.settings import config
+from connectors.base import BaseConnector
+
+logger = logging.getLogger(__name__)
+
+_SLACK_AUTH_URL = "https://slack.com/oauth/v2/authorize"
+_SLACK_TOKEN_URL = "https://slack.com/api/oauth.v2.access"
+_SLACK_REVOKE_URL = "https://slack.com/api/auth.revoke"
+
+
+class SlackConnector(BaseConnector):
+
+    @property
+    def provider_name(self) -> str:
+        return "slack"
+
+    @property
+    def display_name(self) -> str:
+        return "Slack"
+
+    @property
+    def scopes(self) -> List[str]:
+        return [
+            "channels:read",
+            "channels:history",
+            "chat:write",
+            "users:read",
+        ]
+
+    @property
+    def icon(self) -> str:
+        return "💬"
+
+    def is_configured(self) -> bool:
+        return bool(config.slack_client_id and config.slack_client_secret)
+
+    def _redirect_uri(self) -> str:
+        return f"{config.oauth_redirect_base}/api/v1/connectors/slack/callback"
+
+    def get_auth_url(self, state: str) -> str:
+        params = {
+            "client_id": config.slack_client_id,
+            "redirect_uri": self._redirect_uri(),
+            "scope": ",".join(self.scopes),
+            "state": state,
+        }
+        return f"{_SLACK_AUTH_URL}?{urlencode(params)}"
+
+    async def handle_callback(self, code: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                _SLACK_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": config.slack_client_id,
+                    "client_secret": config.slack_client_secret,
+                    "redirect_uri": self._redirect_uri(),
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if not data.get("ok"):
+                raise ValueError(f"Slack OAuth error: {data.get('error')}")
+
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in", 43200),  # 12h default
+            "scopes": data.get("scope", "").split(","),
+            "account_id": data.get("team", {}).get("id", ""),
+            "account_label": data.get("team", {}).get("name", "Slack Workspace"),
+            "provider_meta": {
+                "team_id": data.get("team", {}).get("id"),
+                "team_name": data.get("team", {}).get("name"),
+                "bot_user_id": data.get("bot_user_id"),
+            },
+        }
+
+    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+        # Slack V2 tokens don't always support refresh — depends on app type
+        # For token rotation apps, implement refresh here
+        raise NotImplementedError("Slack token refresh not supported for this app type")
+
+    async def revoke_token(self, access_token: str) -> bool:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    _SLACK_REVOKE_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                data = resp.json()
+                return data.get("ok", False)
+        except Exception:
+            return False
+```
+
+**Key rules:**
+- `provider_name` must be a unique slug — used in URLs (`/connectors/slack/callback`)
+- `is_configured()` gates registration — connector is skipped if credentials are missing
+- `handle_callback()` must return the standardised dict with `access_token`, `refresh_token`, `scopes`, `account_id`, `account_label`, `provider_meta`
+- All HTTP calls use `httpx.AsyncClient` (async-compatible)
+
+---
+
+### Step 2 — Register in ConnectorRegistry
+
+Add the import and instance to the `_ALL_CONNECTORS` list in `connectors/registry.py`:
+
+```python
+# connectors/registry.py
+
+from connectors.slack import SlackConnector
+
+_ALL_CONNECTORS: List[BaseConnector] = [
+    GmailConnector(),
+    SlackConnector(),      # ← add here
+    # NotionConnector(),   # future
+]
+```
+
+That's all — the registry auto-discovers configured connectors at startup and logs a warning for unconfigured ones.
+
+---
+
+### Step 3 — Add Config
+
+Add credentials to `config/settings.py`:
+
+```python
+# config/settings.py — inside class Settings:
+
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+```
+
+Add env vars to `.env`:
+
+```env
+# ── Slack OAuth ──────────────────────────────────────
+# 1. Go to https://api.slack.com/apps → Create New App
+# 2. OAuth & Permissions → Add redirect URL:
+#    http://localhost:8000/api/v1/connectors/slack/callback
+# 3. Copy Client ID and Client Secret below
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+```
+
+---
+
+### Step 4 — Create Tool Functions with HITL
+
+Create `tools/slack_tools.py`. Some tools are read-only (safe), others send messages (irreversible → `requires_approval=True`):
+
+```python
+# tools/slack_tools.py
+
+"""Slack tools — registered via @tool decorator."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List
+
+import httpx
+
+from tools import tool
+
+logger = logging.getLogger(__name__)
+
+_SLACK_API = "https://slack.com/api"
+
+
+async def _slack_api(token: str, method: str, **kwargs) -> Dict[str, Any]:
+    """Helper — call a Slack Web API method."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_SLACK_API}/{method}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=kwargs,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("ok"):
+            raise ValueError(f"Slack API error: {data.get('error')}")
+        return data
+
+
+# ── Safe tools (no approval needed) ────────────────────────────────────
+
+
+@tool("slack_agent")
+async def list_channels(token: str) -> List[Dict[str, Any]]:
+    """List public channels in the workspace."""
+    data = await _slack_api(token, "conversations.list", types="public_channel", limit=100)
+    return [
+        {"id": ch["id"], "name": ch["name"], "topic": ch.get("topic", {}).get("value", "")}
+        for ch in data.get("channels", [])
+    ]
+
+
+@tool("slack_agent")
+async def read_channel_history(
+    token: str,
+    channel_id: str,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """Read recent messages from a channel."""
+    data = await _slack_api(token, "conversations.history", channel=channel_id, limit=limit)
+    return [
+        {"user": m.get("user", ""), "text": m.get("text", ""), "ts": m.get("ts", "")}
+        for m in data.get("messages", [])
+    ]
+
+
+@tool("slack_agent")
+async def search_messages(
+    token: str,
+    query: str,
+    count: int = 10,
+) -> List[Dict[str, Any]]:
+    """Search messages across the workspace."""
+    data = await _slack_api(token, "search.messages", query=query, count=count)
+    matches = data.get("messages", {}).get("matches", [])
+    return [
+        {
+            "channel": m.get("channel", {}).get("name", ""),
+            "user": m.get("username", ""),
+            "text": m.get("text", ""),
+            "ts": m.get("ts", ""),
+            "permalink": m.get("permalink", ""),
+        }
+        for m in matches
+    ]
+
+
+# ── Dangerous tools (requires HITL approval) ──────────────────────────
+
+
+@tool("slack_agent", requires_approval=True)
+async def send_message(
+    token: str,
+    channel_id: str,
+    text: str,
+) -> Dict[str, Any]:
+    """
+    Send a message to a Slack channel.
+    ⚠️ Requires user approval — this posts a real message visible to everyone.
+    """
+    data = await _slack_api(token, "chat.postMessage", channel=channel_id, text=text)
+    return {
+        "channel": data.get("channel", ""),
+        "ts": data.get("ts", ""),
+        "message": data.get("message", {}).get("text", ""),
+    }
+
+
+@tool("slack_agent", requires_approval=True)
+async def send_dm(
+    token: str,
+    user_id: str,
+    text: str,
+) -> Dict[str, Any]:
+    """
+    Send a direct message to a user.
+    ⚠️ Requires user approval — this sends a real DM.
+    """
+    # Open DM channel first
+    dm = await _slack_api(token, "conversations.open", users=user_id)
+    channel_id = dm["channel"]["id"]
+    data = await _slack_api(token, "chat.postMessage", channel=channel_id, text=text)
+    return {
+        "channel": channel_id,
+        "ts": data.get("ts", ""),
+        "message": text,
+    }
+```
+
+**Key points:**
+- `@tool("slack_agent")` — safe, read-only tools: `list_channels`, `read_channel_history`, `search_messages`
+- `@tool("slack_agent", requires_approval=True)` — irreversible tools: `send_message`, `send_dm`
+- The HITL system auto-detects tools with `requires_approval=True` at startup — no orchestrator changes needed
+- When the user queries "send a message to #general", the Orchestrator sees `send_message` requires approval → triggers the HITL dialog → the user approves or denies → only then does the agent execute
+
+---
+
+### Step 5 — Create the Agent
+
+Create `agents/slack_agent/` with `__init__.py`, `prompts.py`, and `agent.py`:
+
+#### `agents/slack_agent/prompts.py`
+
+```python
+# agents/slack_agent/prompts.py
+
+from __future__ import annotations
+from typing import Any, Dict
+
+from utils.prompt_utils import format_user_profile
+
+
+class SlackPrompts:
+
+    @staticmethod
+    def action_prompt(
+        task: str,
+        entities: Dict[str, Any],
+        dependency_outputs: Dict[str, Any] | None = None,
+        long_term_memory: Dict[str, Any] | None = None,
+    ) -> str:
+        dep_context = ""
+        if dependency_outputs:
+            dep_context = "\n### Context from other agents\n"
+            for aid, data in dependency_outputs.items():
+                dep_context += f"- **{aid}**: {str(data)[:500]}\n"
+
+        profile = format_user_profile(long_term_memory or {})
+
+        return f"""You are a Slack Integration Agent in a multi-agent system.
+
+### Task
+{task}
+{dep_context}
+{profile}
+### Available Actions
+- list_channels       — list workspace channels
+- read_channel_history — read recent messages from a channel
+- search_messages      — search across the workspace
+- send_message         — post a message to a channel (⚠️ requires approval)
+- send_dm              — send a direct message (⚠️ requires approval)
+
+### Instructions
+1. Determine the best action(s) to fulfil the task.
+2. For read operations, gather information first, then summarise.
+3. For send operations, compose a professional message matching the user's tone preferences.
+4. Always confirm what was done in your response.
+"""
+```
+
+#### `agents/slack_agent/agent.py`
+
+```python
+# agents/slack_agent/agent.py
+
+from __future__ import annotations
+
+import time
+from typing import Any, Dict, List
+from contextvars import ContextVar
+
+from agents.base_agent import BaseAgent
+from agents.slack_agent.prompts import SlackPrompts
+from config.settings import config
+from utils.schemas import AgentInput, AgentOutput
+
+# Same ContextVar pattern as mail_agent — bridges user_id to tools
+current_user_id: ContextVar[str] = ContextVar("current_user_id", default="")
+
+
+class SlackAgent(BaseAgent):
+    def __init__(self, tool_registry, llm_provider):
+        super().__init__("slack_agent", tool_registry)
+        self.llm = llm_provider
+        self.prompts = SlackPrompts()
+
+    def get_required_tools(self) -> List[str]:
+        return ["list_channels", "read_channel_history", "search_messages",
+                "send_message", "send_dm"]
+
+    async def execute(self, task_config: AgentInput) -> AgentOutput:
+        start = time.perf_counter()
+
+        # Set user context for per-user token retrieval
+        user_id = task_config.metadata.get("user_id", "")
+        current_user_id.set(user_id)
+
+        # Get per-user Slack token via connectors
+        from connectors.token_manager import get_active_token
+        token = await get_active_token(user_id, "slack")
+        if not token:
+            return AgentOutput(
+                agent_id=task_config.agent_id,
+                agent_name=self.agent_name,
+                task_description=task_config.task,
+                task_done=False,
+                error="Slack not connected. Please connect Slack via the Connections panel.",
+                data={},
+            )
+
+        try:
+            # Use HITL-aware effective task
+            effective_task = await self._effective_task(task_config)
+
+            prompt = self.prompts.action_prompt(
+                task=effective_task,
+                entities=task_config.entities,
+                dependency_outputs=task_config.dependency_outputs,
+                long_term_memory=task_config.long_term_memory,
+            )
+
+            # LLM decides which tool(s) to call and composes the response
+            result = await self.llm.generate(
+                prompt=prompt,
+                temperature=config.get_agent_model_config("slack_agent")["temperature"],
+                model=config.get_agent_model_config("slack_agent")["model"],
+            )
+
+            return AgentOutput(
+                agent_id=task_config.agent_id,
+                agent_name=self.agent_name,
+                task_description=effective_task,
+                task_done=True,
+                result=result,
+                data={"result": result},
+                confidence_score=0.85,
+                resource_usage={
+                    "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                },
+                depends_on=list(task_config.dependency_outputs.keys()),
+            )
+        except Exception:
+            raise  # Let execute_with_retry handle retries
+```
+
+---
+
+### Step 6 — Register the Agent
+
+Follow the standard agent registration in `config/agent_registry.yaml`:
+
+```yaml
+  slack_agent:
+    description: "Interacts with Slack — read channels, search messages, send messages"
+    capabilities:
+      - slack_read
+      - slack_search
+      - slack_send
+    tools:
+      - list_channels
+      - read_channel_history
+      - search_messages
+      - send_message
+      - send_dm
+    typical_use_cases:
+      - "Search Slack for messages about deployment"
+      - "Send a message to #general"
+      - "Read the latest messages in #engineering"
+    default_timeout: 30
+    max_retries: 2
+```
+
+And add model config to `config/settings.py`:
+
+```python
+    slack_model_provider: str = "openai"
+    slack_model: str = "gpt-4o-mini"
+    slack_temperature: float = 0.3
+```
+
+---
+
+### Step 7 — Wire the Agent Instance
+
+All agents are built centrally in `core/agent_factory.py`. Add your agent to the `build_agent_instances()` function — `api/routes.py` and `api/streaming.py` both call this function automatically, so you do **not** touch them:
+
+```python
+# core/agent_factory.py
+
+from agents.slack_agent.agent import SlackAgent
+
+def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
+    # ... existing agents ...
+    slack_cfg = config.get_agent_model_config("slack_agent")
+
+    return {
+        # ... existing agents ...
+        "slack_agent": SlackAgent(
+            tool_registry=registry,
+            llm_provider=get_llm_provider(slack_cfg["provider"], default_model=slack_cfg["model"]),
+        ),
+    }
+```
+
+### What Happens at Runtime
+
+When a user asks "Send a summary of today's deployments to #general on Slack":
+
+1. **Master Agent** routes to `slack_agent` (capabilities match `slack_send`)
+2. **Orchestrator** checks `slack_agent`'s tools → finds `send_message` has `requires_approval=True`
+3. **HITL flow triggers** → SSE event `hitl_required` sent to frontend
+4. **User sees dialog**: "slack_agent wants to use `send_message`. Approve?"
+5. **User approves** (optionally adds instructions like "add a 🚀 emoji")
+6. **`_effective_task()`** classifies instructions as `enhance` → agent gets both tasks
+7. **Agent executes** → calls `get_active_token("slack")` → gets per-user token → calls Slack API
+8. **Composer** synthesises the final answer with what was sent
+
+### Checklist
+
+| # | File | Action |
+|---|------|--------|
+| 1 | `connectors/slack.py` | `SlackConnector(BaseConnector)` with OAuth flow |
+| 2 | `connectors/registry.py` | Add `SlackConnector()` to `_ALL_CONNECTORS` |
+| 3 | `config/settings.py` + `.env` | Add `slack_client_id`, `slack_client_secret`, model config |
+| 4 | `tools/slack_tools.py` | `@tool("slack_agent")` and `@tool("slack_agent", requires_approval=True)` |
+| 5 | `agents/slack_agent/` | `prompts.py` + `agent.py` (uses `_effective_task()` for HITL) |
+| 6 | `config/agent_registry.yaml` | Register capabilities, tools, use cases |
+| 7 | `core/agent_factory.py` | Add `SlackAgent` to `build_agent_instances()` return dict |
+
+### What You Get for Free
+
+- **OAuth UI** — "Connect Slack" button appears automatically in the frontend sidebar (the connector routes serve it)
+- **Token management** — auto-refresh, encryption at rest, revocation on disconnect
+- **HITL approval** — any tool with `requires_approval=True` triggers the approval dialog
+- **HITL instructions** — user can add "change the tone" or "don't include X" during approval, auto-classified as enhance/override
+- **Dashboard** — `user_connections` table shows all Slack connections in the admin dashboard
+- **No orchestrator changes** — HITL, toposort, parallel stages all work identically
+
+---
+
 ## Quick Start
 
 ```bash
@@ -660,7 +1339,7 @@ Adding a new agent is a **7-step process** touching 6 files (3 new, 3 existing).
 │  Step 3 │ .env                        — set model env vars         │
 │  Step 4 │ tools/summary_tools.py      — implement tool functions   │
 │  Step 5 │ agents/summary_agent/       — prompts.py + agent.py      │
-│  Step 6 │ api/routes.py & streaming.py — inject agent instance     │
+│  Step 6 │ core/agent_factory.py        — inject agent instance     │
 │  Step 7 │ tests/                      — add agent tests   # Optional         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -942,16 +1621,24 @@ class SummaryAgent(BaseAgent):
 
 ### Step 6 — Wire the Agent Instance
 
-In both `api/routes.py` and `api/streaming.py`, add the agent to the `agent_instances` dict passed to the `Orchestrator`:
+All agents are built centrally in `core/agent_factory.py`. Add your agent to the `build_agent_instances()` function — `api/routes.py` and `api/streaming.py` both call this function, so you do **not** touch them:
 
 ```python
+# core/agent_factory.py
+
 from agents.summary_agent.agent import SummaryAgent
 
-# When building agent_instances (before creating Orchestrator):
-summary_llm = get_llm_provider(config.summary_model_provider, default_model=config.summary_model)
-agent_instances["summary_agent"] = SummaryAgent(tool_registry, summary_llm)
+def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
+    # ... existing agents ...
+    summary_cfg = config.get_agent_model_config("summary_agent")
 
-orchestrator = Orchestrator(agent_instances=agent_instances)
+    return {
+        # ... existing agents ...
+        "summary_agent": SummaryAgent(
+            tool_registry=registry,
+            llm_provider=get_llm_provider(summary_cfg["provider"], default_model=summary_cfg["model"]),
+        ),
+    }
 ```
 
 ---
@@ -1006,7 +1693,7 @@ async def test_summary_agent_execute():
 | 5 | `agents/<name>/__init__.py` | Empty package file |
 | 5 | `agents/<name>/prompts.py` | Prompt class using `format_user_profile()` from `utils/prompt_utils.py` |
 | 5 | `agents/<name>/agent.py` | Subclass `BaseAgent`, implement `execute()` + `get_required_tools()` |
-| 6 | `api/routes.py` + `api/streaming.py` | Import agent, create instance, add to `agent_instances` dict |
+| 6 | `core/agent_factory.py` | Add agent to `build_agent_instances()` return dict |
 | 7 | `tests/test_<name>_agent.py` | Unit test for the new agent |
 
 ### Architecture Rules

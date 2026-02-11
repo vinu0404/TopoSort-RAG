@@ -1,11 +1,5 @@
 """
 Singleton ToolRegistry with auto-discovery.
-
-BUG-9  FIX : uses pathlib for cross-platform path handling so it works on
-             Windows (backslashes) and POSIX (forward slashes).
-BUG-15 FIX : auto_discover_tools scans `tools/*_tools.py`.  Agent-level
-             `agents/<name>/tools.py` files are *wrappers* that re-export
-             functions from here; they are NOT scanned by discovery.
 """
 
 from __future__ import annotations

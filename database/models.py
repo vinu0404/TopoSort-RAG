@@ -36,6 +36,7 @@ class User(Base):
 
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
+    connections = relationship("UserConnection", cascade="all, delete-orphan")
 
 
 class Session(Base):
@@ -153,3 +154,26 @@ class UserLongTermMemory(Base):
     critical_facts = Column(JSONB, nullable=False, default=dict)
     preferences = Column(JSONB, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class UserConnection(Base):
+    __tablename__ = "user_connections"
+
+    connection_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    provider = Column(String(32), nullable=False)
+    account_label = Column(String(128))
+    account_id = Column(String(256))
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text)
+    token_type = Column(String(32), default="Bearer")
+    expires_at = Column(DateTime(timezone=True))
+    scopes = Column(ARRAY(Text), default=list)
+    provider_meta = Column(JSONB, default=dict)
+    status = Column(String(16), nullable=False, default="active")
+    connected_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_refreshed = Column(DateTime(timezone=True))
+    last_used_at = Column(DateTime(timezone=True))
+    error_message = Column(Text)
+
+    user = relationship("User")

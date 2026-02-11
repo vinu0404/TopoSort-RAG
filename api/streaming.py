@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import db_session, get_current_user_id
+from auth.dependencies import db_session, get_current_user_id
 from config.model_list import AgentRegistry
 from config.settings import config
 from core.composer_agent import ComposerAgent

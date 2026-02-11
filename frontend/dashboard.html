@@ -598,6 +598,7 @@ const TABLES = [
   { name: 'conversation_summaries', icon: '📝' },
   { name: 'user_long_term_memory',  icon: '🧠' },
   { name: 'hitl_requests',           icon: '✋' },
+  { name: 'user_connections',         icon: '🔗' },
 ];
 
 const BACKEND = 'http://localhost:8080';
@@ -694,6 +695,7 @@ function buildSummary() {
     { icon: '📄', label: 'Documents',   val: DB.documents?.length || 0, bg: 'var(--blue-bg)',  bc: 'var(--blue-b)' },
     { icon: '🧠', label: 'Memories',    val: DB.user_long_term_memory?.length || 0, bg: 'var(--accent-bg)', bc: 'var(--accent-b)' },
     { icon: '✋', label: 'HITL Requests', val: DB.hitl_requests?.length || 0, bg: 'var(--amber-bg)', bc: 'rgba(245,158,11,0.25)' },
+    { icon: '🔗', label: 'Connections', val: DB.user_connections?.length || 0, bg: 'var(--purple-bg)', bc: 'rgba(167,139,250,0.25)' },
   ];
   document.getElementById('summaryBar').innerHTML = cards.map(c => `
     <div class="summary-card">

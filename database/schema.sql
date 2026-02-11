@@ -121,3 +121,29 @@ CREATE TABLE IF NOT EXISTS user_long_term_memory (
     preferences      JSONB NOT NULL DEFAULT '{}',
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- OAuth connections (Gmail, Slack, Notion, GitHub, …) ────────────────────────
+
+CREATE TABLE IF NOT EXISTS user_connections (
+    connection_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    provider         VARCHAR(32) NOT NULL,           -- 'gmail', 'slack', 'notion', 'github'
+    account_label    VARCHAR(128),                    -- "john@gmail.com", "Acme Workspace"
+    account_id       VARCHAR(256),                    -- provider-side unique ID
+    access_token     TEXT NOT NULL,
+    refresh_token    TEXT,
+    token_type       VARCHAR(32) DEFAULT 'Bearer',
+    expires_at       TIMESTAMPTZ,
+    scopes           TEXT[] DEFAULT '{}',
+    provider_meta    JSONB DEFAULT '{}',
+    status           VARCHAR(16) NOT NULL DEFAULT 'active',   -- active | expired | revoked | error
+    connected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_refreshed   TIMESTAMPTZ,
+    last_used_at     TIMESTAMPTZ,
+    error_message    TEXT,
+    UNIQUE(user_id, provider, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conn_user     ON user_connections(user_id);
+CREATE INDEX IF NOT EXISTS idx_conn_provider ON user_connections(user_id, provider);
+CREATE INDEX IF NOT EXISTS idx_conn_status   ON user_connections(status);

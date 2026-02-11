@@ -94,6 +94,42 @@
     min-height: 20px;
   }
 
+  /* ── Connections ───────────────────────────────────────── */
+  .connections-section { margin-top: 16px; }
+  .connections-section h3 { font-size: 0.85rem; margin-bottom: 8px; }
+  .conn-list { display: flex; flex-direction: column; gap: 6px; }
+  .conn-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px;
+    background: #f5f5f7; font-size: 0.8rem;
+  }
+  .conn-item .conn-icon { font-size: 1.1rem; flex-shrink: 0; }
+  .conn-item .conn-info { flex: 1; min-width: 0; }
+  .conn-item .conn-label {
+    font-weight: 600; font-size: 0.78rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .conn-item .conn-status {
+    font-size: 0.65rem; color: #666;
+  }
+  .conn-item .conn-status.active { color: #34c759; }
+  .conn-item .conn-status.error { color: #ff3b30; }
+  .conn-item .conn-disconnect {
+    background: none; border: none; cursor: pointer;
+    color: #999; font-size: 0.75rem; padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .conn-item .conn-disconnect:hover { background: #fee; color: #ff3b30; }
+  .conn-btn {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; padding: 8px 12px; margin-top: 4px;
+    border: 1px dashed #ccc; border-radius: 8px;
+    background: none; cursor: pointer;
+    font-size: 0.78rem; color: #666;
+    transition: all 0.15s;
+  }
+  .conn-btn:hover { border-color: #007aff; color: #007aff; background: #f0f5ff; }
+
   /* ── Header ────────────────────────────────────────────── */
   .header {
     display: flex;
@@ -609,6 +645,13 @@
         <li>Multi-agent orchestration</li>
       </ul>
     </div>
+
+    <div class="connections-section">
+      <h3>Connections</h3>
+      <div class="conn-list" id="connList">
+        <!-- Populated by JS -->
+      </div>
+    </div>
   </aside>
 
   <main class="chat">
@@ -759,6 +802,7 @@ function onLoginSuccess(data) {
   authOverlay.classList.add('hidden');
   userNameEl.textContent = data.display_name || 'User';
   currentSessionId = null; // Let backend create new session
+  loadConnections();
 }
 
 function doLogout() {
@@ -769,7 +813,104 @@ function doLogout() {
   messagesEl.innerHTML = '';
   messagesEl.appendChild(welcomeEl);
   welcomeEl.style.display = '';
+  document.getElementById('connList').innerHTML = '';
 }
+
+// ─── Connections (OAuth) ──────────────────────────────
+const PROVIDER_ICONS = {
+  gmail: '📧', slack: '💬', notion: '📝', github: '🐙',
+};
+const PROVIDER_LABELS = {
+  gmail: 'Gmail', slack: 'Slack', notion: 'Notion', github: 'GitHub',
+};
+
+async function loadConnections() {
+  const connList = document.getElementById('connList');
+  if (!connList || !currentUser) return;
+  connList.innerHTML = '<div style="color:#888;font-size:0.85em">Loading…</div>';
+
+  try {
+    const [provRes, connRes] = await Promise.all([
+      fetch(`${API}/connectors/providers`),
+      fetch(`${API}/connectors/connections`, { headers: authHeaders() }),
+    ]);
+    const providers = provRes.ok ? await provRes.json() : [];
+    const connections = connRes.ok ? await connRes.json() : [];
+
+    const connByProvider = {};
+    connections.forEach(c => { connByProvider[c.provider] = c; });
+
+    let html = '';
+    providers.forEach(p => {
+      const conn = connByProvider[p.name];
+      const icon = PROVIDER_ICONS[p.name] || '🔗';
+      const label = PROVIDER_LABELS[p.name] || p.display_name;
+      if (conn) {
+        html += `
+          <div class="conn-item">
+            <span class="conn-icon">${icon}</span>
+            <div class="conn-info">
+              <span class="conn-label">${label}</span>
+              <span class="conn-status connected">${conn.account_label || 'Connected'}</span>
+            </div>
+            <button class="conn-disconnect" onclick="disconnectConnection('${conn.id}')" title="Disconnect">✕</button>
+          </div>`;
+      } else {
+        html += `
+          <div class="conn-item">
+            <span class="conn-icon">${icon}</span>
+            <div class="conn-info">
+              <span class="conn-label">${label}</span>
+              <span class="conn-status">Not connected</span>
+            </div>
+            <button class="conn-btn" onclick="connectProvider('${p.name}')">Connect</button>
+          </div>`;
+      }
+    });
+
+    connList.innerHTML = html || '<div style="color:#888;font-size:0.85em">No connectors available</div>';
+  } catch (err) {
+    connList.innerHTML = '<div style="color:#f87171;font-size:0.85em">Failed to load</div>';
+    console.error('loadConnections error:', err);
+  }
+}
+
+function connectProvider(provider) {
+  fetch(`${API}/connectors/${provider}/auth-url`, { headers: authHeaders() })
+    .then(r => r.json())
+    .then(data => {
+      if (data.auth_url) {
+        const w = 500, h = 600;
+        const left = (screen.width - w) / 2, top = (screen.height - h) / 2;
+        window.open(data.auth_url, 'oauth_popup',
+          `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no`);
+      }
+    })
+    .catch(err => console.error('connectProvider error:', err));
+}
+
+async function disconnectConnection(connectionId) {
+  try {
+    await fetch(`${API}/connectors/connections/${connectionId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    loadConnections();
+  } catch (err) {
+    console.error('disconnectConnection error:', err);
+  }
+}
+
+// Listen for OAuth popup postMessage callback
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'oauth-callback') {
+    if (event.data.success) {
+      loadConnections();
+    } else {
+      console.error('OAuth callback error:', event.data.error);
+    }
+  }
+});
 
 // Init
 (function() {
@@ -778,6 +919,7 @@ function doLogout() {
     currentUser = stored;
     authOverlay.classList.add('hidden');
     userNameEl.textContent = stored.display_name || 'User';
+    loadConnections();
   }
 })();
 
