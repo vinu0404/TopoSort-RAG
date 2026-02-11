@@ -5,6 +5,7 @@ Pydantic schemas for the entire Multi-Agentic RAG system.
 from __future__ import annotations
 
 import time
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -139,6 +140,11 @@ class AgentInput(BaseModel):
     )
 
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    hitl_context: Optional[HitlResolvedDecision] = Field(
+        None,
+        description="HITL decision context — set by orchestrator when user approves with instructions",
+    )
 
 
 class AgentOutput(BaseModel):
@@ -298,3 +304,65 @@ class MasterAgentInput(BaseModel):
     conversation_history: List[ConversationTurn] = Field(default_factory=list)
     long_term_memory: LongTermMemory
     available_agents: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HITL (Human-in-the-Loop) Schemas
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class HitlStatus(str, Enum):
+    """Lifecycle states for a HITL approval request."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    TIMED_OUT = "timed_out"
+    EXPIRED = "expired"  # server restarted / orphaned
+
+
+class HitlDecision(str, Enum):
+    """What the user chose."""
+
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
+class HitlRequestInfo(BaseModel):
+    """
+    Sent to the frontend via SSE so the user can approve / deny.
+    Also represents a row in the ``hitl_requests`` DB table.
+    """
+
+    request_id: str
+    conversation_id: str
+    agent_id: str
+    agent_name: str
+    tool_names: List[str] = Field(description="Tools that require approval")
+    task_description: str
+    status: HitlStatus = HitlStatus.PENDING
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
+class HitlUserResponse(BaseModel):
+    """Payload the frontend POSTs to ``/hitl/respond``."""
+
+    request_id: str = Field(..., description="UUID of the hitl_request row")
+    decision: HitlDecision
+    instructions: Optional[str] = Field(
+        None,
+        description="Optional user instructions when approving (e.g. 'only send to john@')",
+    )
+
+
+class HitlResolvedDecision(BaseModel):
+    """
+    What the orchestrator receives back after polling the DB.
+    Passed into AgentInput.hitl_context so the agent/prompt can use it.
+    """
+
+    approved: bool
+    instructions: Optional[str] = None
+    tool_names: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None  # "denied_by_user" | "hitl_timeout" | "hitl_skipped"

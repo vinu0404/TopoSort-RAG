@@ -26,11 +26,12 @@ from database.helpers import (
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
+    resolve_hitl_request,
     save_document_record,
 )
 from document_pipeline.document_processor import process_document
 from tools.registry import ToolRegistry
-from utils.schemas import Source
+from utils.schemas import HitlUserResponse, Source
 
 from utils.llm_providers import get_llm_provider
 from utils.schemas import ComposerInput, QueryRequest
@@ -82,7 +83,10 @@ async def handle_query(
     if plan.execution_plan.agents:
         registry = ToolRegistry()
         agent_instances = build_agent_instances(registry)
-        orchestrator = Orchestrator(agent_instances=agent_instances)
+        orchestrator = Orchestrator(
+            agent_instances=agent_instances,
+            tool_registry=registry,
+        )
         context = {
             "user_id": user_id,
             "query_id": plan.query_id,
@@ -90,7 +94,10 @@ async def handle_query(
             "long_term_memory": long_term.model_dump(),
             "conversation_history": conversation_history,
         }
-        results = await orchestrator.execute_plan(plan.execution_plan, context)
+        # Non-streaming: no HITL callback → HITL agents are auto-skipped
+        results = await orchestrator.execute_plan(
+            plan.execution_plan, context, on_hitl_needed=None,
+        )
         asyncio.create_task(bg_save_agent_executions(conv_id, results))
     else:
         logger.info("[Query] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)
@@ -172,3 +179,40 @@ async def upload_document(
 @router.get("/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+# ── HITL response endpoint ──────────────────────────────────────────────
+
+
+@router.post("/hitl/respond")
+async def hitl_respond(
+    payload: HitlUserResponse,
+    _auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Accept the user's approval or denial for a HITL request.
+
+    The streaming endpoint's polling loop will pick up the change
+    from the DB and resume orchestration.
+    """
+    final_status = await resolve_hitl_request(
+        request_id=payload.request_id,
+        decision=payload.decision.value,
+        instructions=payload.instructions,
+    )
+
+    if final_status == "not_found":
+        raise HTTPException(status_code=404, detail="HITL request not found")
+
+    # If the request was already resolved (timed_out, expired, etc.)
+    # tell the client it's too late.
+    if final_status != payload.decision.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Request already resolved as '{final_status}'",
+        )
+
+    return {
+        "request_id": payload.request_id,
+        "status": final_status,
+    }

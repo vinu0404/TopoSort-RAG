@@ -239,7 +239,7 @@ async def search_sent_messages(
 
 # ── SEND / COMPOSE TOOLS ───────
 
-@tool("mail_agent")
+@tool("mail_agent", requires_approval=True)
 async def send_email(
     to: str,
     subject: str,
@@ -342,7 +342,7 @@ async def get_message_by_id(
     return _parse_message(msg)
 
 
-@tool("mail_agent")
+@tool("mail_agent", requires_approval=True)
 async def reply_to_message(
     message_id: str,
     body: str,

@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     conversation_summary_interval: int = 3
     max_conversation_history: int = 8
 
+    # ── HITL (Human-in-the-Loop) ─────────────────────────────────────────────────
+    hitl_timeout_seconds: int = 120   # how long to wait for user approval
+    hitl_poll_interval: float = 1.5   # seconds between DB polls
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

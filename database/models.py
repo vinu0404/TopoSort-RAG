@@ -17,7 +17,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -122,6 +122,28 @@ class ConversationSummary(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="summaries")
+
+
+class HitlRequest(Base):
+    __tablename__ = "hitl_requests"
+
+    request_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.conversation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    agent_id = Column(Text, nullable=False)
+    agent_name = Column(Text, nullable=False)
+    tool_names = Column(ARRAY(Text), nullable=False, default=list)
+    task_description = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="pending")
+    user_instructions = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    conversation = relationship("Conversation")
 
 
 class UserLongTermMemory(Base):
