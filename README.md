@@ -1028,7 +1028,7 @@ Some tools perform **irreversible actions** — sending emails, executing code, 
 
 ```mermaid
 sequenceDiagram
-    participant User as 👤 User (Frontend)
+    participant User as User (Frontend)
     participant SSE as SSE Stream<br/>(streaming.py)
     participant Orch as Orchestrator
     participant DB as PostgreSQL<br/>(hitl_requests)
@@ -1076,7 +1076,7 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant User as 👤 User
+    participant User as User
     participant SSE as SSE Stream
     participant Orch as Orchestrator
     participant DB as PostgreSQL

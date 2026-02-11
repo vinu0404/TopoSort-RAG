@@ -44,6 +44,9 @@ class BaseAgent(ABC):
     def get_tool(self, tool_name: str):
         """Proxy to ToolRegistry with built-in permission check."""
         return self.tool_registry.get_tool(tool_name, self.agent_name)
+    
+
+
 
     # ── HITL intent classification prompt ────────────────────────────────
     _HITL_CLASSIFY_PROMPT = """You are classifying the intent of a user's HITL (Human-in-the-Loop) instruction.
@@ -108,6 +111,8 @@ Respond ONLY with valid JSON."""
         except Exception as exc:
             logger.warning(f"[HITL] Intent classification failed ({exc}), defaulting to 'enhance'")
             return "enhance"
+
+
 
     async def _effective_task(self, task_config: AgentInput) -> str:
         """

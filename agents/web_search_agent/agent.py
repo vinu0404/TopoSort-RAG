@@ -43,10 +43,7 @@ class WebSearchAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
             )
-            logger.info(f"========================================")
-            logger.info(f"[WebSearchAgent] conversation_history: {task_config.conversation_history}")
 
-            logger.info(f"========================================")
             strategy: str = await self.llm.generate(
                 prompt=strategy_prompt,
                 temperature=config.web_temperature,

@@ -168,14 +168,14 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
             elif "User Enhanced Instructions" in o.task_description:
                 notices.append(
                     f"  - **{o.agent_name}** was ENHANCED by the user during HITL approval with additional scope. "
-                    f"Include BOTH the original AND enhanced data in your answer."
+                    f"Include BOTH the original AND enhanced data in your answer.For better personalisation, prioritise the ENHANCED data but use the original data as well if relevant."
                 )
         if notices:
             return (
                 "\n### \u26a0 HITL Instruction Notice\n"
                 "The user modified the task for the following agent(s) during approval:\n"
                 + "\n".join(notices)
-                + "\nAnswer based on the DATA the agent(s) actually returned, "
+                + "\nAnswer based on the DATA the agent(s) actually returned,with composing the answer in a way that respects the user's modifications of instructions,"
                 "combining or replacing as indicated above.\n\n"
             )
         return "\n"
@@ -206,6 +206,7 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
             elif isinstance(t, dict):
                 lines.append(f"  {t.get('role', 'user')}: {str(t.get('content', ''))[:300]}")
         return "\n".join(lines) if lines else "(no prior conversation)"
+
 
     @staticmethod
     def _format_sources_for_prompt(sources: List[Source]) -> str:

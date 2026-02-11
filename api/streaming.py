@@ -109,7 +109,6 @@ def _make_hitl_callback(
         agent_name = agent_cfg["agent_name"]
         task = agent_cfg.get("task", "")
 
-        # 1. Persist to DB
         request_id = await create_hitl_request(
             session=session,
             conversation_id=conversation_id,
@@ -120,7 +119,6 @@ def _make_hitl_callback(
             timeout_seconds=config.hitl_timeout_seconds,
         )
 
-        # 2. Push SSE event so the client can render an approval dialog
         await sse_queue.put(_sse_event("hitl_required", {
             "request_id": request_id,
             "agent_id": agent_id,

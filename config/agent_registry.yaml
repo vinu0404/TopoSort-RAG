@@ -1,7 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Agent Registry — consumed by MasterAgent to know what agents are available
-# ─────────────────────────────────────────────────────────────────────────────
-
 agents:
   rag_agent:
     description: "Retrieves information from user's document collection"
