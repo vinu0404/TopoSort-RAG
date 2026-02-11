@@ -45,8 +45,10 @@ class MailAgent(BaseAgent):
 
         logger.info(f"[MailAgent] Input: {task_config}")
         try:
+            effective_task = await self._effective_task(task_config)
+
             plan_prompt = self.prompts.action_plan_prompt(
-                task=task_config.task,
+                task=effective_task,
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
@@ -207,7 +209,7 @@ class MailAgent(BaseAgent):
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
-                task_description=task_config.task,
+                task_description=effective_task,
                 status=status,
                 task_done=status == "success",
                 result=result_data.get("sent") or result_data.get("draft") or result_data.get("reply") or result_data.get("messages") or result_data.get("drafts") or result_data.get("message"),

@@ -140,6 +140,7 @@ def _make_hitl_callback(
                     await sse_queue.put(_sse_event("hitl_approved", {
                         "request_id": request_id,
                         "agent_id": agent_id,
+                        "instructions": decision.get("user_instructions"),
                     }))
                     return HitlResolvedDecision(
                         approved=True,

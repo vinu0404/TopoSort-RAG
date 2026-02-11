@@ -1265,25 +1265,87 @@ async def rollback_deployment(service: str) -> Dict[str, Any]:
 
 That's it. The `ToolRegistry` auto-discovers the flag at startup. When the Orchestrator sees that `deploy_agent`'s task includes `trigger_deployment` or `rollback_deployment`, it automatically triggers the HITL flow.
 
-#### Step 2 — Use `hitl_context` in your agent (optional)
+#### Step 2 — HITL instructions are auto-classified as **enhance** or **override** via `_effective_task()`
 
-When the user approves with instructions (e.g. "only deploy to staging"), those instructions are available in `AgentInput.hitl_context`:
+You do **not** need to manually check `hitl_context` in your agent. `BaseAgent` provides an async method `_effective_task(task_config)` that every agent should use when passing the task to prompts.
+
+**How it works:**
+
+When the user approves with additional instructions, `_effective_task()` calls a cheap LLM classifier (`gpt-4o-mini` by default) to determine the user's intent:
+
+| Intent | Example | Behaviour |
+|---|---|---|
+| **enhance** | Original: "Search AI trends" → Instruction: "also include GPU growth" | Agent does **both** the original task AND the extra instruction |
+| **override** | Original: "Search AI trends" → Instruction: "search about cricket instead" | Agent follows the instruction **instead of** the original task |
+
+The classifier model is configurable via `HITL_CLASSIFIER_PROVIDER` and `HITL_CLASSIFIER_MODEL` in `.env`. Defaults: `openai` / `gpt-4o-mini`. If classification fails, it defaults to `enhance` (safe fallback — user gets both).
+
+```python
+# In agents/base_agent.py — already built in
+async def _effective_task(self, task_config: AgentInput) -> str:
+    # If no HITL instructions, returns task_config.task unchanged.
+    # Otherwise:
+    #   1. Calls _classify_hitl_intent() with a cheap LLM
+    #   2. Returns a combined prompt (enhance) or replacement prompt (override)
+```
+
+**Usage in your agent — 2 lines:**
 
 ```python
 # In agents/deploy_agent/agent.py
 async def execute(self, task_config: AgentInput) -> AgentOutput:
-    # Check if user provided HITL instructions
-    if task_config.hitl_context and task_config.hitl_context.instructions:
-        user_instructions = task_config.hitl_context.instructions
-        # Include in the prompt so the LLM respects the user's constraints
-        prompt = self.prompts.deploy_prompt(
-            task=task_config.task,
-            user_instructions=user_instructions,  # "only deploy to staging"
-        )
-    else:
-        prompt = self.prompts.deploy_prompt(task=task_config.task)
-    ...
+    effective_task = await self._effective_task(task_config)  # ← line 1 (async!)
+
+    prompt = self.prompts.deploy_prompt(
+        task=effective_task,   # ← line 2: pass effective_task instead of task_config.task
+        entities=task_config.entities,
+        ...
+    )
+
+    # ... run tools, get result ...
+
+    return AgentOutput(
+        agent_id=task_config.agent_id,
+        agent_name=self.agent_name,
+        task_description=effective_task,  # ← IMPORTANT: use effective_task here too
+        ...                               #    so the Composer knows the task was enhanced/overridden
+    )
 ```
+
+**What the LLM sees — enhance case:**
+
+```
+Complete BOTH the original task AND the additional user instructions below.
+
+### Original Task
+Search for AI trends in 2025
+
+### User Enhanced Instructions
+also include GPU market growth data
+```
+
+**What the LLM sees — override case:**
+
+```
+IMPORTANT — The user wants you to follow these override instructions
+INSTEAD of the original task.
+
+### User Override Instructions
+search about cricket world cup instead
+
+### Original Task (for reference only)
+Search for AI trends in 2025
+```
+
+**What the LLM sees without HITL instructions:**
+
+```
+Deploy service-X version 2.3.1
+```
+
+> **Why `task_description=effective_task` in AgentOutput matters:**
+> The Composer reads `task_description` from each agent's output. When it contains the HITL override marker, the Composer automatically detects it (via `_detect_hitl_overrides()`) and adds a notice to its own prompt: *"The user changed the task during approval. Present the data the agent actually returned, even if it differs from the Original User Query."*
+> Without this, the Composer would see data that doesn't match the original query and say "I couldn't find that information."
 
 #### Step 3 — Handle denial in prompts (optional)
 

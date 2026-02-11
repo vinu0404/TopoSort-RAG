@@ -66,6 +66,9 @@ class ComposerAgent:
         partial = [r for r in failed if r.partial_data is not None]
         completely_failed = [r.agent_name for r in failed if r.partial_data is None]
 
+        # Detect HITL-overridden tasks
+        hitl_note = self._detect_hitl_overrides(ci.agent_results)
+
         # Detect conversation-memory queries (no agents dispatched)
         is_memory_query = not successful and not partial and not completely_failed
 
@@ -111,7 +114,7 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
 
 ### Successful Agent Outputs
 {self._format_agent_outputs(successful)}
-
+{hitl_note}
 ### Partial Data (from agents that partially completed)
 {self._format_agent_outputs(partial)}
 
@@ -146,6 +149,36 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
 
 ### Answer"""
 
+
+    @staticmethod
+    def _detect_hitl_overrides(outputs: list[AgentOutput]) -> str:
+        """
+        Detect whether any agent had its task enhanced or overridden via HITL,
+        and tell the Composer how to present the results.
+        """
+        notices = []
+        for o in outputs:
+            if not o.task_description:
+                continue
+            if "User Override Instructions" in o.task_description:
+                notices.append(
+                    f"  - **{o.agent_name}** was OVERRIDDEN by the user during HITL approval. "
+                    f"Present the data this agent actually returned, NOT the original query topic."
+                )
+            elif "User Enhanced Instructions" in o.task_description:
+                notices.append(
+                    f"  - **{o.agent_name}** was ENHANCED by the user during HITL approval with additional scope. "
+                    f"Include BOTH the original AND enhanced data in your answer."
+                )
+        if notices:
+            return (
+                "\n### \u26a0 HITL Instruction Notice\n"
+                "The user modified the task for the following agent(s) during approval:\n"
+                + "\n".join(notices)
+                + "\nAnswer based on the DATA the agent(s) actually returned, "
+                "combining or replacing as indicated above.\n\n"
+            )
+        return "\n"
 
     @staticmethod
     def _format_agent_outputs(outputs: List[AgentOutput]) -> str:

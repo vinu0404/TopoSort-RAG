@@ -356,6 +356,24 @@ class HitlUserResponse(BaseModel):
     )
 
 
+class HitlIntentClassification(BaseModel):
+    """
+    Output of the lightweight LLM classifier that decides whether
+    HITL instructions should ENHANCE the original task (add to it)
+    or OVERRIDE it (replace it entirely).
+    """
+
+    intent: str = Field(
+        ...,
+        description="'enhance' if instructions add extra requirements to the original task, "
+                    "'override' if instructions replace the original task entirely",
+    )
+    reasoning: str = Field(
+        default="",
+        description="Brief explanation of why this classification was chosen",
+    )
+
+
 class HitlResolvedDecision(BaseModel):
     """
     What the orchestrator receives back after polling the DB.
