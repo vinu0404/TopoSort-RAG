@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
-    """Process-wide singleton that maps tool-name → callable + permissions."""
+    """Process-wide singleton that maps tool-name → callable + permissions + HITL flags."""
 
     _instance: "ToolRegistry | None" = None
 
@@ -29,13 +29,21 @@ class ToolRegistry:
             inst = super().__new__(cls)
             inst._tools: Dict[str, Callable] = {}
             inst._permissions: Dict[str, Set[str]] = {}
+            inst._requires_approval: Dict[str, bool] = {}
             cls._instance = inst
         return cls._instance
 
 
-    def register(self, tool_name: str, tool_fn: Callable, allowed_agents: List[str]) -> None:
+    def register(
+        self,
+        tool_name: str,
+        tool_fn: Callable,
+        allowed_agents: List[str],
+        requires_approval: bool = False,
+    ) -> None:
         self._tools[tool_name] = tool_fn
         self._permissions[tool_name] = set(allowed_agents)
+        self._requires_approval[tool_name] = requires_approval
 
     def get_tool(self, tool_name: str, agent_name: str) -> Callable:
         """
@@ -59,6 +67,14 @@ class ToolRegistry:
 
     def list_tools(self) -> List[str]:
         return list(self._tools.keys())
+
+    def tool_requires_approval(self, tool_name: str) -> bool:
+        """Return True if *tool_name* is marked ``requires_approval``."""
+        return self._requires_approval.get(tool_name, False)
+
+    def get_hitl_tools_for_agent_task(self, tool_names: List[str]) -> List[str]:
+        """Return the subset of *tool_names* that require HITL approval."""
+        return [t for t in tool_names if self._requires_approval.get(t, False)]
 
     # ── auto-discovery ──────────────────────────────────────────────────
 
@@ -91,6 +107,7 @@ class ToolRegistry:
                             tool_name=name,
                             tool_fn=obj,
                             allowed_agents=obj.allowed_agents,
+                            requires_approval=getattr(obj, "requires_approval", False),
                         )
 
             except Exception as exc:

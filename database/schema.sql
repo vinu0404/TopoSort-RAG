@@ -93,6 +93,26 @@ CREATE TABLE IF NOT EXISTS conversation_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON conversation_summaries(conversation_id);
 
+-- HITL (Human-in-the-Loop) approval requests ─────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS hitl_requests (
+    request_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id  UUID NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+    agent_id         TEXT NOT NULL,
+    agent_name       TEXT NOT NULL,
+    tool_names       TEXT[] NOT NULL DEFAULT '{}',
+    task_description TEXT NOT NULL DEFAULT '',
+    status           VARCHAR(16) NOT NULL DEFAULT 'pending',
+                     -- pending | approved | denied | timed_out | expired
+    user_instructions TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at     TIMESTAMPTZ,
+    expires_at       TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hitl_conversation ON hitl_requests(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_hitl_status       ON hitl_requests(status);
+
 -- User long-term memory (critical facts + preferences) ───────────────────────
 
 CREATE TABLE IF NOT EXISTS user_long_term_memory (

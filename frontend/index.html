@@ -404,6 +404,127 @@
     30% { transform: translateY(-4px); }
   }
 
+  /* ── HITL Approval Dialog ────────────────────────────── */
+  .hitl-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .hitl-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 28px 32px;
+    width: 440px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  }
+  .hitl-card h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hitl-card h3::before {
+    content: '\26A0';
+    font-size: 1.3rem;
+  }
+  .hitl-card .hitl-desc {
+    font-size: 0.88rem;
+    color: #444;
+    margin-bottom: 14px;
+    line-height: 1.5;
+  }
+  .hitl-card .hitl-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .hitl-card .hitl-tool-tag {
+    background: #fee2e2;
+    color: #b91c1c;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+  .hitl-card .hitl-agent-tag {
+    background: #e0e7ff;
+    color: #3730a3;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+  .hitl-card label {
+    display: block;
+    font-size: 0.82rem;
+    color: #666;
+    margin-bottom: 5px;
+  }
+  .hitl-card textarea {
+    width: 100%;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+    min-height: 48px;
+    margin-bottom: 16px;
+  }
+  .hitl-card textarea:focus {
+    border-color: #000;
+  }
+  .hitl-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .hitl-btn {
+    padding: 9px 22px;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .hitl-btn.approve {
+    background: #000;
+    color: #fff;
+  }
+  .hitl-btn.approve:hover { opacity: 0.8; }
+  .hitl-btn.deny {
+    background: #f5f5f5;
+    color: #333;
+    border: 1px solid #e0e0e0;
+  }
+  .hitl-btn.deny:hover { background: #eee; }
+  .hitl-timer {
+    font-size: 0.78rem;
+    color: #999;
+    margin-top: 10px;
+    text-align: right;
+  }
+
+  /* ── HITL pipeline badge ───────────────────────────────── */
+  .pipeline-agent .dot.hitl {
+    background: #f59e0b;
+    animation: pulse 1s infinite;
+  }
+
   @media (max-width: 768px) {
     .sidebar { display: none; }
   }
@@ -976,7 +1097,129 @@ async function sendStreaming(query) {
         typingInd.classList.remove('visible');
         addSystemMessage(`Error: ${data.message || data}`);
         break;
+
+      case 'hitl_required':
+        showHitlDialog(data);
+        break;
+
+      case 'hitl_approved':
+        dismissHitlDialog();
+        updatePipelineAgent(data.agent_id, false);
+        addSystemMessage(`Approved — ${data.agent_id} is running...`);
+        break;
+
+      case 'hitl_denied':
+        dismissHitlDialog();
+        updatePipelineAgent(data.agent_id, false);
+        addSystemMessage(`Denied — ${data.agent_id} was skipped.`);
+        break;
+
+      case 'hitl_timeout':
+        dismissHitlDialog();
+        updatePipelineAgent(data.agent_id, false);
+        addSystemMessage(`Approval timed out — ${data.agent_id} was skipped.`);
+        break;
     }
+  }
+}
+
+// ── HITL Approval Dialog ──────────────────────────────────
+let hitlTimerInterval = null;
+
+function showHitlDialog(data) {
+  dismissHitlDialog(); // remove any previous dialog
+
+  // Mark agent in pipeline as waiting for approval
+  const agentDot = pipelineEl.querySelector(`[data-agent="${data.agent_id}"] .dot`);
+  if (agentDot) {
+    agentDot.classList.remove('active');
+    agentDot.classList.add('hitl');
+  }
+
+  const toolTags = (data.tool_names || []).map(t =>
+    `<span class="hitl-tool-tag">${escapeHtml(t)}</span>`
+  ).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'hitl-overlay';
+  overlay.id = 'hitlOverlay';
+  overlay.innerHTML = `
+    <div class="hitl-card">
+      <h3>Approval Required</h3>
+      <div class="hitl-desc">
+        <span class="hitl-agent-tag">${escapeHtml(data.agent_name)}</span>
+        wants to use tools that require your approval.
+      </div>
+      <div style="font-size:0.85rem;color:#333;margin-bottom:12px;line-height:1.5">
+        <strong>Task:</strong> ${escapeHtml(data.task_description || '')}
+      </div>
+      <div class="hitl-tools">${toolTags}</div>
+      <label>Instructions (optional)</label>
+      <textarea id="hitlInstructions" placeholder="Add constraints, e.g. 'only search in English'..."></textarea>
+      <div class="hitl-actions">
+        <button class="hitl-btn deny" onclick="respondHitl('${data.request_id}', 'denied')">Deny</button>
+        <button class="hitl-btn approve" onclick="respondHitl('${data.request_id}', 'approved')">Approve</button>
+      </div>
+      <div class="hitl-timer" id="hitlTimer"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Countdown timer
+  const timeout = data.timeout_seconds || 120;
+  let remaining = timeout;
+  const timerEl = document.getElementById('hitlTimer');
+  timerEl.textContent = `Auto-deny in ${remaining}s`;
+  hitlTimerInterval = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(hitlTimerInterval);
+      hitlTimerInterval = null;
+      timerEl.textContent = 'Timed out';
+    } else {
+      timerEl.textContent = `Auto-deny in ${remaining}s`;
+    }
+  }, 1000);
+
+  addSystemMessage(`⚠ ${data.agent_name} needs approval to use: ${(data.tool_names || []).join(', ')}`);
+}
+
+function dismissHitlDialog() {
+  const overlay = document.getElementById('hitlOverlay');
+  if (overlay) overlay.remove();
+  if (hitlTimerInterval) {
+    clearInterval(hitlTimerInterval);
+    hitlTimerInterval = null;
+  }
+}
+
+async function respondHitl(requestId, decision) {
+  const instructions = document.getElementById('hitlInstructions')?.value?.trim() || null;
+
+  // Disable buttons immediately
+  const overlay = document.getElementById('hitlOverlay');
+  if (overlay) {
+    overlay.querySelectorAll('.hitl-btn').forEach(b => b.disabled = true);
+  }
+
+  try {
+    const r = await fetch(`${API}/hitl/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        request_id: requestId,
+        decision: decision,
+        instructions: instructions,
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      addSystemMessage(`HITL error: ${err.detail || r.statusText}`);
+    }
+    // Dialog will be dismissed by the hitl_approved / hitl_denied SSE event
+  } catch (err) {
+    addSystemMessage(`HITL error: ${err.message}`);
+    dismissHitlDialog();
   }
 }
 </script>

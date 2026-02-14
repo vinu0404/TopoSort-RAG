@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 
-@tool("web_search_agent")
+@tool("web_search_agent", requires_approval=True)
 async def web_search(
     query: str,
     num_results: int = 5,
@@ -144,7 +144,7 @@ async def fetch_url(url: str) -> Dict[str, Any]:
 
 # ── Tavily topic-specific helpers ─────────────────────────────────────────
 
-@tool("web_search_agent")
+@tool("web_search_agent", requires_approval=True)
 async def web_search_news(
     query: str,
     num_results: int = 5,
@@ -158,7 +158,7 @@ async def web_search_news(
     )
 
 
-@tool("web_search_agent")
+@tool("web_search_agent", requires_approval=True)
 async def web_search_deep(
     query: str,
     num_results: int = 5,

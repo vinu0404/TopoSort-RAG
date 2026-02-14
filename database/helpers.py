@@ -8,8 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -20,6 +20,7 @@ from database.models import (
     Conversation,
     ConversationSummary,
     Document,
+    HitlRequest,
     Message,
     Session,
     User,
@@ -304,3 +305,132 @@ async def save_conversation_summary(
         )
     )
     await session.flush()
+
+
+# ── HITL (Human-in-the-Loop) helpers ────────────────────────────────
+
+
+async def create_hitl_request(
+    session: AsyncSession,
+    conversation_id: str,
+    agent_id: str,
+    agent_name: str,
+    tool_names: List[str],
+    task_description: str,
+    timeout_seconds: int = 120,
+) -> str:
+    """
+    Insert a pending HITL approval request.
+
+    Returns the ``request_id`` (UUID string) so the caller can poll for a
+    decision later.
+    """
+    cid = _to_uuid(conversation_id)
+    now = datetime.now(timezone.utc)
+    row = HitlRequest(
+        conversation_id=cid,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        tool_names=tool_names,
+        task_description=task_description,
+        status="pending",
+        created_at=now,
+        expires_at=now + timedelta(seconds=timeout_seconds),
+    )
+    session.add(row)
+    await session.commit()
+    logger.info(
+        "HITL request created: request_id=%s  agent=%s  tools=%s",
+        row.request_id, agent_name, tool_names,
+    )
+    return str(row.request_id)
+
+
+async def poll_hitl_decision(
+    request_id: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Check the DB for a resolved HITL request (approved / denied / timed_out).
+
+    Uses an **independent session** so the caller can poll in a loop
+    without holding the request's main session open.
+
+    Returns
+    -------
+    None           – still pending
+    dict           – keys: status, user_instructions
+    """
+    rid = _to_uuid(request_id)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(HitlRequest).where(HitlRequest.request_id == rid)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return {"status": "expired", "user_instructions": None}
+        if row.status == "pending":
+            # Check if it expired while pending
+            if datetime.now(timezone.utc) >= row.expires_at:
+                row.status = "timed_out"
+                row.responded_at = datetime.now(timezone.utc)
+                await session.commit()
+                return {"status": "timed_out", "user_instructions": None}
+            return None  # still waiting
+        return {
+            "status": row.status,
+            "user_instructions": row.user_instructions,
+        }
+
+
+async def resolve_hitl_request(
+    request_id: str,
+    decision: str,
+    instructions: Optional[str] = None,
+) -> str:
+    """
+    Update a pending HITL request with the user's decision.
+
+    Returns the final status.  If the request was already resolved
+    (timed_out, expired, etc.) the update is skipped and the current
+    status is returned.
+    """
+    rid = _to_uuid(request_id)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(HitlRequest).where(HitlRequest.request_id == rid)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return "not_found"
+        if row.status != "pending":
+            return row.status  # already resolved
+        row.status = decision
+        row.user_instructions = instructions
+        row.responded_at = datetime.now(timezone.utc)
+        await session.commit()
+        logger.info("HITL resolved: request_id=%s  decision=%s", request_id, decision)
+        return decision
+
+
+async def expire_stale_hitl_requests() -> int:
+    """
+    Mark all pending HITL requests whose ``expires_at`` has passed as
+    ``expired``.  Called on application startup to clean up orphans.
+
+    Returns the number of rows affected.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(HitlRequest).where(
+                HitlRequest.status == "pending",
+                HitlRequest.expires_at < datetime.now(timezone.utc),
+            )
+        )
+        rows = result.scalars().all()
+        for row in rows:
+            row.status = "expired"
+            row.responded_at = datetime.now(timezone.utc)
+        await session.commit()
+        if rows:
+            logger.info("Expired %d stale HITL requests on startup", len(rows))
+        return len(rows)

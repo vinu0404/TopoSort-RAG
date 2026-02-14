@@ -453,6 +453,7 @@ flowchart TD
 | **`documents`** | Uploaded document metadata | `doc_id` (UUID PK), `user_id` (FK), `filename`, `doc_type`, `total_chunks`, `qdrant_collection` |
 | **`conversation_summaries`** | Rolling summaries of every 3 conversation turns | `summary_id` (UUID PK), `conversation_id` (FK), `summary_text`, `turns_covered` |
 | **`user_long_term_memory`** | Persistent user profile extracted by the Memory Extractor | `user_id` (UUID PK), `critical_facts` (JSONB), `preferences` (JSONB), `updated_at` |
+| **`hitl_requests`** | HITL approval requests for agents with dangerous tools | `request_id` (UUID PK), `conversation_id` (FK), `agent_id`, `agent_name`, `tool_names` (TEXT[]), `status` (`pending`/`approved`/`denied`/`timed_out`/`expired`), `user_instructions`, `expires_at` |
 
 #### `user_long_term_memory` — JSONB Column Detail
 
@@ -1016,3 +1017,320 @@ async def test_summary_agent_execute():
 - **Long-term memory** is automatically loaded and injected by the Orchestrator into every `AgentInput.long_term_memory`. Pass it to your prompt methods.
 - **Retry/timeout** is handled by `BaseAgent.execute_with_retry()`. Your `execute()` should raise on failure, not catch-and-suppress.
 - **Dependencies** are declared by the Master Agent in the execution plan (`depends_on`). The topological sort ensures your agent only runs after its dependencies complete.
+
+---
+
+## Adding HITL (Human-in-the-Loop) to an Agent
+
+Some tools perform **irreversible actions** — sending emails, executing code, making API calls. The HITL system lets you gate these tools behind a **user approval step** before the agent runs. All state is persisted in PostgreSQL — no in-memory coordination, survives server restarts, works across multiple workers.
+
+### How HITL Works — Full Flow
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User (Frontend)
+    participant SSE as SSE Stream<br/>(streaming.py)
+    participant Orch as Orchestrator
+    participant DB as PostgreSQL<br/>(hitl_requests)
+    participant HITL as POST /hitl/respond
+    participant Agent as Mail Agent
+
+    User->>SSE: POST /query/stream<br/>"send the Q3 report to john@"
+    SSE->>Orch: execute_plan(plan, context, on_hitl_needed)
+
+    Note over Orch: Stage 1: rag_agent → runs normally
+
+    Orch->>Orch: Stage 2: mail_agent has<br/>send_email (requires_approval=True)
+    Orch->>DB: INSERT hitl_requests<br/>(status='pending', expires_at=+120s)
+    DB-->>Orch: request_id = abc-123
+
+    Orch->>SSE: Queue hitl_required SSE event
+    SSE-->>User: event: hitl_required<br/>{request_id, agent, tools, task}
+
+    Note over User: User sees approval dialog
+
+    loop Poll DB every 1.5s
+        Orch->>DB: SELECT status WHERE request_id=abc-123
+        DB-->>Orch: status = 'pending'
+    end
+
+    User->>HITL: POST /hitl/respond<br/>{request_id, decision: "approved",<br/>instructions: "only send to john@"}
+    HITL->>DB: UPDATE status='approved',<br/>user_instructions='only send to john@'
+
+    Orch->>DB: SELECT status WHERE request_id=abc-123
+    DB-->>Orch: status = 'approved'
+
+    Orch->>SSE: Queue hitl_approved SSE event
+    SSE-->>User: event: hitl_approved
+
+    Orch->>Agent: execute(AgentInput with hitl_context)
+    Agent-->>Orch: AgentOutput (task_done=true)
+
+    Note over Orch: Stage 3: composer runs
+
+    SSE-->>User: event: token (streamed answer)
+    SSE-->>User: event: done
+```
+
+### What Happens When User Denies
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant SSE as SSE Stream
+    participant Orch as Orchestrator
+    participant DB as PostgreSQL
+
+    Orch->>DB: INSERT hitl_requests (pending)
+    SSE-->>User: event: hitl_required
+
+    User->>DB: POST /hitl/respond<br/>{decision: "denied"}
+    Note over DB: status = 'denied'
+
+    Orch->>DB: Poll → status='denied'
+    SSE-->>User: event: hitl_denied
+
+    Note over Orch: Create synthetic AgentOutput:<br/>task_done=False<br/>error="denied_by_user"<br/>partial_data={reason, tools}
+
+    Note over Orch: Downstream agents see<br/>dependency_outputs[mail_agent_0] =<br/>{reason: "denied_by_user"}<br/>→ Composer explains what happened
+```
+
+### What Happens on Timeout
+
+```mermaid
+sequenceDiagram
+    participant SSE as SSE Stream
+    participant Orch as Orchestrator
+    participant DB as PostgreSQL
+
+    Orch->>DB: INSERT hitl_requests (pending, expires_at=+120s)
+    SSE-->>SSE: event: hitl_required
+
+    loop 120 seconds of polling
+        Orch->>DB: SELECT status → 'pending'
+    end
+
+    Note over DB: expires_at reached
+
+    Orch->>DB: UPDATE status='timed_out'
+    SSE-->>SSE: event: hitl_timeout
+
+    Note over Orch: Treated as denial:<br/>task_done=False, error="hitl_timeout"
+```
+
+### HITL Architecture — Internal Components
+
+```mermaid
+graph TD
+    subgraph "Frontend"
+        FE["SSE EventSource listener"]
+        Dialog["Approval Dialog<br/><i>Approve / Deny / instructions</i>"]
+        FE -->|"hitl_required event"| Dialog
+        Dialog -->|"POST /hitl/respond"| HitlEndpoint
+    end
+
+    subgraph "API Layer"
+        Stream["POST /query/stream<br/><i>streaming.py</i>"]
+        HitlEndpoint["POST /hitl/respond<br/><i>routes.py</i>"]
+    end
+
+    subgraph "Core"
+        Orch["Orchestrator<br/><i>on_hitl_needed callback</i>"]
+        CB["HITL Callback<br/><i>_make_hitl_callback()</i>"]
+        Queue["asyncio.Queue<br/><i>per-request SSE pipe</i>"]
+    end
+
+    subgraph "Persistence"
+        DB[("hitl_requests table<br/><i>PostgreSQL</i>")]
+    end
+
+    subgraph "Registry"
+        ToolReg["ToolRegistry<br/><i>_requires_approval dict</i>"]
+    end
+
+    Stream -->|"creates"| Queue
+    Stream -->|"creates"| CB
+    Stream -->|"passes callback"| Orch
+    Orch -->|"checks tools"| ToolReg
+    Orch -->|"calls"| CB
+    CB -->|"INSERT pending"| DB
+    CB -->|"push SSE event"| Queue
+    CB -->|"poll every 1.5s"| DB
+    HitlEndpoint -->|"UPDATE decision"| DB
+    Queue -->|"yield SSE"| Stream
+    Stream -->|"SSE events"| FE
+
+    style DB fill:#4CAF50,color:#fff
+    style Queue fill:#FF9800,color:#fff
+    style ToolReg fill:#2196F3,color:#fff
+```
+
+### Parallel Agents + HITL
+
+When a stage has both HITL and non-HITL agents, they run in parallel via `asyncio.gather`. The non-HITL agent executes immediately while the HITL agent blocks on DB polling:
+
+```mermaid
+gantt
+    title Stage 2: mail_agent (HITL) + web_agent (no HITL)
+    dateFormat X
+    axisFormat %s
+
+    section web_agent
+    Execute normally           :done, 0, 3
+
+    section mail_agent
+    Wait for approval (polling DB) :active, 0, 8
+    Execute after approval         :done, 8, 11
+
+    section Stage 3
+    Composer (waits for both)      :12, 15
+```
+
+---
+
+### `hitl_requests` Database Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `request_id` | `UUID PK` | Unique identifier for this approval request |
+| `conversation_id` | `UUID FK → conversations` | Links to the conversation that triggered this |
+| `agent_id` | `TEXT` | Agent instance ID (e.g. `mail_agent_0`) |
+| `agent_name` | `TEXT` | Agent type (e.g. `mail_agent`) |
+| `tool_names` | `TEXT[]` | Tools requiring approval (e.g. `{send_email, reply_to_message}`) |
+| `task_description` | `TEXT` | What the agent was asked to do |
+| `status` | `VARCHAR(16)` | `pending` → `approved` / `denied` / `timed_out` / `expired` |
+| `user_instructions` | `TEXT` | Optional instructions from user on approval |
+| `created_at` | `TIMESTAMPTZ` | When the request was created |
+| `responded_at` | `TIMESTAMPTZ` | When the user responded (NULL if pending) |
+| `expires_at` | `TIMESTAMPTZ` | Auto-deny deadline (`created_at + timeout`) |
+
+**Status lifecycle:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : INSERT (orchestrator)
+    pending --> approved : User approves (POST /hitl/respond)
+    pending --> denied : User denies (POST /hitl/respond)
+    pending --> timed_out : expires_at reached (poll detects)
+    pending --> expired : Server restart cleanup (startup job)
+
+    approved --> [*]
+    denied --> [*]
+    timed_out --> [*]
+    expired --> [*]
+```
+
+---
+
+### SSE Event Types for HITL
+
+| Event | When | Payload |
+|-------|------|---------|
+| `hitl_required` | Agent has HITL tools, approval needed | `{request_id, agent_id, agent_name, tool_names, task_description, timeout_seconds}` |
+| `hitl_approved` | User approved the request | `{request_id, agent_id}` |
+| `hitl_denied` | User denied the request | `{request_id, agent_id}` |
+| `hitl_timeout` | Approval timed out | `{request_id, agent_id}` |
+
+---
+
+### Adding a New Agent with HITL Tools
+
+Follow the standard ["Adding a New Agent"](#adding-a-new-agent-step-by-step) guide above, with these additions:
+
+#### Step 1 — Mark tools with `requires_approval=True`
+
+In `tools/<name>_tools.py`, add the flag to any tool that performs an irreversible action:
+
+```python
+from tools import tool
+
+# Safe tool — no approval needed
+@tool("deploy_agent")
+async def check_deploy_status(deploy_id: str) -> Dict[str, Any]:
+    """Read-only check — no HITL required."""
+    ...
+
+# Dangerous tool — requires user approval before the agent runs
+@tool("deploy_agent", requires_approval=True)
+async def trigger_deployment(service: str, version: str) -> Dict[str, Any]:
+    """Deploys to production — user must approve first."""
+    ...
+
+# Another dangerous tool in the same agent
+@tool("deploy_agent", requires_approval=True)
+async def rollback_deployment(service: str) -> Dict[str, Any]:
+    """Rolls back production — user must approve first."""
+    ...
+```
+
+That's it. The `ToolRegistry` auto-discovers the flag at startup. When the Orchestrator sees that `deploy_agent`'s task includes `trigger_deployment` or `rollback_deployment`, it automatically triggers the HITL flow.
+
+#### Step 2 — Use `hitl_context` in your agent (optional)
+
+When the user approves with instructions (e.g. "only deploy to staging"), those instructions are available in `AgentInput.hitl_context`:
+
+```python
+# In agents/deploy_agent/agent.py
+async def execute(self, task_config: AgentInput) -> AgentOutput:
+    # Check if user provided HITL instructions
+    if task_config.hitl_context and task_config.hitl_context.instructions:
+        user_instructions = task_config.hitl_context.instructions
+        # Include in the prompt so the LLM respects the user's constraints
+        prompt = self.prompts.deploy_prompt(
+            task=task_config.task,
+            user_instructions=user_instructions,  # "only deploy to staging"
+        )
+    else:
+        prompt = self.prompts.deploy_prompt(task=task_config.task)
+    ...
+```
+
+#### Step 3 — Handle denial in prompts (optional)
+
+If a downstream agent (e.g. `composer`) depends on a HITL agent that was denied, it receives `partial_data` with the denial reason in `dependency_outputs`. You can add prompt guidance:
+
+```python
+# In agents/composer/prompts.py  (or any downstream agent)
+"""
+If a dependency was denied by the user, explain what happened clearly:
+- State which action was blocked
+- Explain that it requires user approval
+- Suggest the user try again via the streaming interface if they want to proceed
+"""
+```
+
+#### No other changes needed
+
+- **No orchestrator changes** — HITL pre-check is automatic for any tool with `requires_approval=True`
+- **No streaming changes** — the callback + SSE events are generic
+- **No route changes** — the `/hitl/respond` endpoint works for all agents
+- **No DB changes** — the `hitl_requests` table is agent-agnostic
+- **Adding/removing** — just toggle `requires_approval=True/False` on the `@tool` decorator
+
+### Currently HITL-Protected Tools
+
+| Tool | Agent | Why |
+|------|-------|-----|
+| `send_email` | `mail_agent` | Sends a real email via Gmail API |
+| `reply_to_message` | `mail_agent` | Sends a real reply via Gmail API |
+| `execute_code` | `code_agent` | Executes arbitrary Python code on the server |
+
+### Non-Streaming Endpoint Behavior
+
+The `POST /query` endpoint does **not** support HITL dialogs (no SSE connection for approval UI). When a query triggers an agent with HITL tools on the non-streaming endpoint:
+
+- The agent is **auto-skipped** with `error="hitl_skipped_non_streaming"`
+- `partial_data` explains: *"This agent requires human approval. Use the streaming endpoint."*
+- The Composer includes this in the final answer so the user knows why
+- Other non-HITL agents in the plan still execute normally
+
+### Production Guarantees
+
+| Concern | Solution |
+|---------|----------|
+| **Server restart mid-approval** | All HITL state is in PostgreSQL. SSE connection drops → client re-submits. Orphaned `pending` rows are cleaned up on startup (`expire_stale_hitl_requests()`). |
+| **Multiple workers** | Worker A handles SSE stream + DB polling. Worker B handles `/hitl/respond` POST. Both hit the same DB. No cross-worker coordination needed. |
+| **Late response (after timeout)** | `/hitl/respond` returns `409 Conflict` if the request is already resolved. |
+| **Timeout** | Configurable via `HITL_TIMEOUT_SECONDS` env var (default 120s). Treated as denial. |
+| **Parallel agents in same stage** | Non-HITL agents execute immediately. HITL agent polls DB. `asyncio.gather` waits for all. |
+| **No in-memory state** | `asyncio.Queue` is per-request (dies with the SSE connection). All real state is in the `hitl_requests` table. |

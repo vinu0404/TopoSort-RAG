@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 from tools import tool
 
 
-@tool("code_agent")
+@tool("code_agent", requires_approval=True)
 async def execute_code(code: str, language: str = "python", timeout: int = 30) -> Dict[str, Any]:
     """
     Execute code in a sandboxed subprocess and return stdout/stderr/exit_code.

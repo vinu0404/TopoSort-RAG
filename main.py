@@ -20,6 +20,7 @@ from api.streaming import router as stream_router
 from api.auth import router as auth_router
 from config.settings import config
 from core.agent_factory import build_agent_instances
+from database.helpers import expire_stale_hitl_requests
 from tools.registry import ToolRegistry
 from utils.validators import validate_tools_for_agents
 
@@ -69,6 +70,15 @@ def create_app() -> FastAPI:
         logger.info("Validating tool ↔ agent bindings…")
         agents = build_agent_instances(registry)
         validate_tools_for_agents(agents, registry)
+
+        # Clean up orphaned HITL requests from previous server instances
+        expired = await expire_stale_hitl_requests()
+        if expired:
+            logger.info("Cleaned up %d stale HITL requests from previous run", expired)
+
+        hitl_tools = registry.get_hitl_tools_for_agent_task(registry.list_tools())
+        if hitl_tools:
+            logger.info("HITL-protected tools: %s", hitl_tools)
 
         logger.info("Application ready to accept requests.")
 

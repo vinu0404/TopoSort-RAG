@@ -1,5 +1,21 @@
 """
-SSE-style streaming endpoint.
+SSE-style streaming endpoint with HITL (Human-in-the-Loop) support.
+
+Architecture
+------------
+While the orchestrator runs agents, it may encounter tools that require
+human approval.  The orchestrator calls an ``on_hitl_needed`` callback
+which:
+
+1. Writes a ``hitl_requests`` row to the DB  (status='pending').
+2. Pushes an SSE-formatted event onto an ``asyncio.Queue`` so the
+   generator can emit it to the client.
+3. Polls the DB until the user responds or the request times out.
+
+The event generator runs the orchestrator as an ``asyncio.Task`` and
+reads from the queue in parallel, yielding SSE events to the client as
+they arrive.  The queue is **per-request** and dies with the connection
+— it is NOT persistent state.  All real state lives in the DB.
 """
 
 from __future__ import annotations
@@ -8,7 +24,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -26,12 +42,14 @@ from core.orchestrator import Orchestrator
 from database.helpers import (
     bg_save_agent_executions,
     bg_save_messages,
+    create_hitl_request,
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
+    poll_hitl_decision,
 )
 from tools.registry import ToolRegistry
-from utils.schemas import Source
+from utils.schemas import HitlResolvedDecision, Source
 
 from utils.llm_providers import get_llm_provider
 from utils.schemas import ComposerInput, QueryRequest
@@ -63,9 +81,118 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+# ── HITL callback factory ──────────────────────────────────────────────
+
+
+def _make_hitl_callback(
+    session: AsyncSession,
+    conversation_id: str,
+    sse_queue: asyncio.Queue,
+):
+    """
+    Return an async callback that the Orchestrator invokes when an agent
+    has tools requiring HITL approval.
+
+    The callback:
+        1. Persists a ``hitl_requests`` row (status=pending).
+        2. Pushes a ``hitl_required`` SSE event onto *sse_queue*.
+        3. Polls the DB every ``config.hitl_poll_interval`` seconds.
+        4. Returns a ``HitlResolvedDecision`` once the user responds or
+           the request times out.
+    """
+
+    async def _on_hitl_needed(
+        agent_cfg: Dict[str, Any],
+        hitl_tool_names: List[str],
+    ) -> HitlResolvedDecision:
+        agent_id = agent_cfg["agent_id"]
+        agent_name = agent_cfg["agent_name"]
+        task = agent_cfg.get("task", "")
+
+        # 1. Persist to DB
+        request_id = await create_hitl_request(
+            session=session,
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            tool_names=hitl_tool_names,
+            task_description=task,
+            timeout_seconds=config.hitl_timeout_seconds,
+        )
+
+        # 2. Push SSE event so the client can render an approval dialog
+        await sse_queue.put(_sse_event("hitl_required", {
+            "request_id": request_id,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "tool_names": hitl_tool_names,
+            "task_description": task,
+            "timeout_seconds": config.hitl_timeout_seconds,
+        }))
+
+        # 3. Poll DB until resolved or timed out
+        deadline = time.monotonic() + config.hitl_timeout_seconds
+        while time.monotonic() < deadline:
+            decision = await poll_hitl_decision(request_id)
+            if decision is not None:
+                status = decision["status"]
+                if status == "approved":
+                    await sse_queue.put(_sse_event("hitl_approved", {
+                        "request_id": request_id,
+                        "agent_id": agent_id,
+                    }))
+                    return HitlResolvedDecision(
+                        approved=True,
+                        instructions=decision.get("user_instructions"),
+                        tool_names=hitl_tool_names,
+                    )
+                elif status == "denied":
+                    await sse_queue.put(_sse_event("hitl_denied", {
+                        "request_id": request_id,
+                        "agent_id": agent_id,
+                    }))
+                    return HitlResolvedDecision(
+                        approved=False,
+                        tool_names=hitl_tool_names,
+                        reason="denied_by_user",
+                    )
+                else:
+                    # timed_out / expired
+                    await sse_queue.put(_sse_event("hitl_timeout", {
+                        "request_id": request_id,
+                        "agent_id": agent_id,
+                    }))
+                    return HitlResolvedDecision(
+                        approved=False,
+                        tool_names=hitl_tool_names,
+                        reason=f"hitl_{status}",
+                    )
+            await asyncio.sleep(config.hitl_poll_interval)
+
+        # Deadline passed — timeout
+        await sse_queue.put(_sse_event("hitl_timeout", {
+            "request_id": request_id,
+            "agent_id": agent_id,
+        }))
+        return HitlResolvedDecision(
+            approved=False,
+            tool_names=hitl_tool_names,
+            reason="hitl_timeout",
+        )
+
+    return _on_hitl_needed
+
+
+# ── SSE stream generator ───────────────────────────────────────────────
+
+
 async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncIterator[str]:
     """
     Full pipeline:  plan (|| memory extraction) → orchestrate → compose (streamed).
+
+    If the plan includes agents with HITL tools the generator will emit
+    ``hitl_required`` events and pause orchestration until the user
+    responds via ``POST /hitl/respond``.
     """
     start_time = time.perf_counter()
     user_id = request.user_id
@@ -113,7 +240,10 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
         if plan.execution_plan.agents:
             registry = ToolRegistry()
             agent_instances = build_agent_instances(registry)
-            orchestrator = Orchestrator(agent_instances=agent_instances)
+            orchestrator = Orchestrator(
+                agent_instances=agent_instances,
+                tool_registry=registry,
+            )
             context = {
                 "user_id": user_id,
                 "query_id": plan.query_id,
@@ -121,7 +251,30 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
                 "long_term_memory": long_term.model_dump(),
                 "conversation_history": conversation_history,
             }
-            results = await orchestrator.execute_plan(plan.execution_plan, context)
+
+            # ── HITL-aware orchestration ────────────────────────────
+            sse_queue: asyncio.Queue = asyncio.Queue()
+            on_hitl = _make_hitl_callback(session, conv_id, sse_queue)
+
+            orch_task = asyncio.create_task(
+                orchestrator.execute_plan(plan.execution_plan, context, on_hitl_needed=on_hitl)
+            )
+
+            # Drain SSE queue while orchestrator runs (HITL events)
+            while not orch_task.done():
+                try:
+                    event_str = await asyncio.wait_for(sse_queue.get(), timeout=0.3)
+                    yield event_str
+                except asyncio.TimeoutError:
+                    pass
+
+            # Drain any remaining events queued just before task finished
+            while not sse_queue.empty():
+                yield sse_queue.get_nowait()
+
+            # Retrieve results (will re-raise if orchestrator failed)
+            results = orch_task.result()
+
             asyncio.create_task(bg_save_agent_executions(conv_id, results))
         else:
             logger.info("[Stream] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)

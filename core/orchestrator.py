@@ -1,54 +1,85 @@
 """
 Orchestrator — executes the resolved agent plan stage by stage.
 
+Supports optional HITL (Human-in-the-Loop) approval:  when an agent's
+assigned tools include any marked ``requires_approval=True``, the
+orchestrator pauses execution and delegates to an ``on_hitl_needed``
+callback (provided by the streaming layer) which handles DB persistence,
+SSE notification, and polling for the user's decision.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
+from tools.registry import ToolRegistry
 from utils.dependency_resolver import resolve_dependencies
-from utils.schemas import AgentInput, AgentOutput, ResolvedExecutionPlan
+from utils.schemas import AgentInput, AgentOutput, HitlResolvedDecision, ResolvedExecutionPlan
 
 logger = logging.getLogger(__name__)
 
+# Type alias for the HITL callback supplied by the streaming / route layer.
+# Signature:  (agent_cfg, hitl_tool_names) -> HitlResolvedDecision
+HitlCallback = Callable[
+    [Dict[str, Any], List[str]],
+    Coroutine[Any, Any, HitlResolvedDecision],
+]
+
 
 class Orchestrator:
-    def __init__(self, agent_instances: Dict[str, Any]):
+    def __init__(
+        self,
+        agent_instances: Dict[str, Any],
+        tool_registry: Optional[ToolRegistry] = None,
+    ):
         """
         Parameters
         ----------
         agent_instances : mapping of agent_name → agent object
                           e.g. {"rag_agent": <RAGAgent>, ...}
+        tool_registry   : optional ToolRegistry for HITL look-ups.
+                          Falls back to the singleton if not provided.
         """
         self.agent_instances = agent_instances
         self.shared_state: Dict[str, AgentOutput | Dict[str, Any]] = {}
+        self._tool_registry = tool_registry or ToolRegistry()
+
+    # ── public entry point ──────────────────────────────────────────────
 
     async def execute_plan(
         self,
         execution_plan: ResolvedExecutionPlan,
         context: Dict[str, Any],
+        on_hitl_needed: Optional[HitlCallback] = None,
     ) -> Dict[str, Any]:
         """
-        Returns the shared_state mapping agent_id → AgentOutput.
+        Execute the plan stage-by-stage.
+
+        Parameters
+        ----------
+        on_hitl_needed : async callback that is invoked when an agent has
+            tools requiring approval.  If *None*, HITL agents are
+            auto-skipped with ``error="hitl_skipped_non_streaming"``.
         """
         agent_dicts = [task.model_dump() for task in execution_plan.agents]
         stages = resolve_dependencies(agent_dicts)
 
-        logger.info(f"[Orchestrator] Starting execution plan with {len(agent_dicts)} agents.")
-        logger.debug(f"[Orchestrator] Context: {context}")
+        logger.info("[Orchestrator] Starting execution plan with %d agents.", len(agent_dicts))
         for stage_num, stage_agents in enumerate(stages, start=1):
-            await self._execute_stage(stage_num, stage_agents, context)
+            await self._execute_stage(stage_num, stage_agents, context, on_hitl_needed)
 
         return self.shared_state
+
+    # ── stage execution ─────────────────────────────────────────────────
 
     async def _execute_stage(
         self,
         stage_num: int,
         stage_agents: List[Dict[str, Any]],
         context: Dict[str, Any],
+        on_hitl_needed: Optional[HitlCallback],
     ) -> None:
         logger.info("Stage %d — running %d agent(s)", stage_num, len(stage_agents))
 
@@ -60,7 +91,6 @@ class Orchestrator:
             agent_id = agent_cfg["agent_id"]
             agent_ids.append(agent_id)
 
-            logger.info(f"[Orchestrator] Input to agent {agent_name} ({agent_id}): {agent_cfg}")
             agent = self.agent_instances.get(agent_name)
             if agent is None:
                 logger.error("No instance for agent '%s' — skipping", agent_name)
@@ -73,8 +103,9 @@ class Orchestrator:
                 )
                 continue
 
-            agent_input = self._prepare_agent_input(agent_cfg, context)
-            coroutines.append((agent_id, agent.execute_with_retry(agent_input)))
+            coroutines.append(
+                (agent_id, self._run_agent_with_hitl(agent_cfg, agent, context, on_hitl_needed))
+            )
 
         if coroutines:
             results = await asyncio.gather(
@@ -92,11 +123,89 @@ class Orchestrator:
                         error=str(result),
                     )
                 else:
-                    logger.info(f"[Orchestrator] Output from agent {aid}: {result}")
+                    logger.info("[Orchestrator] Output from agent %s: %s", aid, result)
                     self.shared_state[aid] = result
 
+    # ── HITL-aware agent runner ─────────────────────────────────────────
+
+    async def _run_agent_with_hitl(
+        self,
+        agent_cfg: Dict[str, Any],
+        agent: Any,
+        context: Dict[str, Any],
+        on_hitl_needed: Optional[HitlCallback],
+    ) -> AgentOutput:
+        """
+        Check if any of the agent's assigned tools require HITL approval.
+        If so, invoke the callback and act on the decision.
+        Otherwise run the agent directly.
+        """
+        agent_id = agent_cfg["agent_id"]
+        agent_name = agent_cfg["agent_name"]
+        task = agent_cfg.get("task", "")
+
+        # Determine which tools (if any) need approval
+        hitl_tools = self._tool_registry.get_hitl_tools_for_agent_task(
+            agent_cfg.get("tools", [])
+        )
+
+        hitl_decision: Optional[HitlResolvedDecision] = None
+
+        if hitl_tools:
+            if on_hitl_needed is None:
+                # Non-streaming endpoint — auto-skip HITL agents
+                logger.warning(
+                    "Agent %s (%s) requires HITL for tools %s but no callback — skipping",
+                    agent_id, agent_name, hitl_tools,
+                )
+                return AgentOutput(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    task_description=task,
+                    task_done=False,
+                    error="hitl_skipped_non_streaming",
+                    partial_data={
+                        "reason": "This agent requires human approval. Use the streaming endpoint.",
+                        "hitl_tools": hitl_tools,
+                    },
+                )
+
+            # Invoke the HITL callback — blocks until user responds or timeout
+            hitl_decision = await on_hitl_needed(agent_cfg, hitl_tools)
+
+            if not hitl_decision.approved:
+                logger.info(
+                    "HITL denied for agent %s (%s): %s",
+                    agent_id, agent_name, hitl_decision.reason,
+                )
+                return AgentOutput(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    task_description=task,
+                    task_done=False,
+                    error=f"denied_by_user" if hitl_decision.reason == "denied_by_user" else hitl_decision.reason or "hitl_denied",
+                    partial_data={
+                        "reason": hitl_decision.reason or "denied_by_user",
+                        "hitl_tools": hitl_tools,
+                    },
+                )
+
+            logger.info(
+                "HITL approved for agent %s (%s), instructions=%s",
+                agent_id, agent_name, hitl_decision.instructions,
+            )
+
+        # Build input (with HITL context if available)
+        agent_input = self._prepare_agent_input(agent_cfg, context, hitl_decision)
+        return await agent.execute_with_retry(agent_input)
+
+    # ── input builder ───────────────────────────────────────────────────
+
     def _prepare_agent_input(
-        self, agent_cfg: Dict[str, Any], context: Dict[str, Any]
+        self,
+        agent_cfg: Dict[str, Any],
+        context: Dict[str, Any],
+        hitl_decision: Optional[HitlResolvedDecision] = None,
     ) -> AgentInput:
         """Build a typed AgentInput from the resolved agent dict + context."""
         dependency_outputs: Dict[str, Any] = {}
@@ -138,4 +247,5 @@ class Orchestrator:
                 "query_id": context.get("query_id", ""),
                 "session_id": context.get("session_id"),
             },
+            hitl_context=hitl_decision,
         )
