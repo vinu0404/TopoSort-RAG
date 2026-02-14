@@ -27,8 +27,10 @@ class CodeAgent(BaseAgent):
         try:
             execute_code = self.get_tool("execute_code")
             linter = self.get_tool("code_linter")
+            effective_task = await self._effective_task(task_config)
+
             prompt = self.prompts.code_generation_prompt(
-                task=task_config.task,
+                task=effective_task,
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
@@ -47,7 +49,7 @@ class CodeAgent(BaseAgent):
                 return AgentOutput(
                     agent_id=task_config.agent_id,
                     agent_name=self.agent_name,
-                    task_description=task_config.task,
+                    task_description=effective_task,
                     task_done=False,
                     error="Generated code has syntax errors",
                     partial_data={"code": code, "lint_issues": issues},
@@ -59,7 +61,7 @@ class CodeAgent(BaseAgent):
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
-                task_description=task_config.task,
+                task_description=effective_task,
                 task_done=result.get("exit_code") == 0,
                 data={
                     "code": code,

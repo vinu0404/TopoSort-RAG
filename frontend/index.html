@@ -1105,7 +1105,11 @@ async function sendStreaming(query) {
       case 'hitl_approved':
         dismissHitlDialog();
         updatePipelineAgent(data.agent_id, false);
-        addSystemMessage(`Approved — ${data.agent_id} is running...`);
+        if (data.instructions) {
+          addSystemMessage(`Approved with instruction: "${data.instructions}" — ${data.agent_id} is running...`);
+        } else {
+          addSystemMessage(`Approved — ${data.agent_id} is running...`);
+        }
         break;
 
       case 'hitl_denied':

@@ -34,17 +34,16 @@ class WebSearchAgent(BaseAgent):
             search_news = self.get_tool("web_search_news")
             search_deep = self.get_tool("web_search_deep")
 
+            effective_task = await self._effective_task(task_config)
+
             strategy_prompt = self.prompts.search_strategy_prompt(
-                task=task_config.task,
+                task=effective_task,
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
             )
-            logger.info(f"========================================")
-            logger.info(f"[WebSearchAgent] conversation_history: {task_config.conversation_history}")
 
-            logger.info(f"========================================")
             strategy: str = await self.llm.generate(
                 prompt=strategy_prompt,
                 temperature=config.web_temperature,
@@ -86,7 +85,7 @@ class WebSearchAgent(BaseAgent):
                     if content and not content.get("error"):
                         fetched_contents.append(content)
             synthesis_prompt = self.prompts.synthesis_prompt(
-                task=task_config.task,
+                task=effective_task,
                 tavily_answer=tavily_answer,
                 search_results=results,
                 fetched_pages=fetched_contents,
@@ -117,7 +116,7 @@ class WebSearchAgent(BaseAgent):
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
-                task_description=task_config.task,
+                task_description=effective_task,
                 task_done=True,
                 result=final_answer,
                 data={

@@ -58,7 +58,9 @@ class Settings(BaseSettings):
 
     # ── HITL (Human-in-the-Loop) ─────────────────────────────────────────────────
     hitl_timeout_seconds: int = 120   # how long to wait for user approval
-    hitl_poll_interval: float = 1.5   # seconds between DB polls
+    hitl_poll_interval: float = 5   # seconds between DB polls
+    hitl_classifier_provider: str = "openai"   # cheap model for classify enhance vs override
+    hitl_classifier_model: str = "gpt-4o-mini"
 
     model_config = {
         "env_file": ".env",

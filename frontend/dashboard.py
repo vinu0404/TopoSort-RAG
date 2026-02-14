@@ -65,7 +65,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 'agent_executions', (SELECT json_agg(row_to_json(t)) FROM agent_executions t),
                 'documents', (SELECT json_agg(row_to_json(t)) FROM documents t),
                 'conversation_summaries', (SELECT json_agg(row_to_json(t)) FROM conversation_summaries t),
-                'user_long_term_memory', (SELECT json_agg(row_to_json(t)) FROM user_long_term_memory t)
+                'user_long_term_memory', (SELECT json_agg(row_to_json(t)) FROM user_long_term_memory t),
+                'hitl_requests', (SELECT json_agg(row_to_json(t)) FROM hitl_requests t)
             ) AS data;
             """
             
@@ -104,7 +105,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 
                 for table in ['users', 'sessions', 'conversations', 'messages', 
                              'agent_executions', 'documents', 'conversation_summaries',
-                             'user_long_term_memory']:
+                             'user_long_term_memory', 'hitl_requests']:
                     if data.get(table) is None:
                         data[table] = []
                 

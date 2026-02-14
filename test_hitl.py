@@ -8,7 +8,7 @@ import threading
 import time
 
 BASE = "http://127.0.0.1:8000/api/v1"
-TOKEN = "eyJ1c2VyX2lkIjogIjMzZDIyMDMzLTFjYWEtNDc0ZS1hOWFkLWM4ZTJhMjA4YmY0YiIsICJleHAiOiAxNzcxMzcyNjg1fQ==.5ce055060e14c9a4dd1fdcf7a590b0a4b28c1d6a3855bee70b5445fbc4a33e96"
+TOKEN = "eyJ1c2VyX2lkIjogIjMzZDIyMDMzLTFjYWEtNDc0ZS1hOWFkLWM4ZTJhMjA4YmY0YiIsICJleHAiOiAxNzcxNDE1OTExfQ==.9700931516e0d54511d469041bcf67899abd01ee8d2d91ca47656d4c93bd16e7"
 USER_ID = "33d22033-1caa-474e-a9ad-c8e2a208bf4b"
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -29,14 +29,14 @@ def approve_hitl():
         return
 
     time.sleep(1)  # small delay so we can see the flow
-    print(f"\n❌ Denying request: {hitl_request_id}")
+    print(f"\n\u2705 Approving with OVERRIDE: 'search about india cricket team captain 2026'")
     r = httpx.post(
         f"{BASE}/hitl/respond",
         headers=HEADERS,
         json={
             "request_id": hitl_request_id,
-            "decision": "denied",
-            "instructions": None,
+            "decision": "approved",
+            "instructions": "search about india cricket team captain 2026",
         },
     )
     print(f"   Response: {r.status_code} {r.json()}")
@@ -49,14 +49,14 @@ def main():
     approver = threading.Thread(target=approve_hitl, daemon=True)
     approver.start()
 
-    print("🚀 Sending streaming query: 'search for latest AI news'")
+    print("\n\u2705 Sending streaming query: 'tell me about usa tariff update'")
     print("=" * 60)
 
     with httpx.stream(
         "POST",
         f"{BASE}/query/stream",
         headers=HEADERS,
-        json={"query": "search for latest AI news", "user_id": USER_ID},
+        json={"query": "tell me about usa tariff update", "user_id": USER_ID},
         timeout=180,
     ) as response:
         event_type = None
