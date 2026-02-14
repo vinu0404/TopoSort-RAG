@@ -8,6 +8,7 @@ import logging
 from typing import Dict, List, Optional
 
 from connectors.base import BaseConnector
+from connectors.github import GitHubConnector
 from connectors.gmail import GmailConnector
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 _ALL_CONNECTORS: List[BaseConnector] = [
     GmailConnector(),
+    GitHubConnector(),
     # SlackConnector(),    # future
     # NotionConnector(),   # future
-    # GitHubConnector(),   # future
 ]
 
 

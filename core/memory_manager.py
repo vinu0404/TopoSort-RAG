@@ -95,28 +95,66 @@ class MemoryManager:
         )
 
         # ── Load messages → rebuild _turns ───────────────────────────────
+        # ``load_conversation_messages`` returns rows ordered by
+        # (created_at ASC, role_priority) so user always precedes
+        # assistant.  We still guard against malformed data defensively.
         raw_messages = await load_conversation_messages(
             db_session, conversation_id,
         )
         turns: List[ConversationTurn] = []
         turn_num = 0
-        i = 0
-        while i < len(raw_messages):
-            msg = raw_messages[i]
-            if msg["role"] == "user":
-                user_q = msg["content"]
-                assistant_a = ""
-                if i + 1 < len(raw_messages) and raw_messages[i + 1]["role"] == "assistant":
-                    assistant_a = raw_messages[i + 1]["content"]
-                    i += 1
-                turn_num += 1
-                turns.append(ConversationTurn(
-                    turn=turn_num,
-                    user_query=user_q,
-                    composer_answer=assistant_a,
-                    timestamp="",
-                ))
-            i += 1
+        pending_user: str | None = None
+
+        for msg in raw_messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if role == "system":
+                # System messages (injected summaries) are not turns.
+                continue
+
+            if role == "user":
+                # Flush any previous unpaired user message.
+                if pending_user is not None:
+                    turn_num += 1
+                    turns.append(ConversationTurn(
+                        turn=turn_num,
+                        user_query=pending_user,
+                        composer_answer="",
+                        timestamp="",
+                    ))
+                pending_user = content
+
+            elif role == "assistant":
+                if pending_user is not None:
+                    # Normal pair: user → assistant
+                    turn_num += 1
+                    turns.append(ConversationTurn(
+                        turn=turn_num,
+                        user_query=pending_user,
+                        composer_answer=content,
+                        timestamp="",
+                    ))
+                    pending_user = None
+                else:
+                    # Orphaned assistant (legacy data) — attach to empty user.
+                    turn_num += 1
+                    turns.append(ConversationTurn(
+                        turn=turn_num,
+                        user_query="",
+                        composer_answer=content,
+                        timestamp="",
+                    ))
+
+        # Flush any trailing unpaired user message.
+        if pending_user is not None:
+            turn_num += 1
+            turns.append(ConversationTurn(
+                turn=turn_num,
+                user_query=pending_user,
+                composer_answer="",
+                timestamp="",
+            ))
 
         if turns:
             self._turns[user_id] = turns

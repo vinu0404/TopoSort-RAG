@@ -36,7 +36,7 @@ class User(Base):
 
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
-    connections = relationship("UserConnection", cascade="all, delete-orphan")
+    connections = relationship("UserConnection", back_populates="user", cascade="all, delete-orphan")
 
 
 class Session(Base):
@@ -176,4 +176,4 @@ class UserConnection(Base):
     last_used_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
 
-    user = relationship("User")
+    user = relationship("User", back_populates="connections")

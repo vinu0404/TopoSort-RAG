@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+@router.get("/agents")
+async def list_agents():
+    """Return all registered agents and their capabilities."""
+    registry = AgentRegistry()
+    return {"agents": registry.get_agent_capabilities()}
+
+
 @router.post("/query")
 async def handle_query(
     request: QueryRequest,

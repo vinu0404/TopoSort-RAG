@@ -82,3 +82,28 @@ agents:
       - "Extract content from a specific URL"
     default_timeout: 30
     max_retries: 2
+
+  github_agent:
+    description: "GitHub integration — repo info, issues, PRs, repo creation, PR creation"
+    capabilities:
+      - github_read
+      - github_issues
+      - github_prs
+      - github_create
+    tools:
+      - list_user_repos
+      - get_repo_info
+      - list_repo_issues
+      - list_pull_requests
+      - create_repo
+      - create_pull_request
+    typical_use_cases:
+      - "List my GitHub repositories"
+      - "How many repos do I have"
+      - "Show info about a GitHub repository"
+      - "List open issues on a repo"
+      - "List open pull requests"
+      - "Create a new GitHub repository"
+      - "Open a PR from feature-branch to main"
+    default_timeout: 30
+    max_retries: 2

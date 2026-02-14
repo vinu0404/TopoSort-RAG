@@ -27,12 +27,13 @@ class Settings(BaseSettings):
     web_model_provider: str = "openai"
     web_model: str = "gpt-4o-mini"
     web_temperature: float = 0.2
+    github_model_provider: str = "openai"
+    github_model: str = "gpt-4o-mini"
+    github_temperature: float = 0.2
     tavily_api_key: str = ""
 
-    # ── Gmail OAuth2 ────────────────────────────────────────────────────
-    gmail_credentials_file: str = ""   # path to credentials.json (desktop flow, legacy)
-    gmail_token_file: str = ""          # path to token.json (auto-created, legacy)
-    gmail_sender_email: str = ""        # default sender address
+    # ── Gmail ────────────────────────────────────────────────────────────
+    gmail_sender_email: str = ""        # fallback sender address (overridden by connected account)
 
     # ── Security Secrets ──────────────────────────────────────────────────
     jwt_secret: str = "change-me-jwt-secret-key"       # HMAC secret for auth tokens
@@ -43,6 +44,8 @@ class Settings(BaseSettings):
     # ── OAuth Connectors ─────────────────────────────────────────────────
     google_client_id: str = ""          # Google OAuth Web App client ID
     google_client_secret: str = ""      # Google OAuth Web App client secret
+    github_client_id: str = ""          # GitHub App OAuth client ID
+    github_client_secret: str = ""      # GitHub App OAuth client secret
     oauth_redirect_base: str = "http://localhost:8000"  # base URL for OAuth callbacks
 
     # ── Embedding Model ─────────────────────────────────────────────────
@@ -88,6 +91,7 @@ class Settings(BaseSettings):
             "code_agent": (self.code_model_provider, self.code_model, self.code_temperature),
             "mail_agent": (self.mail_model_provider, self.mail_model, self.mail_temperature),
             "web_search_agent": (self.web_model_provider, self.web_model, self.web_temperature),
+            "github_agent": (self.github_model_provider, self.github_model, self.github_temperature),
             "master": (self.master_model_provider, self.master_model, self.master_temperature),
             "composer": (self.composer_model_provider, self.composer_model, self.composer_temperature),
         }
