@@ -30,9 +30,20 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
 
     # ── Gmail OAuth2 ────────────────────────────────────────────────────
-    gmail_credentials_file: str = ""   # path to credentials.json
-    gmail_token_file: str = ""          # path to token.json (auto-created)
+    gmail_credentials_file: str = ""   # path to credentials.json (desktop flow, legacy)
+    gmail_token_file: str = ""          # path to token.json (auto-created, legacy)
     gmail_sender_email: str = ""        # default sender address
+
+    # ── Security Secrets ──────────────────────────────────────────────────
+    jwt_secret: str = "change-me-jwt-secret-key"       # HMAC secret for auth tokens
+    jwt_expiry_seconds: int = 604800                    # 7 days
+    oauth_state_secret: str = "change-me-oauth-state"   # HMAC secret for OAuth CSRF state
+    token_encryption_key: str = ""                       # Fernet key for encrypting OAuth tokens at rest
+
+    # ── OAuth Connectors ─────────────────────────────────────────────────
+    google_client_id: str = ""          # Google OAuth Web App client ID
+    google_client_secret: str = ""      # Google OAuth Web App client secret
+    oauth_redirect_base: str = "http://localhost:8000"  # base URL for OAuth callbacks
 
     # ── Embedding Model ─────────────────────────────────────────────────
     embedding_model_provider: str = "openai"

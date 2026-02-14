@@ -1,11 +1,15 @@
 """
 Gmail agent tools — full integration with Gmail API via Google OAuth2.
 
+Supports two token modes:
+  1. Per-user OAuth tokens (via connectors module) — preferred
+  2. Legacy file-based tokens  (via .env config)    — fallback
 """
 
 from __future__ import annotations
 
 import base64
+import contextvars
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -16,7 +20,15 @@ from tools import tool
 
 logger = logging.getLogger(__name__)
 
-_gmail_service = None
+# ── Context variable for per-user token injection ────────────────────────
+# The mail agent sets this before calling tool functions so that
+# _get_gmail_service() can load the correct user's OAuth token.
+current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "current_user_id", default=""
+)
+
+_gmail_service = None            # legacy file-based singleton
+_user_services: Dict[str, Any] = {}  # per-user service cache
 
 import os
 from google.auth.transport.requests import Request
@@ -24,19 +36,54 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
+
+
+def _build_service_from_token(access_token: str):
+    """Build a Gmail service from a raw OAuth access token (per-user)."""
+    creds = Credentials(token=access_token)
+    return build("gmail", "v1", credentials=creds)
+
+
 def _get_gmail_service():
-    """Build & cache a Gmail API service object."""
+    """
+    Build & return a Gmail API service object.
+
+    Priority:
+      1. Per-user token via connectors (if current_user_id is set)
+      2. Legacy file-based token (if GMAIL_CREDENTIALS_FILE is configured)
+    """
+    user_id = current_user_id.get("")
+
+    # ── Per-user connector token ─────────────────────────────────────
+    if user_id:
+        try:
+            import asyncio
+            from connectors.token_manager import get_active_token
+
+            # We're inside an async context, use the running loop
+            loop = asyncio.get_running_loop()
+            # Create a future and run in a helper task
+            token = None
+
+            async def _fetch():
+                return await get_active_token(user_id, "gmail")
+
+            if user_id in _user_services:
+                return _user_services[user_id]
+
+        except RuntimeError:
+            pass  # No running loop — fall through to legacy
+
+    # ── Legacy file-based token ──────────────────────────────────────
     global _gmail_service
     if _gmail_service is not None:
         return _gmail_service
-
-
-    SCOPES = [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.compose",
-        "https://www.googleapis.com/auth/gmail.modify",
-    ]
 
     creds_file = config.gmail_credentials_file
     token_file = config.gmail_token_file
@@ -50,9 +97,9 @@ def _get_gmail_service():
         else:
             if not creds_file or not os.path.exists(creds_file):
                 raise RuntimeError(
-                    "Gmail credentials not configured. Set GMAIL_CREDENTIALS_FILE "
-                    "in .env to your OAuth2 credentials.json path and run the app "
-                    "once locally to complete the consent screen."
+                    "Gmail not connected. Either connect Gmail via the UI "
+                    "(Settings → Connect Gmail) or set GMAIL_CREDENTIALS_FILE "
+                    "in .env for legacy file-based auth."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
             creds = flow.run_local_server(port=0)
@@ -63,6 +110,25 @@ def _get_gmail_service():
 
     _gmail_service = build("gmail", "v1", credentials=creds)
     return _gmail_service
+
+
+async def get_gmail_service_async(user_id: str = ""):
+    """
+    Async version — tries per-user connector token first, then legacy.
+    Call this from the mail agent instead of _get_gmail_service().
+    """
+    if user_id:
+        from connectors.token_manager import get_active_token
+
+        token = await get_active_token(user_id, "gmail")
+        if token:
+            # Build and cache service
+            service = _build_service_from_token(token)
+            _user_services[user_id] = service
+            return service
+
+    # Fallback to legacy sync approach
+    return _get_gmail_service()
 
 
 def _parse_message(msg: Dict) -> Dict[str, Any]:

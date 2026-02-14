@@ -19,7 +19,7 @@ from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
 import logging
 logger = logging.getLogger("mail_agent")
-
+from tools.mail_tools import current_user_id, get_gmail_service_async
 class MailAgent(BaseAgent):
     def __init__(self, tool_registry, llm_provider):
         super().__init__("mail_agent", tool_registry)
@@ -39,7 +39,9 @@ class MailAgent(BaseAgent):
 
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start = time.perf_counter()
-
+        user_id = task_config.metadata.get("user_id", "")
+        current_user_id.set(user_id)
+        await get_gmail_service_async(user_id)
 
         logger.info(f"[MailAgent] Input: {task_config}")
         try:

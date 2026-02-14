@@ -17,9 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from api.middleware import register_middleware
 from api.routes import router as api_router
 from api.streaming import router as stream_router
-from api.auth import router as auth_router
+from auth.routes import router as auth_router
+from connectors.routes import router as connector_router
 from config.settings import config
 from core.agent_factory import build_agent_instances
+from connectors.registry import ConnectorRegistry
 from database.helpers import expire_stale_hitl_requests
 from tools.registry import ToolRegistry
 from utils.validators import validate_tools_for_agents
@@ -37,8 +39,8 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Multi-Agentic RAG System",
-        version="1.0.0",
-        description="Production multi-agent RAG with streaming.",
+        version="3.0.0",
+        description="Production multi-agent RAG with Connectors, HITL",
     )
 
     # CORS
@@ -54,6 +56,7 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(auth_router, prefix="/api/v1/auth")
+    app.include_router(connector_router, prefix="/api/v1/connectors")
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
 
@@ -70,6 +73,10 @@ def create_app() -> FastAPI:
         logger.info("Validating tool ↔ agent bindings…")
         agents = build_agent_instances(registry)
         validate_tools_for_agents(agents, registry)
+
+        # Discover OAuth connectors
+        connector_registry = ConnectorRegistry()
+        connector_registry.discover()
 
         # Clean up orphaned HITL requests from previous server instances
         expired = await expire_stale_hitl_requests()
