@@ -1,7 +1,4 @@
 """
-BUG-15 FIX: Thin wrapper that re-exports the canonical tool functions
-from `tools/rag_tools.py`.  Agent code can import from this module
-for convenience; the ToolRegistry discovers from `tools/rag_tools.py`.
 """
 
 from tools.rag_tools import (

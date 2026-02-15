@@ -1,9 +1,4 @@
 """
-Tests for MasterAgent — specifically the BUG-1 fix
-(AgentTask → ResolvedAgentTask transformation).
-
-BUG-16 FIX: All test data uses `ResolvedAgentTask` with correct fields
-           (`agent_id`, `depends_on`) rather than non-existent fields.
 """
 
 import pytest
@@ -51,8 +46,6 @@ class TestGenerateAgentIds:
 
         rag = resolved.agents[0]
         code = resolved.agents[1]
-
-        # BUG-16 FIX — ResolvedAgentTask has agent_id + depends_on
         assert rag.agent_id.startswith("rag_agent_")
         assert code.agent_id.startswith("code_agent_")
         assert code.depends_on == [rag.agent_id]
