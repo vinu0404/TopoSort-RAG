@@ -128,7 +128,12 @@ async def save_messages(
     assistant_answer: str,
     metadata: Dict[str, Any] | None = None,
 ) -> None:
-    """Insert a *user* message and an *assistant* message."""
+    """Insert a *user* message and an *assistant* message.
+
+    The assistant row gets ``created_at = now + 1 µs`` so that a simple
+    ``ORDER BY created_at`` always returns user-before-assistant — even
+    though both belong to the same logical turn.
+    """
     cid = _to_uuid(conversation_id)
     now = datetime.now(timezone.utc)
 
@@ -141,7 +146,7 @@ async def save_messages(
             role="assistant",
             content=assistant_answer,
             metadata_=metadata or {},
-            created_at=now,
+            created_at=now + timedelta(microseconds=1),
         )
     )
     await session.flush()
@@ -248,12 +253,23 @@ async def load_conversation_messages(
 
     Returns pairs of user/assistant messages ordered chronologically,
     capped at *limit* rows to bound token usage.
+
+    The secondary sort ensures *user* always precedes *assistant*
+    within the same timestamp (covers legacy rows written before the
+    1-µs offset was added to ``save_messages``).
     """
+    from sqlalchemy import case
+
     cid = _to_uuid(conversation_id)
+    role_order = case(
+        (Message.role == "user", 0),
+        (Message.role == "system", 1),
+        else_=2,  # assistant
+    )
     result = await session.execute(
         select(Message)
         .where(Message.conversation_id == cid)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.created_at.asc(), role_order)
         .limit(limit)
     )
     rows = result.scalars().all()

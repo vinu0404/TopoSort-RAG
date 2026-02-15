@@ -1,13 +1,20 @@
 """
-Gmail agent tools — full integration with Gmail API via Google OAuth2.
+Gmail agent tools — production per-user OAuth via connectors module.
 
-Supports two token modes:
-  1. Per-user OAuth tokens (via connectors module) — preferred
-  2. Legacy file-based tokens  (via .env config)    — fallback
+Architecture:
+  • MailAgent.execute() calls ``prepare_gmail_service(user_id)`` once per request.
+  • That fetches a fresh token via ``connectors.token_manager.get_active_token()``
+    (which auto-refreshes expired tokens) and builds a ``googleapiclient`` service.
+  • The service is stored in a ``ContextVar`` — automatically scoped to the
+    current async task and garbage-collected when the request ends.
+  • Every tool function reads the service from the ContextVar.
+  • All sync ``googleapiclient`` calls are offloaded to a thread via
+    ``asyncio.to_thread()`` so they never block the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextvars
 import logging
@@ -15,120 +22,96 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 from config.settings import config
 from tools import tool
 
 logger = logging.getLogger(__name__)
 
-# ── Context variable for per-user token injection ────────────────────────
-# The mail agent sets this before calling tool functions so that
-# _get_gmail_service() can load the correct user's OAuth token.
+
+# ── Request-scoped context variables ─────────────────────────────────────
+# Set once by prepare_gmail_service(), read by every tool function.
+# Automatically cleaned up when the async task (request) finishes.
+
 current_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "current_user_id", default=""
 )
 
-_gmail_service = None            # legacy file-based singleton
-_user_services: Dict[str, Any] = {}  # per-user service cache
+_current_gmail_service: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_current_gmail_service", default=None
+)
 
-import os
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.compose",
-    "https://www.googleapis.com/auth/gmail.modify",
-]
+_current_sender_email: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "_current_sender_email", default=""
+)
 
 
-def _build_service_from_token(access_token: str):
-    """Build a Gmail service from a raw OAuth access token (per-user)."""
-    creds = Credentials(token=access_token)
-    return build("gmail", "v1", credentials=creds)
+# ── Service lifecycle ────────────────────────────────────────────────────
 
 
-def _get_gmail_service():
+async def prepare_gmail_service(user_id: str) -> None:
     """
-    Build & return a Gmail API service object.
+    Fetch a fresh OAuth token from the connectors module, build a Gmail
+    API service, and store it in request-scoped ContextVars.
 
-    Priority:
-      1. Per-user token via connectors (if current_user_id is set)
-      2. Legacy file-based token (if GMAIL_CREDENTIALS_FILE is configured)
+    Must be called **once** at the start of ``MailAgent.execute()``.
+
+    Raises
+    ------
+    RuntimeError
+        If the user has no active Gmail connection.
     """
-    user_id = current_user_id.get("")
+    from connectors.token_manager import get_active_token, get_user_connections
 
-    # ── Per-user connector token ─────────────────────────────────────
-    if user_id:
-        try:
-            import asyncio
-            from connectors.token_manager import get_active_token
+    token = await get_active_token(user_id, "gmail")
+    if not token:
+        raise RuntimeError(
+            "Gmail not connected. Please connect your Gmail account "
+            "via Settings → Connections before using mail features."
+        )
 
-            # We're inside an async context, use the running loop
-            loop = asyncio.get_running_loop()
-            # Create a future and run in a helper task
-            token = None
+    # Build the service in a thread (googleapiclient discovery does I/O)
+    creds = Credentials(token=token)
+    service = await asyncio.to_thread(build, "gmail", "v1", credentials=creds)
 
-            async def _fetch():
-                return await get_active_token(user_id, "gmail")
+    # Resolve sender email from the connection metadata
+    connections = await get_user_connections(user_id)
+    sender_email = ""
+    for conn in connections:
+        if conn["provider"] == "gmail" and conn["status"] == "active":
+            sender_email = conn.get("provider_meta", {}).get("email", "")
+            if not sender_email:
+                sender_email = conn.get("account_label", "")
+            break
 
-            if user_id in _user_services:
-                return _user_services[user_id]
+    current_user_id.set(user_id)
+    _current_gmail_service.set(service)
+    _current_sender_email.set(sender_email or config.gmail_sender_email)
 
-        except RuntimeError:
-            pass  # No running loop — fall through to legacy
-
-    # ── Legacy file-based token ──────────────────────────────────────
-    global _gmail_service
-    if _gmail_service is not None:
-        return _gmail_service
-
-    creds_file = config.gmail_credentials_file
-    token_file = config.gmail_token_file
-
-    creds = None
-    if token_file and os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not creds_file or not os.path.exists(creds_file):
-                raise RuntimeError(
-                    "Gmail not connected. Either connect Gmail via the UI "
-                    "(Settings → Connect Gmail) or set GMAIL_CREDENTIALS_FILE "
-                    "in .env for legacy file-based auth."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
-            creds = flow.run_local_server(port=0)
-        if token_file:
-            os.makedirs(os.path.dirname(token_file) or ".", exist_ok=True)
-            with open(token_file, "w") as f:
-                f.write(creds.to_json())
-
-    _gmail_service = build("gmail", "v1", credentials=creds)
-    return _gmail_service
+    logger.debug("Gmail service ready for user=%s sender=%s", user_id, sender_email)
 
 
-async def get_gmail_service_async(user_id: str = ""):
+def _get_service():
     """
-    Async version — tries per-user connector token first, then legacy.
-    Call this from the mail agent instead of _get_gmail_service().
+    Return the request-scoped Gmail API service.
+
+    Raises
+    ------
+    RuntimeError
+        If ``prepare_gmail_service()`` was not called for this request.
     """
-    if user_id:
-        from connectors.token_manager import get_active_token
+    service = _current_gmail_service.get(None)
+    if service is None:
+        raise RuntimeError(
+            "Gmail service not initialised for this request. "
+            "Ensure MailAgent.execute() calls prepare_gmail_service() first."
+        )
+    return service
 
-        token = await get_active_token(user_id, "gmail")
-        if token:
-            # Build and cache service
-            service = _build_service_from_token(token)
-            _user_services[user_id] = service
-            return service
 
-    # Fallback to legacy sync approach
-    return _get_gmail_service()
+# ── Helpers ──────────────────────────────────────────────────────────────
 
 
 def _parse_message(msg: Dict) -> Dict[str, Any]:
@@ -170,7 +153,7 @@ def _build_mime_message(
     """Create a base64url-encoded RFC 2822 message."""
     mime = MIMEMultipart()
     mime["to"] = to
-    mime["from"] = config.gmail_sender_email
+    mime["from"] = _current_sender_email.get("") or config.gmail_sender_email
     mime["subject"] = subject
     if cc:
         mime["cc"] = cc
@@ -181,13 +164,14 @@ def _build_mime_message(
     return raw
 
 
-# ── SEARCH TOOLS ─────
+# ── SEARCH TOOLS ─────────────────────────────────────────────────────────
+
 
 @tool("mail_agent")
 async def search_messages(
     query: str,
     max_results: int = 10,
-    label: str = "INBOX",
+    label: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Search Gmail messages using Gmail search syntax.
@@ -200,21 +184,32 @@ async def search_messages(
           • "from:john@example.com subject:meeting"
           • "has:attachment after:2025/01/01"
           • "is:unread"
+          • "mongodb" (keyword search across all mail)
     max_results : int
         Maximum messages to return (1-50).
     label : str
-        Gmail label to scope the search (default INBOX).
+        Gmail label to scope the search (e.g. "INBOX", "SENT").
+        Empty string = search all mail (default).
 
     Returns
     -------
     list of parsed message dicts
     """
-    service = _get_gmail_service()
-    results = (
+    service = _get_service()
+
+    list_kwargs: Dict[str, Any] = {
+        "userId": "me",
+        "q": query,
+        "maxResults": min(max_results, 50),
+    }
+    if label:
+        list_kwargs["labelIds"] = [label]
+
+    results = await asyncio.to_thread(
         service.users()
         .messages()
-        .list(userId="me", q=query, labelIds=[label], maxResults=min(max_results, 50))
-        .execute()
+        .list(**list_kwargs)
+        .execute
     )
 
     messages = results.get("messages", [])
@@ -223,11 +218,11 @@ async def search_messages(
 
     parsed = []
     for meta in messages:
-        msg = (
+        msg = await asyncio.to_thread(
             service.users()
             .messages()
             .get(userId="me", id=meta["id"], format="full")
-            .execute()
+            .execute
         )
         parsed.append(_parse_message(msg))
 
@@ -254,23 +249,25 @@ async def search_drafts(
     -------
     list of draft dicts with id, message details
     """
-    service = _get_gmail_service()
+    service = _get_service()
     kwargs: Dict[str, Any] = {"userId": "me", "maxResults": min(max_results, 50)}
     if query:
         kwargs["q"] = query
 
-    results = service.users().drafts().list(**kwargs).execute()
+    results = await asyncio.to_thread(
+        service.users().drafts().list(**kwargs).execute
+    )
     drafts = results.get("drafts", [])
     if not drafts:
         return []
 
     parsed = []
     for d in drafts:
-        draft = (
+        draft = await asyncio.to_thread(
             service.users()
             .drafts()
             .get(userId="me", id=d["id"], format="full")
-            .execute()
+            .execute
         )
         msg = draft.get("message", {})
         entry = _parse_message(msg)
@@ -303,7 +300,8 @@ async def search_sent_messages(
     )
 
 
-# ── SEND / COMPOSE TOOLS ───────
+# ── SEND / COMPOSE TOOLS ────────────────────────────────────────────────
+
 
 @tool("mail_agent", requires_approval=True)
 async def send_email(
@@ -333,14 +331,14 @@ async def send_email(
     -------
     dict with status, message_id, thread_id
     """
-    service = _get_gmail_service()
+    service = _get_service()
     raw = _build_mime_message(to, subject, body, cc=cc, html=html)
 
-    sent = (
+    sent = await asyncio.to_thread(
         service.users()
         .messages()
         .send(userId="me", body={"raw": raw})
-        .execute()
+        .execute
     )
 
     logger.info("send_email → to=%s  message_id=%s", to, sent.get("id"))
@@ -368,14 +366,14 @@ async def draft_email(
     -------
     dict with status, draft_id, message details
     """
-    service = _get_gmail_service()
+    service = _get_service()
     raw = _build_mime_message(to, subject, body, cc=cc, html=html)
 
-    draft = (
+    draft = await asyncio.to_thread(
         service.users()
         .drafts()
         .create(userId="me", body={"message": {"raw": raw}})
-        .execute()
+        .execute
     )
 
     logger.info("draft_email → to=%s  draft_id=%s", to, draft.get("id"))
@@ -398,12 +396,12 @@ async def get_message_by_id(
     Useful when you already have a message ID from a search result
     and need the full body.
     """
-    service = _get_gmail_service()
-    msg = (
+    service = _get_service()
+    msg = await asyncio.to_thread(
         service.users()
         .messages()
         .get(userId="me", id=message_id, format="full")
-        .execute()
+        .execute
     )
     return _parse_message(msg)
 
@@ -424,12 +422,12 @@ async def reply_to_message(
     body : str
         Reply body.
     """
-    service = _get_gmail_service()
-    original = (
+    service = _get_service()
+    original = await asyncio.to_thread(
         service.users()
         .messages()
         .get(userId="me", id=message_id, format="metadata", metadataHeaders=["From", "Subject", "Message-ID"])
-        .execute()
+        .execute
     )
     headers = {h["name"]: h["value"] for h in original.get("payload", {}).get("headers", [])}
     thread_id = original.get("threadId")
@@ -441,11 +439,11 @@ async def reply_to_message(
 
     raw = _build_mime_message(reply_to, subject, body, html=html)
 
-    sent = (
+    sent = await asyncio.to_thread(
         service.users()
         .messages()
         .send(userId="me", body={"raw": raw, "threadId": thread_id})
-        .execute()
+        .execute
     )
 
     logger.info("reply_to_message → original=%s  new=%s", message_id, sent.get("id"))

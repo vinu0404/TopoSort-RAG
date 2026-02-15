@@ -737,64 +737,78 @@ sequenceDiagram
     API-->>FE: [{provider: gmail, status: active, ...}]
 ```
 
-### How Tools Use Connector Tokens
+### How Tools Use Connector Tokens (Production Pattern)
 
-When the Mail Agent runs, it needs a Gmail API token. The flow is:
+When any connector-backed agent runs, it retrieves a fresh per-user token on every request. Here's the production flow using the Gmail implementation as reference:
 
 ```
-mail_agent.execute()
-  → sets current_user_id ContextVar
-  → calls get_gmail_service_async(user_id)
-    → calls token_manager.get_active_token(user_id, "gmail")
-      → SELECT from user_connections WHERE user_id + provider
+MailAgent.execute(task_config)
+  → prepare_gmail_service(user_id)               # called once per request
+    → get_active_token(user_id, "gmail")          # DB lookup + auto-refresh
+      → SELECT from user_connections WHERE user_id + provider + status='active'
       → decrypt_token(access_token)
-      → if expired: refresh via connector.refresh_access_token()
+      → if expired → connector.refresh_access_token(decrypt(refresh_token))
+                   → encrypt_token(new_access_token) → UPDATE DB
       → return plaintext access_token
-    → builds Gmail API service object
-  → tools use the authenticated service
+    → asyncio.to_thread(build, "gmail", "v1", credentials=...)  # non-blocking
+    → get_user_connections(user_id)               # resolve sender email
+    → _current_gmail_service.set(service)         # ContextVar — request-scoped
+    → _current_sender_email.set(email)            # ContextVar — request-scoped
+  → tool functions call _get_service()            # reads ContextVar
+    → await asyncio.to_thread(api_call.execute)   # non-blocking sync I/O
+  → request ends → ContextVars garbage-collected  # no memory leak
 ```
 
-No tool function signatures change. The `current_user_id` ContextVar bridges the user context to per-user tokens.
+**Key design principles:**
+
+| Principle | Implementation |
+|-----------|---------------|
+| Fresh token every request | `get_active_token()` runs on every `execute()` call — never cached globally |
+| Auto-refresh | `token_manager` checks `expires_at` with 120s buffer, refreshes transparently |
+| Non-blocking I/O | All sync SDK calls wrapped in `asyncio.to_thread()` |
+| Request-scoped state | `ContextVar` — automatically GC'd when the async task ends |
+| No global singletons | No `_user_services` dict, no `_gmail_service` global |
+| Graceful errors | If user has no connection → `RuntimeError` with clear "connect via UI" message |
+
+This pattern applies to **all** connector-backed agents. Each provider follows the same structure — only the SDK and API calls change.
 
 ---
 
 ## How to Add a New Connector
 
-Adding a new OAuth connector (Slack, Notion, GitHub, etc.) is a **5-step process**. Below is a complete walkthrough using **Slack** as the example, including HITL-protected tools.
+Adding a new OAuth connector with tools and HITL is a **7-step process**. This guide shows the complete walkthrough with **two real examples**: **Slack** (REST API + `httpx`) and **GitHub** (REST API + `httpx`) — demonstrating both read-only and HITL-protected tools.
 
 ### Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Step 1 │ connectors/slack.py         — implement SlackConnector   │
-│  Step 2 │ connectors/registry.py      — register the connector     │
-│  Step 3 │ config/settings.py + .env   — add client_id / secret     │
-│  Step 4 │ tools/slack_tools.py        — implement tool functions   │
-│  Step 5 │ agents/slack_agent/         — agent.py + prompts.py      │
-│  Step 6 │ config/agent_registry.yaml  — register agent             │
-│  Step 7 │ core/agent_factory.py        — wire agent instance       │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Step 1 │ connectors/<provider>.py    — implement the OAuth connector   │
+│  Step 2 │ connectors/registry.py      — register the connector          │
+│  Step 3 │ config/settings.py + .env   — add client_id / secret          │
+│  Step 4 │ tools/<provider>_tools.py   — tool functions + HITL flags     │
+│  Step 5 │ agents/<provider>_agent/    — agent.py + prompts.py           │
+│  Step 6 │ config/agent_registry.yaml  — register agent capabilities     │
+│  Step 7 │ core/agent_factory.py       — wire agent instance             │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ### Step 1 — Create the Connector
 
-Create `connectors/slack.py` — subclass `BaseConnector` and implement the four OAuth methods:
+Subclass `BaseConnector` and implement the OAuth methods.
+
+#### Slack Example — `connectors/slack.py`
 
 ```python
-# connectors/slack.py
-
 """SlackConnector — OAuth2 for Slack workspace access."""
 
 from __future__ import annotations
-
 import logging
 from typing import Any, Dict, List
 from urllib.parse import urlencode
 
 import httpx
-
 from config.settings import config
 from connectors.base import BaseConnector
 
@@ -817,12 +831,7 @@ class SlackConnector(BaseConnector):
 
     @property
     def scopes(self) -> List[str]:
-        return [
-            "channels:read",
-            "channels:history",
-            "chat:write",
-            "users:read",
-        ]
+        return ["channels:read", "channels:history", "chat:write", "users:read"]
 
     @property
     def icon(self) -> str:
@@ -845,25 +854,21 @@ class SlackConnector(BaseConnector):
 
     async def handle_callback(self, code: str) -> Dict[str, Any]:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                _SLACK_TOKEN_URL,
-                data={
-                    "code": code,
-                    "client_id": config.slack_client_id,
-                    "client_secret": config.slack_client_secret,
-                    "redirect_uri": self._redirect_uri(),
-                },
-            )
+            resp = await client.post(_SLACK_TOKEN_URL, data={
+                "code": code,
+                "client_id": config.slack_client_id,
+                "client_secret": config.slack_client_secret,
+                "redirect_uri": self._redirect_uri(),
+            })
             resp.raise_for_status()
             data = resp.json()
-
             if not data.get("ok"):
                 raise ValueError(f"Slack OAuth error: {data.get('error')}")
 
         return {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token"),
-            "expires_in": data.get("expires_in", 43200),  # 12h default
+            "expires_in": data.get("expires_in", 43200),
             "scopes": data.get("scope", "").split(","),
             "account_id": data.get("team", {}).get("id", ""),
             "account_label": data.get("team", {}).get("name", "Slack Workspace"),
@@ -875,9 +880,8 @@ class SlackConnector(BaseConnector):
         }
 
     async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
-        # Slack V2 tokens don't always support refresh — depends on app type
-        # For token rotation apps, implement refresh here
-        raise NotImplementedError("Slack token refresh not supported for this app type")
+        # Slack V2 tokens with token rotation — implement per Slack docs
+        raise NotImplementedError("Slack token refresh not yet supported")
 
     async def revoke_token(self, access_token: str) -> bool:
         try:
@@ -886,90 +890,232 @@ class SlackConnector(BaseConnector):
                     _SLACK_REVOKE_URL,
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
-                data = resp.json()
-                return data.get("ok", False)
+                return resp.json().get("ok", False)
+        except Exception:
+            return False
+```
+
+#### GitHub Example — `connectors/github.py`
+
+```python
+"""GitHubConnector — OAuth2 for GitHub API access."""
+
+from __future__ import annotations
+import logging
+from typing import Any, Dict, List
+from urllib.parse import urlencode
+
+import httpx
+from config.settings import config
+from connectors.base import BaseConnector
+
+logger = logging.getLogger(__name__)
+
+_GH_AUTH_URL = "https://github.com/login/oauth/authorize"
+_GH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+_GH_API = "https://api.github.com"
+
+
+class GitHubConnector(BaseConnector):
+
+    @property
+    def provider_name(self) -> str:
+        return "github"
+
+    @property
+    def display_name(self) -> str:
+        return "GitHub"
+
+    @property
+    def scopes(self) -> List[str]:
+        return ["repo", "read:user", "user:email"]
+
+    @property
+    def icon(self) -> str:
+        return "🐙"
+
+    def is_configured(self) -> bool:
+        return bool(config.github_client_id and config.github_client_secret)
+
+    def _redirect_uri(self) -> str:
+        return f"{config.oauth_redirect_base}/api/v1/connectors/github/callback"
+
+    def get_auth_url(self, state: str) -> str:
+        params = {
+            "client_id": config.github_client_id,
+            "redirect_uri": self._redirect_uri(),
+            "scope": " ".join(self.scopes),
+            "state": state,
+        }
+        return f"{_GH_AUTH_URL}?{urlencode(params)}"
+
+    async def handle_callback(self, code: str) -> Dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            # Exchange code for token
+            resp = await client.post(
+                _GH_TOKEN_URL,
+                data={
+                    "client_id": config.github_client_id,
+                    "client_secret": config.github_client_secret,
+                    "code": code,
+                    "redirect_uri": self._redirect_uri(),
+                },
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                raise ValueError(f"GitHub OAuth error: {data['error_description']}")
+
+            # Fetch user profile
+            user_resp = await client.get(
+                f"{_GH_API}/user",
+                headers={
+                    "Authorization": f"Bearer {data['access_token']}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            user_resp.raise_for_status()
+            user = user_resp.json()
+
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in", 28800),  # 8h for GitHub Apps
+            "scopes": data.get("scope", "").split(","),
+            "account_id": str(user.get("id", "")),
+            "account_label": user.get("login", ""),
+            "provider_meta": {
+                "login": user.get("login"),
+                "name": user.get("name"),
+                "avatar_url": user.get("avatar_url"),
+            },
+        }
+
+    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+        """GitHub App refresh — non-app tokens don't expire."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                _GH_TOKEN_URL,
+                data={
+                    "client_id": config.github_client_id,
+                    "client_secret": config.github_client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        return {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in", 28800),
+        }
+
+    async def revoke_token(self, access_token: str) -> bool:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(
+                    f"{_GH_API}/applications/{config.github_client_id}/token",
+                    auth=(config.github_client_id, config.github_client_secret),
+                    json={"access_token": access_token},
+                )
+                return resp.status_code == 204
         except Exception:
             return False
 ```
 
 **Key rules:**
-- `provider_name` must be a unique slug — used in URLs (`/connectors/slack/callback`)
-- `is_configured()` gates registration — connector is skipped if credentials are missing
-- `handle_callback()` must return the standardised dict with `access_token`, `refresh_token`, `scopes`, `account_id`, `account_label`, `provider_meta`
-- All HTTP calls use `httpx.AsyncClient` (async-compatible)
+- `provider_name` must be a unique slug — used in URLs (`/connectors/<provider>/callback`)
+- `is_configured()` gates registration — connector is skipped at startup if credentials are missing
+- `handle_callback()` must return the standardised dict: `access_token`, `refresh_token`, `expires_in`, `scopes`, `account_id`, `account_label`, `provider_meta`
+- All HTTP calls use `httpx.AsyncClient` — never block the event loop
 
 ---
 
 ### Step 2 — Register in ConnectorRegistry
 
-Add the import and instance to the `_ALL_CONNECTORS` list in `connectors/registry.py`:
+Add the import and instance to `_ALL_CONNECTORS` in `connectors/registry.py`:
 
 ```python
-# connectors/registry.py
-
 from connectors.slack import SlackConnector
+from connectors.github import GitHubConnector
 
 _ALL_CONNECTORS: List[BaseConnector] = [
     GmailConnector(),
-    SlackConnector(),      # ← add here
-    # NotionConnector(),   # future
+    SlackConnector(),      # ← add
+    GitHubConnector(),     # ← add
 ]
 ```
 
-That's all — the registry auto-discovers configured connectors at startup and logs a warning for unconfigured ones.
+The registry auto-discovers configured connectors at startup. Unconfigured ones are skipped with a log warning — no crash.
 
 ---
 
 ### Step 3 — Add Config
 
-Add credentials to `config/settings.py`:
+Add credential fields to `config/settings.py`:
 
 ```python
-# config/settings.py — inside class Settings:
+# Inside class Settings:
 
+    # ── Slack OAuth ───────────────────────────────────────────────────
     slack_client_id: str = ""
     slack_client_secret: str = ""
+
+    # ── GitHub OAuth ──────────────────────────────────────────────────
+    github_client_id: str = ""
+    github_client_secret: str = ""
 ```
 
 Add env vars to `.env`:
 
 ```env
 # ── Slack OAuth ──────────────────────────────────────
-# 1. Go to https://api.slack.com/apps → Create New App
+# 1. https://api.slack.com/apps → Create New App
 # 2. OAuth & Permissions → Add redirect URL:
 #    http://localhost:8000/api/v1/connectors/slack/callback
-# 3. Copy Client ID and Client Secret below
 SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
+
+# ── GitHub OAuth ─────────────────────────────────────
+# 1. https://github.com/settings/developers → New OAuth App
+# 2. Set callback URL:
+#    http://localhost:8000/api/v1/connectors/github/callback
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
 ```
 
 ---
 
 ### Step 4 — Create Tool Functions with HITL
 
-Create `tools/slack_tools.py`. Some tools are read-only (safe), others send messages (irreversible → `requires_approval=True`):
+Create `tools/<provider>_tools.py`. Mark read-only tools with `@tool("agent_name")` and irreversible tools with `@tool("agent_name", requires_approval=True)`.
+
+**The HITL system auto-detects** tools with `requires_approval=True` at startup — no orchestrator changes needed. When the user triggers an irreversible tool, the HITL dialog fires automatically.
+
+#### Slack Tools — `tools/slack_tools.py`
+
+Tools use the token directly (no SDK — just `httpx`), so no ContextVar service object is needed. The agent fetches the token and passes it to each tool call.
 
 ```python
-# tools/slack_tools.py
-
-"""Slack tools — registered via @tool decorator."""
+"""Slack tools — channel reading, search, messaging."""
 
 from __future__ import annotations
-
 import logging
 from typing import Any, Dict, List
 
 import httpx
-
 from tools import tool
 
 logger = logging.getLogger(__name__)
-
 _SLACK_API = "https://slack.com/api"
 
 
 async def _slack_api(token: str, method: str, **kwargs) -> Dict[str, Any]:
-    """Helper — call a Slack Web API method."""
+    """Call a Slack Web API method."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{_SLACK_API}/{method}",
@@ -983,175 +1129,215 @@ async def _slack_api(token: str, method: str, **kwargs) -> Dict[str, Any]:
         return data
 
 
-# ── Safe tools (no approval needed) ────────────────────────────────────
-
+# ── Read-only tools (no approval) ─────────────────────────────────────
 
 @tool("slack_agent")
 async def list_channels(token: str) -> List[Dict[str, Any]]:
-    """List public channels in the workspace."""
+    """List public channels in the Slack workspace."""
     data = await _slack_api(token, "conversations.list", types="public_channel", limit=100)
-    return [
-        {"id": ch["id"], "name": ch["name"], "topic": ch.get("topic", {}).get("value", "")}
-        for ch in data.get("channels", [])
-    ]
+    return [{"id": ch["id"], "name": ch["name"],
+             "topic": ch.get("topic", {}).get("value", "")}
+            for ch in data.get("channels", [])]
 
 
 @tool("slack_agent")
-async def read_channel_history(
-    token: str,
-    channel_id: str,
-    limit: int = 20,
-) -> List[Dict[str, Any]]:
+async def read_channel_history(token: str, channel_id: str, limit: int = 20) -> List[Dict]:
     """Read recent messages from a channel."""
     data = await _slack_api(token, "conversations.history", channel=channel_id, limit=limit)
-    return [
-        {"user": m.get("user", ""), "text": m.get("text", ""), "ts": m.get("ts", "")}
-        for m in data.get("messages", [])
-    ]
+    return [{"user": m.get("user"), "text": m.get("text"), "ts": m.get("ts")}
+            for m in data.get("messages", [])]
 
 
 @tool("slack_agent")
-async def search_messages(
-    token: str,
-    query: str,
-    count: int = 10,
-) -> List[Dict[str, Any]]:
-    """Search messages across the workspace."""
+async def search_slack_messages(token: str, query: str, count: int = 10) -> List[Dict]:
+    """Search messages across the Slack workspace."""
     data = await _slack_api(token, "search.messages", query=query, count=count)
-    matches = data.get("messages", {}).get("matches", [])
-    return [
-        {
-            "channel": m.get("channel", {}).get("name", ""),
-            "user": m.get("username", ""),
-            "text": m.get("text", ""),
-            "ts": m.get("ts", ""),
-            "permalink": m.get("permalink", ""),
-        }
-        for m in matches
-    ]
+    return [{"channel": m.get("channel", {}).get("name"), "user": m.get("username"),
+             "text": m.get("text"), "permalink": m.get("permalink")}
+            for m in data.get("messages", {}).get("matches", [])]
 
 
-# ── Dangerous tools (requires HITL approval) ──────────────────────────
-
+# ── Irreversible tools (HITL required) ────────────────────────────────
 
 @tool("slack_agent", requires_approval=True)
-async def send_message(
-    token: str,
-    channel_id: str,
-    text: str,
-) -> Dict[str, Any]:
+async def send_slack_message(token: str, channel_id: str, text: str) -> Dict[str, Any]:
     """
-    Send a message to a Slack channel.
-    ⚠️ Requires user approval — this posts a real message visible to everyone.
+    Post a message to a Slack channel.
+    ⚠️ requires_approval — triggers HITL dialog before execution.
     """
     data = await _slack_api(token, "chat.postMessage", channel=channel_id, text=text)
-    return {
-        "channel": data.get("channel", ""),
-        "ts": data.get("ts", ""),
-        "message": data.get("message", {}).get("text", ""),
-    }
+    return {"channel": data.get("channel"), "ts": data.get("ts"),
+            "message": data.get("message", {}).get("text")}
 
 
 @tool("slack_agent", requires_approval=True)
-async def send_dm(
-    token: str,
-    user_id: str,
-    text: str,
-) -> Dict[str, Any]:
+async def send_slack_dm(token: str, user_id: str, text: str) -> Dict[str, Any]:
     """
-    Send a direct message to a user.
-    ⚠️ Requires user approval — this sends a real DM.
+    Send a direct message to a Slack user.
+    ⚠️ requires_approval — triggers HITL dialog before execution.
     """
-    # Open DM channel first
     dm = await _slack_api(token, "conversations.open", users=user_id)
     channel_id = dm["channel"]["id"]
     data = await _slack_api(token, "chat.postMessage", channel=channel_id, text=text)
-    return {
-        "channel": channel_id,
-        "ts": data.get("ts", ""),
-        "message": text,
-    }
+    return {"channel": channel_id, "ts": data.get("ts"), "message": text}
 ```
 
-**Key points:**
-- `@tool("slack_agent")` — safe, read-only tools: `list_channels`, `read_channel_history`, `search_messages`
-- `@tool("slack_agent", requires_approval=True)` — irreversible tools: `send_message`, `send_dm`
-- The HITL system auto-detects tools with `requires_approval=True` at startup — no orchestrator changes needed
-- When the user queries "send a message to #general", the Orchestrator sees `send_message` requires approval → triggers the HITL dialog → the user approves or denies → only then does the agent execute
+#### GitHub Tools — `tools/github_tools.py`
+
+Same pattern — `httpx` REST calls, token passed from agent. Note the HITL distinction: reading repo info is safe, creating repos/PRs is not.
+
+```python
+"""GitHub tools — repo management, PR creation, info retrieval."""
+
+from __future__ import annotations
+import logging
+from typing import Any, Dict, List, Optional
+
+import httpx
+from tools import tool
+
+logger = logging.getLogger(__name__)
+_GH_API = "https://api.github.com"
+
+
+def _gh_headers(token: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+
+# ── Read-only tools (no approval) ─────────────────────────────────────
+
+@tool("github_agent")
+async def get_repo_info(token: str, owner: str, repo: str) -> Dict[str, Any]:
+    """Get repository metadata (description, stars, language, visibility)."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{_GH_API}/repos/{owner}/{repo}", headers=_gh_headers(token))
+        resp.raise_for_status()
+        data = resp.json()
+    return {
+        "full_name": data["full_name"], "description": data.get("description"),
+        "language": data.get("language"), "stars": data["stargazers_count"],
+        "forks": data["forks_count"], "open_issues": data["open_issues_count"],
+        "visibility": data.get("visibility", "public"),
+        "default_branch": data["default_branch"],
+    }
+
+
+@tool("github_agent")
+async def list_repo_issues(
+    token: str, owner: str, repo: str, state: str = "open", limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """List issues in a repository."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{_GH_API}/repos/{owner}/{repo}/issues",
+            headers=_gh_headers(token),
+            params={"state": state, "per_page": min(limit, 30)},
+        )
+        resp.raise_for_status()
+    return [{"number": i["number"], "title": i["title"], "state": i["state"],
+             "user": i["user"]["login"], "labels": [l["name"] for l in i.get("labels", [])]}
+            for i in resp.json() if "pull_request" not in i]
+
+
+@tool("github_agent")
+async def list_pull_requests(
+    token: str, owner: str, repo: str, state: str = "open", limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """List pull requests in a repository."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{_GH_API}/repos/{owner}/{repo}/pulls",
+            headers=_gh_headers(token),
+            params={"state": state, "per_page": min(limit, 30)},
+        )
+        resp.raise_for_status()
+    return [{"number": p["number"], "title": p["title"], "state": p["state"],
+             "user": p["user"]["login"], "head": p["head"]["ref"], "base": p["base"]["ref"]}
+            for p in resp.json()]
+
+
+# ── Irreversible tools (HITL required) ────────────────────────────────
+
+@tool("github_agent", requires_approval=True)
+async def create_repo(
+    token: str, name: str, description: str = "", private: bool = False,
+) -> Dict[str, Any]:
+    """
+    Create a new GitHub repository.
+    ⚠️ requires_approval — creates a real repository on the user's account.
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_GH_API}/user/repos",
+            headers=_gh_headers(token),
+            json={"name": name, "description": description, "private": private, "auto_init": True},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    logger.info("create_repo → %s", data["full_name"])
+    return {"full_name": data["full_name"], "url": data["html_url"],
+            "private": data["private"], "default_branch": data["default_branch"]}
+
+
+@tool("github_agent", requires_approval=True)
+async def create_pull_request(
+    token: str, owner: str, repo: str, title: str, head: str, base: str,
+    body: str = "", draft: bool = False,
+) -> Dict[str, Any]:
+    """
+    Create a pull request.
+    ⚠️ requires_approval — opens a real PR on the repository.
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_GH_API}/repos/{owner}/{repo}/pulls",
+            headers=_gh_headers(token),
+            json={"title": title, "head": head, "base": base, "body": body, "draft": draft},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    logger.info("create_pull_request → %s#%d", f"{owner}/{repo}", data["number"])
+    return {"number": data["number"], "title": data["title"], "url": data["html_url"],
+            "state": data["state"], "head": head, "base": base}
+```
+
+**HITL decision guide — when to use `requires_approval=True`:**
+
+| Category | Examples | `requires_approval` |
+|----------|----------|-------------------|
+| **Read / list / search** | `get_repo_info`, `list_channels`, `search_messages` | `False` |
+| **Create / write / send** | `create_repo`, `create_pull_request`, `send_message` | `True` |
+| **Delete / modify** | `delete_repo`, `close_issue`, `merge_pr` | `True` |
 
 ---
 
 ### Step 5 — Create the Agent
 
-Create `agents/slack_agent/` with `__init__.py`, `prompts.py`, and `agent.py`:
+Create `agents/<provider>_agent/` with three files: `__init__.py`, `prompts.py`, `agent.py`.
 
-#### `agents/slack_agent/prompts.py`
+**Two architecture patterns** depending on the SDK:
 
-```python
-# agents/slack_agent/prompts.py
+| Pattern | When to use | Token flow | Example |
+|---------|-------------|-----------|---------|
+| **ContextVar service** | SDK requires a client/service object (e.g. `googleapiclient`) | `prepare_*_service()` → ContextVar → `_get_service()` | Gmail |
+| **Token pass-through** | REST API via `httpx` — no SDK object needed | `get_active_token()` → pass `token` to each tool call | Slack, GitHub |
 
-from __future__ import annotations
-from typing import Any, Dict
-
-from utils.prompt_utils import format_user_profile
-
-
-class SlackPrompts:
-
-    @staticmethod
-    def action_prompt(
-        task: str,
-        entities: Dict[str, Any],
-        dependency_outputs: Dict[str, Any] | None = None,
-        long_term_memory: Dict[str, Any] | None = None,
-    ) -> str:
-        dep_context = ""
-        if dependency_outputs:
-            dep_context = "\n### Context from other agents\n"
-            for aid, data in dependency_outputs.items():
-                dep_context += f"- **{aid}**: {str(data)[:500]}\n"
-
-        profile = format_user_profile(long_term_memory or {})
-
-        return f"""You are a Slack Integration Agent in a multi-agent system.
-
-### Task
-{task}
-{dep_context}
-{profile}
-### Available Actions
-- list_channels       — list workspace channels
-- read_channel_history — read recent messages from a channel
-- search_messages      — search across the workspace
-- send_message         — post a message to a channel (⚠️ requires approval)
-- send_dm              — send a direct message (⚠️ requires approval)
-
-### Instructions
-1. Determine the best action(s) to fulfil the task.
-2. For read operations, gather information first, then summarise.
-3. For send operations, compose a professional message matching the user's tone preferences.
-4. Always confirm what was done in your response.
-"""
-```
-
-#### `agents/slack_agent/agent.py`
+#### Slack Agent — `agents/slack_agent/agent.py` (token pass-through)
 
 ```python
-# agents/slack_agent/agent.py
+"""Slack Agent — workspace search, channel reading, messaging."""
 
 from __future__ import annotations
-
 import time
 from typing import Any, Dict, List
-from contextvars import ContextVar
 
 from agents.base_agent import BaseAgent
 from agents.slack_agent.prompts import SlackPrompts
 from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
 
-# Same ContextVar pattern as mail_agent — bridges user_id to tools
-current_user_id: ContextVar[str] = ContextVar("current_user_id", default="")
+import logging
+logger = logging.getLogger("slack_agent")
 
 
 class SlackAgent(BaseAgent):
@@ -1161,17 +1347,14 @@ class SlackAgent(BaseAgent):
         self.prompts = SlackPrompts()
 
     def get_required_tools(self) -> List[str]:
-        return ["list_channels", "read_channel_history", "search_messages",
-                "send_message", "send_dm"]
+        return ["list_channels", "read_channel_history", "search_slack_messages",
+                "send_slack_message", "send_slack_dm"]
 
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start = time.perf_counter()
-
-        # Set user context for per-user token retrieval
         user_id = task_config.metadata.get("user_id", "")
-        current_user_id.set(user_id)
 
-        # Get per-user Slack token via connectors
+        # ── Fresh token every request (no caching, no globals) ────────
         from connectors.token_manager import get_active_token
         token = await get_active_token(user_id, "slack")
         if not token:
@@ -1179,51 +1362,254 @@ class SlackAgent(BaseAgent):
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=task_config.task,
-                task_done=False,
-                error="Slack not connected. Please connect Slack via the Connections panel.",
-                data={},
+                status="failed", task_done=False,
+                result="Slack not connected. Please connect Slack via Settings → Connections.",
+                data={"error": "not_connected"},
             )
 
         try:
-            # Use HITL-aware effective task
+            # HITL-aware effective task (handles enhance/override)
             effective_task = await self._effective_task(task_config)
 
-            prompt = self.prompts.action_prompt(
-                task=effective_task,
-                entities=task_config.entities,
-                dependency_outputs=task_config.dependency_outputs,
-                long_term_memory=task_config.long_term_memory,
-            )
-
-            # LLM decides which tool(s) to call and composes the response
-            result = await self.llm.generate(
-                prompt=prompt,
+            plan = await self.llm.generate(
+                prompt=self.prompts.action_prompt(
+                    task=effective_task,
+                    entities=task_config.entities,
+                    dependency_outputs=task_config.dependency_outputs,
+                    long_term_memory=task_config.long_term_memory,
+                ),
                 temperature=config.get_agent_model_config("slack_agent")["temperature"],
                 model=config.get_agent_model_config("slack_agent")["model"],
+                output_schema={
+                    "action": "list_channels | read_history | search | send_message | send_dm",
+                    "params": "dict of tool parameters",
+                    "reasoning": "string",
+                },
             )
+            if not isinstance(plan, dict):
+                plan = {"action": "search", "params": {"query": task_config.task}}
+
+            action = plan.get("action", "search")
+            params = plan.get("params", {})
+            result_data: Dict[str, Any] = {"action": action}
+
+            # Token is passed directly to each tool — no ContextVar needed
+            if action == "list_channels":
+                tool_fn = self.get_tool("list_channels")
+                result_data["channels"] = await tool_fn(token=token)
+
+            elif action == "read_history":
+                tool_fn = self.get_tool("read_channel_history")
+                result_data["messages"] = await tool_fn(
+                    token=token, channel_id=params.get("channel_id", ""), limit=params.get("limit", 20),
+                )
+
+            elif action == "search":
+                tool_fn = self.get_tool("search_slack_messages")
+                result_data["results"] = await tool_fn(
+                    token=token, query=params.get("query", task_config.task),
+                )
+
+            elif action == "send_message":
+                tool_fn = self.get_tool("send_slack_message")
+                result_data["sent"] = await tool_fn(
+                    token=token, channel_id=params.get("channel_id", ""), text=params.get("text", ""),
+                )
+
+            elif action == "send_dm":
+                tool_fn = self.get_tool("send_slack_dm")
+                result_data["sent"] = await tool_fn(
+                    token=token, user_id=params.get("user_id", ""), text=params.get("text", ""),
+                )
 
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=effective_task,
-                task_done=True,
-                result=result,
-                data={"result": result},
+                status="success", task_done=True,
+                result=result_data.get("sent") or result_data.get("results")
+                       or result_data.get("messages") or result_data.get("channels"),
+                data=result_data,
                 confidence_score=0.85,
-                resource_usage={
-                    "time_taken_ms": int((time.perf_counter() - start) * 1000),
-                },
+                resource_usage={"time_taken_ms": int((time.perf_counter() - start) * 1000)},
                 depends_on=list(task_config.dependency_outputs.keys()),
             )
         except Exception:
-            raise  # Let execute_with_retry handle retries
+            logger.exception("[SlackAgent] Error")
+            raise
 ```
+
+#### GitHub Agent — `agents/github_agent/agent.py` (token pass-through)
+
+```python
+"""GitHub Agent — repo info, issues, PRs, repo/PR creation."""
+
+from __future__ import annotations
+import time
+from typing import Any, Dict, List
+
+from agents.base_agent import BaseAgent
+from agents.github_agent.prompts import GitHubPrompts
+from config.settings import config
+from utils.schemas import AgentInput, AgentOutput
+
+import logging
+logger = logging.getLogger("github_agent")
+
+
+class GitHubAgent(BaseAgent):
+    def __init__(self, tool_registry, llm_provider):
+        super().__init__("github_agent", tool_registry)
+        self.llm = llm_provider
+        self.prompts = GitHubPrompts()
+
+    def get_required_tools(self) -> List[str]:
+        return ["get_repo_info", "list_repo_issues", "list_pull_requests",
+                "create_repo", "create_pull_request"]
+
+    async def execute(self, task_config: AgentInput) -> AgentOutput:
+        start = time.perf_counter()
+        user_id = task_config.metadata.get("user_id", "")
+
+        # ── Fresh token every request ─────────────────────────────────
+        from connectors.token_manager import get_active_token
+        token = await get_active_token(user_id, "github")
+        if not token:
+            return AgentOutput(
+                agent_id=task_config.agent_id,
+                agent_name=self.agent_name,
+                task_description=task_config.task,
+                status="failed", task_done=False,
+                result="GitHub not connected. Please connect via Settings → Connections.",
+                data={"error": "not_connected"},
+            )
+
+        try:
+            effective_task = await self._effective_task(task_config)
+
+            plan = await self.llm.generate(
+                prompt=self.prompts.action_prompt(
+                    task=effective_task,
+                    entities=task_config.entities,
+                    dependency_outputs=task_config.dependency_outputs,
+                    long_term_memory=task_config.long_term_memory,
+                ),
+                temperature=config.get_agent_model_config("github_agent")["temperature"],
+                model=config.get_agent_model_config("github_agent")["model"],
+                output_schema={
+                    "action": "repo_info | list_issues | list_prs | create_repo | create_pr",
+                    "params": "dict of tool parameters",
+                    "reasoning": "string",
+                },
+            )
+            if not isinstance(plan, dict):
+                plan = {"action": "repo_info", "params": {}}
+
+            action = plan.get("action", "repo_info")
+            params = plan.get("params", {})
+            result_data: Dict[str, Any] = {"action": action}
+
+            if action == "repo_info":
+                tool_fn = self.get_tool("get_repo_info")
+                result_data["repo"] = await tool_fn(
+                    token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
+                )
+
+            elif action == "list_issues":
+                tool_fn = self.get_tool("list_repo_issues")
+                result_data["issues"] = await tool_fn(
+                    token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
+                    state=params.get("state", "open"),
+                )
+
+            elif action == "list_prs":
+                tool_fn = self.get_tool("list_pull_requests")
+                result_data["pull_requests"] = await tool_fn(
+                    token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
+                    state=params.get("state", "open"),
+                )
+
+            elif action == "create_repo":
+                tool_fn = self.get_tool("create_repo")
+                result_data["created"] = await tool_fn(
+                    token=token, name=params.get("name", ""),
+                    description=params.get("description", ""),
+                    private=params.get("private", False),
+                )
+
+            elif action == "create_pr":
+                tool_fn = self.get_tool("create_pull_request")
+                result_data["pull_request"] = await tool_fn(
+                    token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
+                    title=params.get("title", ""), head=params.get("head", ""),
+                    base=params.get("base", "main"), body=params.get("body", ""),
+                )
+
+            return AgentOutput(
+                agent_id=task_config.agent_id,
+                agent_name=self.agent_name,
+                task_description=effective_task,
+                status="success", task_done=True,
+                result=result_data.get("created") or result_data.get("pull_request")
+                       or result_data.get("repo") or result_data.get("issues")
+                       or result_data.get("pull_requests"),
+                data=result_data,
+                confidence_score=0.85,
+                resource_usage={"time_taken_ms": int((time.perf_counter() - start) * 1000)},
+                depends_on=list(task_config.dependency_outputs.keys()),
+            )
+        except Exception:
+            logger.exception("[GitHubAgent] Error")
+            raise
+```
+
+#### When to Use ContextVar vs Token Pass-Through
+
+If the provider has a **sync SDK that builds a client object** (like `googleapiclient`), use the Gmail pattern:
+
+```python
+# In tools/<provider>_tools.py — ContextVar pattern (for sync SDKs)
+
+_current_service: contextvars.ContextVar[Any] = contextvars.ContextVar("_current_service", default=None)
+
+async def prepare_service(user_id: str) -> None:
+    """Called once per request by the agent's execute()."""
+    token = await get_active_token(user_id, "provider_name")
+    if not token:
+        raise RuntimeError("Provider not connected.")
+    creds = Credentials(token=token)
+    service = await asyncio.to_thread(build_sdk_client, creds)   # non-blocking
+    _current_service.set(service)
+
+def _get_service():
+    """Called by each tool function."""
+    svc = _current_service.get(None)
+    if svc is None:
+        raise RuntimeError("Service not initialised. Call prepare_service() first.")
+    return svc
+
+# In the agent's execute():
+async def execute(self, task_config):
+    await prepare_service(user_id)     # fresh token → ContextVar
+    # ... tools call _get_service() internally
+```
+
+If the provider uses a **REST API via `httpx`** (no SDK needed), pass the token directly — simpler and equally safe:
+
+```python
+# In the agent's execute() — token pass-through pattern (for REST APIs)
+async def execute(self, task_config):
+    token = await get_active_token(user_id, "provider_name")
+    # ... pass token= to each tool call
+```
+
+Both patterns guarantee: fresh token per request, auto-refresh, no global state, no memory leak.
 
 ---
 
 ### Step 6 — Register the Agent
 
-Follow the standard agent registration in `config/agent_registry.yaml`:
+Add entries to `config/agent_registry.yaml`:
 
 ```yaml
   slack_agent:
@@ -1235,39 +1621,66 @@ Follow the standard agent registration in `config/agent_registry.yaml`:
     tools:
       - list_channels
       - read_channel_history
-      - search_messages
-      - send_message
-      - send_dm
+      - search_slack_messages
+      - send_slack_message
+      - send_slack_dm
     typical_use_cases:
       - "Search Slack for messages about deployment"
       - "Send a message to #general"
       - "Read the latest messages in #engineering"
     default_timeout: 30
     max_retries: 2
+
+  github_agent:
+    description: "Interacts with GitHub — repo info, issues, PRs, repo/PR creation"
+    capabilities:
+      - github_read
+      - github_issues
+      - github_prs
+      - github_create
+    tools:
+      - get_repo_info
+      - list_repo_issues
+      - list_pull_requests
+      - create_repo
+      - create_pull_request
+    typical_use_cases:
+      - "Show me info about the MRAG repo"
+      - "List open PRs on our project"
+      - "Create a new repository called my-tool"
+      - "Open a PR from feature-branch to main"
+    default_timeout: 30
+    max_retries: 2
 ```
 
-And add model config to `config/settings.py`:
+Add model config to `config/settings.py`:
 
 ```python
     slack_model_provider: str = "openai"
     slack_model: str = "gpt-4o-mini"
     slack_temperature: float = 0.3
+
+    github_model_provider: str = "openai"
+    github_model: str = "gpt-4o-mini"
+    github_temperature: float = 0.2
 ```
 
 ---
 
 ### Step 7 — Wire the Agent Instance
 
-All agents are built centrally in `core/agent_factory.py`. Add your agent to the `build_agent_instances()` function — `api/routes.py` and `api/streaming.py` both call this function automatically, so you do **not** touch them:
+All agents are built centrally in `core/agent_factory.py`. Add your agents to `build_agent_instances()`:
 
 ```python
 # core/agent_factory.py
 
 from agents.slack_agent.agent import SlackAgent
+from agents.github_agent.agent import GitHubAgent
 
 def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
     # ... existing agents ...
-    slack_cfg = config.get_agent_model_config("slack_agent")
+    slack_cfg  = config.get_agent_model_config("slack_agent")
+    github_cfg = config.get_agent_model_config("github_agent")
 
     return {
         # ... existing agents ...
@@ -1275,42 +1688,81 @@ def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
             tool_registry=registry,
             llm_provider=get_llm_provider(slack_cfg["provider"], default_model=slack_cfg["model"]),
         ),
+        "github_agent": GitHubAgent(
+            tool_registry=registry,
+            llm_provider=get_llm_provider(github_cfg["provider"], default_model=github_cfg["model"]),
+        ),
     }
 ```
 
+`api/routes.py` and `api/streaming.py` both call `build_agent_instances()` — you do **not** edit them.
+
+---
+
 ### What Happens at Runtime
 
-When a user asks "Send a summary of today's deployments to #general on Slack":
+#### Example 1: "Send a deployment summary to #general on Slack"
 
-1. **Master Agent** routes to `slack_agent` (capabilities match `slack_send`)
-2. **Orchestrator** checks `slack_agent`'s tools → finds `send_message` has `requires_approval=True`
-3. **HITL flow triggers** → SSE event `hitl_required` sent to frontend
-4. **User sees dialog**: "slack_agent wants to use `send_message`. Approve?"
-5. **User approves** (optionally adds instructions like "add a 🚀 emoji")
-6. **`_effective_task()`** classifies instructions as `enhance` → agent gets both tasks
-7. **Agent executes** → calls `get_active_token("slack")` → gets per-user token → calls Slack API
-8. **Composer** synthesises the final answer with what was sent
+```
+1. Master Agent  → routes to slack_agent (capabilities match "slack_send")
+2. Orchestrator  → checks slack_agent tools → send_slack_message has requires_approval=True
+3. HITL triggers → SSE event "hitl_required" sent to frontend
+4. User sees     → "slack_agent wants to use send_slack_message. Approve?"
+5. User approves → optionally adds "add a 🚀 emoji at the end"
+6. _effective_task() → classifies instructions as "enhance" → agent gets both tasks
+7. Agent calls   → get_active_token(user_id, "slack") → fresh token from DB
+8. Tool executes → send_slack_message(token, channel_id, text) → message posted
+9. Composer      → synthesises "I posted the deployment summary to #general ✅"
+```
+
+#### Example 2: "Create a new repo called my-service on GitHub"
+
+```
+1. Master Agent  → routes to github_agent (capabilities match "github_create")
+2. Orchestrator  → checks github_agent tools → create_repo has requires_approval=True
+3. HITL triggers → "github_agent wants to use create_repo. Approve?"
+4. User approves → "make it private"
+5. _effective_task() → classifies as "enhance" → original task + user instruction merged
+6. Agent calls   → get_active_token(user_id, "github") → fresh token
+7. Tool executes → create_repo(token, name="my-service", private=True)
+8. Composer      → "Created private repo my-service ✅ — https://github.com/you/my-service"
+```
+
+#### Example 3: "Show me open PRs on our project" (read-only, no HITL)
+
+```
+1. Master Agent  → routes to github_agent
+2. Orchestrator  → checks tools → list_pull_requests has requires_approval=False
+3. No HITL       → agent executes immediately
+4. Agent calls   → get_active_token() → list_pull_requests(token, owner, repo)
+5. Composer      → formats PR list as a readable summary
+```
+
+---
 
 ### Checklist
 
 | # | File | Action |
 |---|------|--------|
-| 1 | `connectors/slack.py` | `SlackConnector(BaseConnector)` with OAuth flow |
-| 2 | `connectors/registry.py` | Add `SlackConnector()` to `_ALL_CONNECTORS` |
-| 3 | `config/settings.py` + `.env` | Add `slack_client_id`, `slack_client_secret`, model config |
-| 4 | `tools/slack_tools.py` | `@tool("slack_agent")` and `@tool("slack_agent", requires_approval=True)` |
-| 5 | `agents/slack_agent/` | `prompts.py` + `agent.py` (uses `_effective_task()` for HITL) |
+| 1 | `connectors/<provider>.py` | Subclass `BaseConnector` — OAuth flow |
+| 2 | `connectors/registry.py` | Add instance to `_ALL_CONNECTORS` |
+| 3 | `config/settings.py` + `.env` | Add `<provider>_client_id`, `<provider>_client_secret`, model config |
+| 4 | `tools/<provider>_tools.py` | `@tool` (safe) and `@tool(requires_approval=True)` (irreversible) |
+| 5 | `agents/<provider>_agent/` | `prompts.py` + `agent.py` with `_effective_task()` + token retrieval |
 | 6 | `config/agent_registry.yaml` | Register capabilities, tools, use cases |
-| 7 | `core/agent_factory.py` | Add `SlackAgent` to `build_agent_instances()` return dict |
+| 7 | `core/agent_factory.py` | Add agent to `build_agent_instances()` |
 
 ### What You Get for Free
 
-- **OAuth UI** — "Connect Slack" button appears automatically in the frontend sidebar (the connector routes serve it)
-- **Token management** — auto-refresh, encryption at rest, revocation on disconnect
-- **HITL approval** — any tool with `requires_approval=True` triggers the approval dialog
-- **HITL instructions** — user can add "change the tone" or "don't include X" during approval, auto-classified as enhance/override
-- **Dashboard** — `user_connections` table shows all Slack connections in the admin dashboard
-- **No orchestrator changes** — HITL, toposort, parallel stages all work identically
+| Feature | How |
+|---------|-----|
+| **OAuth UI** | "Connect" button auto-appears in sidebar for every registered connector |
+| **Token management** | Auto-refresh, Fernet encryption at rest, revocation on disconnect |
+| **HITL approval** | Any `requires_approval=True` tool triggers the approval dialog automatically |
+| **HITL instructions** | User can modify task during approval — auto-classified as enhance/override |
+| **Dashboard** | `user_connections` table shows all connections in admin dashboard |
+| **"Not configured" UI** | If env vars missing → grayed out in sidebar with "Setup required" |
+| **No orchestrator changes** | HITL, toposort, parallel execution — all work identically for new agents |
 
 ---
 
@@ -1326,7 +1778,7 @@ uv run uvicorn main:app --reload
 ```
 ---
 
-## How to Add a New Agent
+## How to Add a New Agent with no HITL Tool basic one:
 
 Adding a new agent is a **7-step process** touching 6 files (3 new, 3 existing). Below is a complete walkthrough using a fictional **`summary_agent`** as the example.
 

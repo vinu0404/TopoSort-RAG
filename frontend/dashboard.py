@@ -61,7 +61,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 'users', (SELECT json_agg(row_to_json(t)) FROM users t),
                 'sessions', (SELECT json_agg(row_to_json(t)) FROM sessions t),
                 'conversations', (SELECT json_agg(row_to_json(t)) FROM conversations t),
-                'messages', (SELECT json_agg(row_to_json(t)) FROM messages t),
+                'messages', (SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM messages ORDER BY created_at ASC, CASE role WHEN 'user' THEN 0 WHEN 'system' THEN 1 ELSE 2 END) t),
                 'agent_executions', (SELECT json_agg(row_to_json(t)) FROM agent_executions t),
                 'documents', (SELECT json_agg(row_to_json(t)) FROM documents t),
                 'conversation_summaries', (SELECT json_agg(row_to_json(t)) FROM conversation_summaries t),

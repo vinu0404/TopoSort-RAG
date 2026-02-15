@@ -270,8 +270,6 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
             # Drain any remaining events queued just before task finished
             while not sse_queue.empty():
                 yield sse_queue.get_nowait()
-
-            # Retrieve results (will re-raise if orchestrator failed)
             results = orch_task.result()
 
             asyncio.create_task(bg_save_agent_executions(conv_id, results))
@@ -319,7 +317,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
             db_session=session, conversation_id=conv_id,
         )
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
-        asyncio.create_task(bg_save_messages(conv_id, request.query, composer_answer, metadata))
+        await bg_save_messages(conv_id, request.query, composer_answer, metadata)
         elapsed = time.perf_counter() - start_time
         yield _sse_event("done", {
             "total_time": round(elapsed, 3),

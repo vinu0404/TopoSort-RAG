@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+@router.get("/agents")
+async def list_agents():
+    """Return all registered agents and their capabilities."""
+    registry = AgentRegistry()
+    return {"agents": registry.get_agent_capabilities()}
+
+
 @router.post("/query")
 async def handle_query(
     request: QueryRequest,
@@ -204,8 +212,6 @@ async def hitl_respond(
     if final_status == "not_found":
         raise HTTPException(status_code=404, detail="HITL request not found")
 
-    # If the request was already resolved (timed_out, expired, etc.)
-    # tell the client it's too late.
     if final_status != payload.decision.value:
         raise HTTPException(
             status_code=409,

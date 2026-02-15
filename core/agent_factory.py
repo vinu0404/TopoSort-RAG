@@ -12,6 +12,7 @@ from typing import Dict
 
 from agents.base_agent import BaseAgent
 from agents.code_agent.agent import CodeAgent
+from agents.github_agent.agent import GitHubAgent
 from agents.mail_agent.agent import MailAgent
 from agents.rag_agent.agent import RAGAgent
 from agents.web_search_agent.agent import WebSearchAgent
@@ -32,6 +33,7 @@ def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
     code_cfg = config.get_agent_model_config("code_agent")
     mail_cfg = config.get_agent_model_config("mail_agent")
     web_cfg = config.get_agent_model_config("web_search_agent")
+    github_cfg = config.get_agent_model_config("github_agent")
 
     return {
         "rag_agent": RAGAgent(
@@ -49,5 +51,9 @@ def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
         "web_search_agent": WebSearchAgent(
             tool_registry=registry,
             llm_provider=get_llm_provider(web_cfg["provider"], default_model=web_cfg["model"]),
+        ),
+        "github_agent": GitHubAgent(
+            tool_registry=registry,
+            llm_provider=get_llm_provider(github_cfg["provider"], default_model=github_cfg["model"]),
         ),
     }

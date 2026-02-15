@@ -71,7 +71,6 @@ class SectionParser:
                 ...
             ]
         """
-        # For CSV and Excel files, don't try to parse sections
         if doc_type in ('csv', 'xls', 'xlsx'):
             return cls._parse_tabular_content(content)
         

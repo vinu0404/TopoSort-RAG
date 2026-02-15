@@ -56,11 +56,7 @@ class AgentTask(BaseModel):
 
 
 class ResolvedAgentTask(BaseModel):
-    """
-    BUG-1 FIX — Post-processed version of AgentTask.
-
-    Created by `generate_agent_ids()` which converts index-based deps
-    into real agent_id strings.  This is what Orchestrator / tests use.
+    """Post-processed plan item with agent_ids and resolved dependencies.
     """
 
     agent_id: str
@@ -220,10 +216,6 @@ class ConversationSummary(BaseModel):
 class AgentConversationHistory(BaseModel):
     """
     What agents receive as conversation context.
-
-    BUG-14 FIX: `recent_unsummarized_turns` carries turns that have NOT yet
-    been grouped into a summary (e.g. turns 4 & 5 before turn 6 completes
-    the next 3-turn group).  Agents therefore *always* see the latest context.
     """
 
     summaries: List[ConversationSummary] = Field(default_factory=list)

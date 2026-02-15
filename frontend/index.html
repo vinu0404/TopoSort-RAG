@@ -102,15 +102,19 @@
     display: flex; align-items: center; gap: 8px;
     padding: 8px 10px; border-radius: 8px;
     background: #f5f5f7; font-size: 0.8rem;
+    flex-wrap: nowrap;
   }
   .conn-item .conn-icon { font-size: 1.1rem; flex-shrink: 0; }
-  .conn-item .conn-info { flex: 1; min-width: 0; }
+  .conn-item .conn-info { flex: 1; min-width: 0; overflow: hidden; }
   .conn-item .conn-label {
     font-weight: 600; font-size: 0.78rem;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: block;
   }
   .conn-item .conn-status {
     font-size: 0.65rem; color: #666;
+    display: block;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .conn-item .conn-status.active { color: #34c759; }
   .conn-item .conn-status.error { color: #ff3b30; }
@@ -129,6 +133,18 @@
     transition: all 0.15s;
   }
   .conn-btn:hover { border-color: #007aff; color: #007aff; background: #f0f5ff; }
+  .conn-btn:disabled { opacity: 0.45; cursor: default; border-color: #ddd; color: #aaa; }
+  .conn-btn:disabled:hover { background: none; border-color: #ddd; color: #aaa; }
+  .conn-btn-inline {
+    flex-shrink: 0;
+    padding: 4px 12px; border-radius: 6px;
+    border: 1px solid #ccc; background: #fff;
+    cursor: pointer; font-size: 0.7rem; color: #333;
+    white-space: nowrap; transition: all 0.15s;
+  }
+  .conn-btn-inline:hover { border-color: #007aff; color: #007aff; background: #f0f5ff; }
+  .conn-btn-inline:disabled { opacity: 0.45; cursor: default; }
+  .conn-btn-inline:disabled:hover { background: #fff; border-color: #ccc; color: #333; }
 
   /* ── Header ────────────────────────────────────────────── */
   .header {
@@ -636,7 +652,7 @@
 
     <div class="info-section">
       <h3>Info</h3>
-      <p><strong>Agents:</strong> RAG, Code, Mail, Web Search</p>
+      <p><strong>Agents:</strong> <span id="agentList">Loading…</span></p>
       <p><strong>Features:</strong></p>
       <ul>
         <li>Streaming responses</li>
@@ -803,6 +819,7 @@ function onLoginSuccess(data) {
   userNameEl.textContent = data.display_name || 'User';
   currentSessionId = null; // Let backend create new session
   loadConnections();
+  loadAgents();
 }
 
 function doLogout() {
@@ -824,6 +841,23 @@ const PROVIDER_LABELS = {
   gmail: 'Gmail', slack: 'Slack', notion: 'Notion', github: 'GitHub',
 };
 
+async function loadAgents() {
+  const el = document.getElementById('agentList');
+  if (!el) return;
+  try {
+    const res = await fetch(`${API}/agents`);
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    const names = (data.agents || []).map(a =>
+      a.agent_name.replace(/_agent$/i, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    );
+    el.textContent = names.length ? names.join(', ') : 'None';
+  } catch (err) {
+    console.error('loadAgents error:', err);
+    el.textContent = 'Unavailable';
+  }
+}
+
 async function loadConnections() {
   const connList = document.getElementById('connList');
   if (!connList || !currentUser) return;
@@ -842,20 +876,22 @@ async function loadConnections() {
 
     let html = '';
     providers.forEach(p => {
-      const conn = connByProvider[p.name];
-      const icon = PROVIDER_ICONS[p.name] || '🔗';
-      const label = PROVIDER_LABELS[p.name] || p.display_name;
+      const conn = connByProvider[p.provider];
+      const icon = PROVIDER_ICONS[p.provider] || '🔗';
+      const label = PROVIDER_LABELS[p.provider] || p.display_name;
       if (conn) {
+        // Connected — show account info + disconnect button
         html += `
           <div class="conn-item">
             <span class="conn-icon">${icon}</span>
             <div class="conn-info">
               <span class="conn-label">${label}</span>
-              <span class="conn-status connected">${conn.account_label || 'Connected'}</span>
+              <span class="conn-status active">${conn.account_label || 'Connected'}</span>
             </div>
-            <button class="conn-disconnect" onclick="disconnectConnection('${conn.id}')" title="Disconnect">✕</button>
+            <button class="conn-disconnect" onclick="disconnectConnection('${conn.connection_id}')" title="Disconnect">✕</button>
           </div>`;
-      } else {
+      } else if (p.configured) {
+        // Not connected but backend has credentials — show Connect button
         html += `
           <div class="conn-item">
             <span class="conn-icon">${icon}</span>
@@ -863,7 +899,18 @@ async function loadConnections() {
               <span class="conn-label">${label}</span>
               <span class="conn-status">Not connected</span>
             </div>
-            <button class="conn-btn" onclick="connectProvider('${p.name}')">Connect</button>
+            <button class="conn-btn-inline" onclick="connectProvider('${p.provider}')">Connect</button>
+          </div>`;
+      } else {
+        // Provider exists but not configured (missing env vars)
+        html += `
+          <div class="conn-item" style="opacity:0.55">
+            <span class="conn-icon">${icon}</span>
+            <div class="conn-info">
+              <span class="conn-label">${label}</span>
+              <span class="conn-status" style="color:#aaa">Not configured</span>
+            </div>
+            <button class="conn-btn-inline" disabled>Setup required</button>
           </div>`;
       }
     });
