@@ -1,5 +1,5 @@
 """
-Tests for the tool registry — especially BUG-9 (Windows path handling).
+Tests for the tool registry — especially (Windows path handling).
 """
 
 import pytest
@@ -41,7 +41,7 @@ class TestToolRegistryDiscovery:
         assert tool is None
 
     def test_auto_discover_uses_pathlib(self):
-        """BUG-9: verifies that auto_discover doesn't break on Windows paths."""
+        """verifies that auto_discover doesn't break on Windows paths."""
         registry = ToolRegistry()
         # Just ensuring it doesn't crash — actual tool loading depends on environment
         try:

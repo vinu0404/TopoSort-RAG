@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     is_active     BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-/* BUG-4 FIX — separate CREATE INDEX for PostgreSQL */
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
 -- Conversations ──────────────────────────────────────────────────────────────
