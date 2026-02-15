@@ -1,14 +1,5 @@
 """
-Token encryption — encrypt / decrypt OAuth tokens at rest.
-
-Uses Fernet (AES-128-CBC + HMAC-SHA256) from the ``cryptography`` library.
-The encryption key is loaded from ``config.token_encryption_key``
-(env var: ``TOKEN_ENCRYPTION_KEY``).
-
-If no key is configured, encryption is **disabled** and tokens are stored
-as plaintext (with a startup warning).  Generate a key with::
-
-    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+Token encryption — encrypt / decrypt OAuth tokens at rest."
 """
 
 from __future__ import annotations

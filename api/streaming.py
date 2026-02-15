@@ -270,8 +270,6 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
             # Drain any remaining events queued just before task finished
             while not sse_queue.empty():
                 yield sse_queue.get_nowait()
-
-            # Retrieve results (will re-raise if orchestrator failed)
             results = orch_task.result()
 
             asyncio.create_task(bg_save_agent_executions(conv_id, results))

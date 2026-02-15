@@ -15,7 +15,6 @@ from agents.base_agent import BaseAgent
 from agents.github_agent.prompts import GitHubPrompts
 from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
-# ── Fresh token every request ────────
 from connectors.token_manager import get_active_token
 import logging
 

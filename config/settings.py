@@ -33,13 +33,13 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
 
     # ── Gmail ────────────────────────────────────────────────────────────
-    gmail_sender_email: str = ""        # fallback sender address (overridden by connected account)
+    gmail_sender_email: str = ""  
 
     # ── Security Secrets ──────────────────────────────────────────────────
-    jwt_secret: str = "change-me-jwt-secret-key"       # HMAC secret for auth tokens
-    jwt_expiry_seconds: int = 604800                    # 7 days
-    oauth_state_secret: str = "change-me-oauth-state"   # HMAC secret for OAuth CSRF state
-    token_encryption_key: str = ""                       # Fernet key for encrypting OAuth tokens at rest
+    jwt_secret: str = "change-me-jwt-secret-key"      
+    jwt_expiry_seconds: int = 604800                   
+    oauth_state_secret: str = "change-me-oauth-state" 
+    token_encryption_key: str = "encryptmeplease"                       # Fernet key for encrypting OAuth tokens at rest
 
     # ── OAuth Connectors ─────────────────────────────────────────────────
     google_client_id: str = ""          # Google OAuth Web App client ID
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # ── HITL (Human-in-the-Loop) ─────────────────────────────────────────────────
     hitl_timeout_seconds: int = 120   # how long to wait for user approval
     hitl_poll_interval: float = 5   # seconds between DB polls
-    hitl_classifier_provider: str = "openai"   # cheap model for classify enhance vs override
+    hitl_classifier_provider: str = "openai"   # model for classify enhance vs override
     hitl_classifier_model: str = "gpt-4o-mini"
 
     model_config = {

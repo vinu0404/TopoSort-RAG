@@ -61,7 +61,6 @@ class GitHubConnector(BaseConnector):
     async def handle_callback(self, code: str) -> Dict[str, Any]:
         """Exchange auth code for tokens and fetch user profile."""
         async with httpx.AsyncClient() as client:
-            # 1. Exchange code for token
             token_resp = await client.post(
                 _GH_TOKEN_URL,
                 data={

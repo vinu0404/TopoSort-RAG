@@ -94,10 +94,6 @@ class MemoryManager:
             load_conversation_summaries,
         )
 
-        # ── Load messages → rebuild _turns ───────────────────────────────
-        # ``load_conversation_messages`` returns rows ordered by
-        # (created_at ASC, role_priority) so user always precedes
-        # assistant.  We still guard against malformed data defensively.
         raw_messages = await load_conversation_messages(
             db_session, conversation_id,
         )

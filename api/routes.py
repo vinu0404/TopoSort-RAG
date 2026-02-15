@@ -212,8 +212,6 @@ async def hitl_respond(
     if final_status == "not_found":
         raise HTTPException(status_code=404, detail="HITL request not found")
 
-    # If the request was already resolved (timed_out, expired, etc.)
-    # tell the client it's too late.
     if final_status != payload.decision.value:
         raise HTTPException(
             status_code=409,
