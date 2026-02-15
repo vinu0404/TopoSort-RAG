@@ -25,9 +25,9 @@ def format_user_profile(
     A formatted string like::
 
         ### User Profile
-        Name: Alice
-        Company: Acme Corp
-        Role: Data Engineer
+        Name: Vinay
+        Company: MRAG
+        Role: Engineer
         Projects: Alpha, Beta
         Preferred tone: casual | Detail: concise | Language: en
 
