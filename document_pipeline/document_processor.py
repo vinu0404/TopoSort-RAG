@@ -21,21 +21,34 @@ logger = logging.getLogger(__name__)
 
 
 async def generate_document_description(filename: str, content: str) -> str:
-    """Generate a 2-3 sentence LLM description for the document."""
+    """Generate a search-optimised LLM description for the document.
+    
+    The description is embedded and used as a retrieval target in
+    stage-1 (document-level) search, so it must be keyword-rich and
+    anticipate the kinds of queries users will ask.
+    """
     llm = get_llm_provider(config.rag_model_provider, default_model=config.rag_model)
-    prompt = f"""Analyse this document and provide a concise description (2-3 sentences) covering:
-1. Document type and purpose
-2. Key topics covered
-3. Time period or scope
+    prompt = f"""Generate a search-optimised description for this document.
+This description will be used to match user queries, so be specific and keyword-rich.
+
+Include:
+1. Document type, format, and purpose (e.g. report, contract, spreadsheet).
+2. ALL key entities: person names, organisation names, dates, product names,
+   codes, acronyms, identifiers.
+3. Main topics using specific terminology (avoid generic phrases).
+4. Scope: time ranges, geographic regions, departments, or projects mentioned.
+5. Key metrics, figures, or conclusions visible in the content.
+
+Use terms a user would naturally search for.  Keep it to 3-4 dense sentences.
 
 Filename: {filename}
 
-Content (first 2000 characters):
-{content[:2000]}
+Content (first 3000 characters):
+{content[:3000]}
 
 Description:
 """
-    response = await llm.generate(prompt=prompt, max_tokens=100, temperature=0.3)
+    response = await llm.generate(prompt=prompt, max_tokens=200, temperature=0.3)
     return response.strip() if isinstance(response, str) else str(response).strip()
 
 

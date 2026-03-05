@@ -39,12 +39,12 @@ class TestRAGAgent:
         mock_llm = MagicMock()
         mock_llm.generate = AsyncMock(return_value='{"answer": "test answer", "sources": []}')
 
-        registry = _mock_tool_registry("vector_search", "bm25_search", "hybrid_search", "rerank_chunks")
+        registry = _mock_tool_registry("vector_search", "bm25_search", "hybrid_search", "rerank_chunks", "two_level_search")
         agent = RAGAgent(tool_registry=registry, llm_provider=mock_llm)
 
         inp = _make_input(
             task="find info about testing",
-            tools_available=["vector_search"],
+            tools_available=["two_level_search"],
         )
         result = await agent.execute(inp)
         assert isinstance(result, AgentOutput)

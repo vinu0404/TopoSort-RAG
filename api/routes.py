@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,8 @@ from database.helpers import (
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
+    list_user_conversations,
+    load_conversation_messages_full,
     resolve_hitl_request,
     save_document_record,
     update_document_status,
@@ -58,14 +60,15 @@ async def list_agents():
 async def handle_query(
     request: QueryRequest,
     session: AsyncSession = Depends(db_session),
-    auth_user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     """Non-streaming query endpoint."""
-    user_id = auth_user_id  
     await ensure_user_exists(session, user_id)
     sess_id = await ensure_session_exists(session, user_id, request.session_id)
     conv_id = await get_or_create_conversation(
-        session, user_id, sess_id, title=request.query[:120],
+        session, user_id, sess_id,
+        title=request.query[:120],
+        conversation_id=request.conversation_id,
     )
     # Commit parent records so background tasks (new sessions) can reference them
     await session.commit()
@@ -154,15 +157,16 @@ async def handle_query(
         "answer": output.answer,
         "sources": sources_data,
         "agents_used": list(results.keys()),
+        "session_id": sess_id,
+        "conversation_id": conv_id,
     }
 
 
 @router.post("/documents/upload")
 async def upload_documents(
-    user_id: str = Form(...),
     files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(db_session),
-    auth_user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     """
     Accept one or more files.  Creates a DB record for each with
@@ -171,7 +175,6 @@ async def upload_documents(
     """
     import uuid as _uuid
 
-    user_id = auth_user_id
     await ensure_user_exists(session, user_id)
 
     accepted: List[Dict[str, str]] = []
@@ -308,3 +311,27 @@ async def hitl_respond(
         "request_id": payload.request_id,
         "status": final_status,
     }
+
+
+# ── Conversation list / load endpoints ──────────────────────────────────
+
+
+@router.get("/conversations")
+async def get_conversations(
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """List all conversations for the authenticated user (newest first)."""
+    convos = await list_user_conversations(session, auth_user_id)
+    return {"conversations": convos}
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Load all messages for a specific conversation."""
+    messages = await load_conversation_messages_full(session, conversation_id)
+    return {"conversation_id": conversation_id, "messages": messages}

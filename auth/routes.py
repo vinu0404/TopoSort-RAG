@@ -15,10 +15,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth.dependencies import db_session
+from auth.dependencies import db_session, get_current_user_id
 from auth.jwt import create_token
 from auth.models import User
 from auth.password import hash_password, verify_password
+from database.helpers import close_user_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -110,3 +111,14 @@ async def login(
         "email": user.email,
         "token": token,
     }
+
+
+@router.post("/logout")
+async def logout(
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Close all active sessions for the authenticated user."""
+    closed = await close_user_sessions(session, user_id)
+    logger.info("Logout: user %s — %d session(s) closed", user_id, closed)
+    return {"status": "ok", "sessions_closed": closed}

@@ -91,22 +91,30 @@ async def get_or_create_conversation(
     user_id: str,
     session_id: str,
     title: str | None = None,
+    conversation_id: str | None = None,
 ) -> str:
-    """Return the latest ``conversation_id`` for a session, creating one if needed."""
+    """Return an existing or newly-created ``conversation_id``.
+
+    * If *conversation_id* is given, validate it exists and return it.
+    * Otherwise create a **new** conversation (supports "New Chat").
+    """
     uid = _to_uuid(user_id)
     sid = _to_uuid(session_id)
 
-    result = await session.execute(
-        select(Conversation)
-        .where(Conversation.session_id == sid, Conversation.user_id == uid)
-        .order_by(Conversation.created_at.desc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        existing.updated_at = datetime.now(timezone.utc)
-        await session.flush()
-        return str(existing.conversation_id)
+    if conversation_id:
+        cid = _to_uuid(conversation_id)
+        result = await session.execute(
+            select(Conversation).where(
+                Conversation.conversation_id == cid,
+                Conversation.user_id == uid,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.updated_at = datetime.now(timezone.utc)
+            await session.flush()
+            return str(existing.conversation_id)
+        # conversation_id provided but not found — fall through to create
 
     cid = uuid.uuid4()
     session.add(
@@ -119,6 +127,108 @@ async def get_or_create_conversation(
     )
     await session.flush()
     return str(cid)
+
+
+async def close_user_sessions(
+    session: AsyncSession,
+    user_id: str,
+) -> int:
+    """Mark all active sessions for *user_id* as inactive.
+
+    Returns the number of sessions closed.
+    """
+    from sqlalchemy import update
+
+    uid = _to_uuid(user_id)
+    now = datetime.now(timezone.utc)
+    result = await session.execute(
+        update(Session)
+        .where(Session.user_id == uid, Session.is_active.is_(True))
+        .values(is_active=False, ended_at=now)
+    )
+    await session.flush()
+    return result.rowcount  # type: ignore[return-value]
+
+
+async def list_user_conversations(
+    session: AsyncSession,
+    user_id: str,
+    limit: int = 50,
+) -> list[dict]:
+    """Return recent conversations for a user (newest first).
+
+    Each dict contains ``conversation_id``, ``title``, ``created_at``,
+    ``updated_at``, and ``message_count``.
+    """
+    from sqlalchemy import func
+
+    uid = _to_uuid(user_id)
+    # Sub-query for message count
+    msg_count = (
+        select(func.count(Message.message_id))
+        .where(Message.conversation_id == Conversation.conversation_id)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(
+            Conversation.conversation_id,
+            Conversation.title,
+            Conversation.created_at,
+            Conversation.updated_at,
+            msg_count.label("message_count"),
+        )
+        .where(Conversation.user_id == uid)
+        .order_by(Conversation.updated_at.desc())
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {
+            "conversation_id": str(r.conversation_id),
+            "title": r.title,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            "message_count": r.message_count or 0,
+        }
+        for r in rows
+    ]
+
+
+async def load_conversation_messages_full(
+    session: AsyncSession,
+    conversation_id: str,
+    limit: int = 100,
+) -> list[dict]:
+    """Load messages for a conversation (for frontend display), oldest first.
+
+    Unlike ``load_conversation_messages`` (used internally for LLM context),
+    this returns full metadata including ``message_id`` and ``created_at``.
+    """
+    from sqlalchemy import case
+
+    cid = _to_uuid(conversation_id)
+    role_order = case(
+        (Message.role == "user", 0),
+        (Message.role == "system", 1),
+        else_=2,
+    )
+    stmt = (
+        select(Message)
+        .where(Message.conversation_id == cid)
+        .order_by(Message.created_at.asc(), role_order)
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {
+            "message_id": str(m.message_id),
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in rows.scalars()
+    ]
 
 
 async def save_messages(

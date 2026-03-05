@@ -1,6 +1,6 @@
 # Multi-Agentic RAG System
 
-A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, PostgreSQL, and LLM providers (OpenAI / Anthropic). Agents are orchestrated via Kahn's topological sort, enabling parallel execution where dependencies allow and can handle any type of order execution of agents.Dynamic routing  of agents acording to query need.
+A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, PostgreSQL, and LLM providers (OpenAI / Anthropic). Agents are orchestrated via Kahn's topological sort, enabling parallel execution where dependencies allow and can handle any type of order execution of agents. Dynamic routing of agents according to query need.
 
 ### Dynamic routing of agents with TopoSort without using any frameworks like LangChain or LangGraph
 
@@ -12,15 +12,178 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 
 
 - http://localhost:8080/dashboard.html  
-```
-run frontend/dashboard.py then open dashboard.html
-```
 ![Database Dashboard](images/dashboard.png)
 
 
 ### Backend:
 - http://localhost:8000/docs#/
 ![Backend Screenshot](images/backend.png)
+
+---
+
+## How to Run
+
+### Prerequisites
+
+- **Python 3.11+**
+- **Docker** (for PostgreSQL, Qdrant, Redis)
+- API keys: **OpenAI** (required), **Anthropic** (optional), **Tavily** (optional, for web search)
+
+### 1. Start Infrastructure (PostgreSQL + Qdrant + Redis)
+
+```bash
+docker compose up -d
+```
+
+This starts three containers:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| PostgreSQL 16 | `5432` | Users, sessions, conversations, messages, documents, HITL, etc. |
+| Qdrant | `6333` / `6334` | Vector storage for document embeddings |
+| Redis 7 | `6379` | Celery task broker + result backend + Pub/Sub for SSE status updates |
+
+
+### 2. Create Virtual Environment & Install Dependencies
+
+```bash
+python -m venv .venv
+
+# Windows
+.\.venv\Scripts\activate
+
+# Linux / macOS
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# ── Required ─────────────────────────────────────────────────────
+OPENAI_API_KEY=sk-...
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrag
+
+# ── Optional — LLM providers ────────────────────────────────────
+ANTHROPIC_API_KEY=sk-ant-...
+TAVILY_API_KEY=tvly-...
+
+# ── Optional — Security (change in production) ──────────────────
+JWT_SECRET=your-secret-key
+OAUTH_STATE_SECRET=your-oauth-secret
+TOKEN_ENCRYPTION_KEY=your-fernet-key
+
+# ── Optional — Gmail OAuth ──────────────────────────────────────
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+
+# ── Optional — GitHub OAuth ─────────────────────────────────────
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+
+# ── Redis / Celery (defaults work with docker-compose) ──────────
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/1
+```
+
+### 4. Start the Backend (FastAPI)
+
+```bash
+python main.py
+```
+
+The server starts on **http://localhost:8000**. The frontend is served at the root (`/`), and the API docs are at `/docs`.
+
+### 5. Start the Celery Worker (Document Processing)
+
+In a **separate terminal** (with the venv activated):
+
+```bash
+# Windows (solo pool required)
+python -m celery -A celery_app worker --loglevel=info --pool=solo
+
+# Linux / macOS
+celery -A celery_app worker --loglevel=info --concurrency=4
+```
+
+The Celery worker processes uploaded documents asynchronously. Without it, file uploads will be queued but never processed.
+
+**Worker configuration** (from `celery_app.py`):
+- `acks_late=True` — tasks re-queue if the worker crashes
+- `task_soft_time_limit=300` — 5 min soft limit per document
+- `max_retries=3` — automatic retry with exponential backoff
+- `rate_limit=20/m` — prevents embedding API throttling
+
+### 6. Start the Admin Dashboard (Optional)
+
+In a **separate terminal**:
+
+```bash
+cd frontend
+python dashboard.py
+```
+
+Then open **http://localhost:8080/dashboard.html** in your browser.
+
+The dashboard connects to PostgreSQL via Docker and displays all 10 database tables with sorting, search, filtering, column resizing, CSV export, and row detail panels. It's a read-only admin view — no writes.
+
+### Quick Start Summary
+
+```
+Terminal 1:  docker compose up -d
+Terminal 2:  python main.py                                    # FastAPI  → :8000
+Terminal 3:  python -m celery -A celery_app worker --pool=solo # Celery   → processes uploads
+Terminal 4:  cd frontend && python dashboard.py                # Dashboard → :8080  (optional)
+```
+
+| URL | What |
+|-----|------|
+| http://localhost:8000 | Chat frontend (register / login / chat / upload) |
+| http://localhost:8000/docs | Swagger API docs |
+| http://localhost:8080/dashboard.html | Admin DB dashboard |
+
+---
+
+## API Endpoints
+
+All endpoints (except auth and health) require a JWT token in the `Authorization: Bearer <token>` header.
+
+### Auth — `/api/v1/auth`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/register` | No | Register a new user. Body: `{ username, email, password }`. Returns `{ user_id, display_name, email, token }`. |
+| `POST` | `/login` | No | Login with email + password. Body: `{ email, password }`. Returns `{ user_id, display_name, email, token }`. |
+| `POST` | `/logout` | JWT | Close all active sessions for the authenticated user. Returns `{ status, sessions_closed }`. |
+
+### Core API — `/api/v1`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Health check. Returns `{ status: "ok" }`. |
+| `GET` | `/agents` | No | List all registered agents and their capabilities. Returns `{ agents: [...] }`. |
+| `POST` | `/query` | JWT | Non-streaming query. Body: `{ query, session_id?, conversation_id? }`. Returns `{ answer, sources, agents_used, session_id, conversation_id }`. |
+| `POST` | `/query/stream` | JWT | Streaming query via SSE. Same body as `/query`. Emits SSE events: `status`, `plan`, `hitl_required`, `token`, `sources`, `done`, `error`. |
+| `POST` | `/documents/upload` | JWT | Upload one or more files (PDF, DOCX, Excel, CSV, TXT, MD). Multipart form: `files`. Returns `{ documents: [{ doc_id, filename, status }] }`. Processing runs async via Celery. |
+| `GET` | `/documents/status` | JWT | List all documents and their processing status for the authenticated user. Returns `{ documents: [...] }`. |
+| `GET` | `/documents/status/stream` | JWT | SSE stream of real-time document processing status updates (Redis Pub/Sub). Events: `doc_status`. |
+| `POST` | `/hitl/respond` | JWT | Approve or deny a HITL (Human-in-the-Loop) request. Body: `{ request_id, decision, instructions? }`. Returns `{ request_id, status }`. |
+| `GET` | `/conversations` | JWT | List all conversations for the authenticated user (newest first). Returns `{ conversations: [...] }`. |
+| `GET` | `/conversations/{conversation_id}/messages` | JWT | Load all messages for a specific conversation. Returns `{ conversation_id, messages: [...] }`. |
+
+### OAuth Connectors — `/api/v1/connectors`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/providers` | No | List all available OAuth connector providers (Gmail, GitHub, etc.) and their configuration status. |
+| `GET` | `/connections` | JWT | List all OAuth connections for the authenticated user. |
+| `GET` | `/{provider}/auth-url` | JWT | Get the OAuth authorization URL for a provider. Frontend opens this in a popup. Returns `{ auth_url, provider }`. |
+| `GET` | `/{provider}/callback` | No | OAuth redirect callback. Exchanges auth code for tokens, stores connection, returns HTML that auto-closes the popup. |
+| `DELETE` | `/connections/{connection_id}` | JWT | Disconnect and revoke an OAuth connection. Returns `{ status, connection_id }`. |
 
 ---
 
@@ -73,7 +236,7 @@ graph TB
 
 ---
 
-## Memory Extraction Pipeline
+## Long term Memory Extraction Pipeline
 
 Every user query passes through a **parallel memory extraction layer** that runs alongside the Master Agent — zero added latency. The extractor uses an LLM to detect personal data (name, company, job title, tone preferences, etc.) and persists any new findings to PostgreSQL for future conversations.
 
@@ -258,13 +421,20 @@ flowchart TD
 
 ## RAG Document Pipeline — How Documents Are Processed
 
-When a user uploads a document, it goes through this pipeline before it's searchable:
+Document processing is **fully asynchronous**. The upload endpoint returns immediately with status `pending`; a **Celery worker** picks up the task from a **Redis** queue and runs the heavy pipeline (parsing, chunking, embedding) in the background. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
 
 ```mermaid
 flowchart TD
-    Upload["User uploads file<br/><i>PDF / DOCX / Excel / TXT</i>"]
+    Upload["User uploads file(s)<br/><i>PDF / DOCX / Excel / CSV / TXT / MD</i>"]
 
-    Upload --> Parser["Parser<br/><i>Extract raw text</i>"]
+    Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i><br/>saves DB record (status=pending)<br/>returns immediately"]
+
+    API -->|"Celery .delay()"| Queue["Redis Task Queue<br/><i>broker</i>"]
+
+    Queue --> Worker["Celery Worker<br/><i>process_document_task</i><br/>autoretry ×3, exponential backoff<br/>soft limit 5 min, hard limit 6 min"]
+
+    Worker --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
+    Status1 --> Parser["Parser<br/><i>Extract raw text</i>"]
 
     Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()"]
     Parser -->|"DOCX"| PythonDocx["python-docx<br/>paragraphs"]
@@ -276,29 +446,17 @@ flowchart TD
     Pandas --> RawContent
     RawText --> RawContent
 
-    RawContent --> Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
+    RawContent --> Parallel
 
-    RawContent --> Chunker
-
-    subgraph Chunker["Structure-Aware Chunker"]
-        direction TB
-        LLMParse["Regex based analyses structure<br/><i>identify sections, tables,<br/>headings, hierarchy</i>"]
-        LLMParse --> SplitSections["Split into sections"]
-        SplitSections --> TokenSplit["Token-based splitting<br/><i>1024 tokens per chunk<br/>respects paragraph boundaries</i>"]
-        SplitSections --> TableChunk["Table chunks<br/><i>kept intact</i>"]
-        TokenSplit --> UUIDs["Assign UUID<br/>to each chunk"]
-        TableChunk --> UUIDs
-        UUIDs --> Relationships["Build parent-child<br/>relationships<br/><i>first chunk = parent<br/>of its section</i>"]
+    subgraph Parallel["Parallel: description ‖ chunking"]
+        direction LR
+        Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
+        Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships</i>"]
     end
 
-    Describe --> Store
-    Relationships --> Embedder
+    Parallel --> BatchEmbed["Batch Embedding<br/><i>text-embedding-3-small<br/>1536 dims, embed_batch()</i>"]
 
-    Embedder["Embedding Model<br/><i>text-embedding-3-small<br/>1536 dimensions</i>"]
-
-    Embedder --> Store
-
-    Store["Qdrant Vector Store"]
+    BatchEmbed --> Store
 
     subgraph Store["Store in Qdrant"]
         direction TB
@@ -308,31 +466,64 @@ flowchart TD
         ChunkPoints --> PayloadIdx["Create payload indexes<br/><i>doc_type, date, section_title</i>"]
     end
 
+    Store --> Status2["DB → status = ready<br/>Redis Pub/Sub → SSE<br/><i>or status = failed on error</i>"]
+
     style Upload fill:#2196F3,color:#fff
+    style API fill:#2196F3,color:#fff
+    style Queue fill:#e53935,color:#fff
+    style Worker fill:#e53935,color:#fff
     style Describe fill:#FF9800,color:#fff
-    style LLMParse fill:#FF9800,color:#fff
-    style Embedder fill:#9C27B0,color:#fff
+    style Chunker fill:#FF9800,color:#fff
+    style BatchEmbed fill:#9C27B0,color:#fff
+    style Status1 fill:#4CAF50,color:#fff
+    style Status2 fill:#4CAF50,color:#fff
 ```
+
+**Key implementation details:**
+
+| Aspect | Detail |
+|--------|--------|
+| **Task queue** | Celery 5.x with Redis broker (`celery_app.py`) |
+| **Worker config** | `acks_late=True`, `prefetch_multiplier=1`, `concurrency=4` |
+| **Retry policy** | Up to 3 retries with exponential backoff (10 s → 20 s → 40 s, capped at 120 s, jittered) |
+| **Rate limiting** | `20/m` per worker to avoid embedding API throttling |
+| **Time limits** | 5 min soft (raises `SoftTimeLimitExceeded`), 6 min hard kill |
+| **Status updates** | Redis Pub/Sub channel `doc_status:{user_id}` → SSE `GET /documents/status/stream` |
+| **DB sessions** | Fresh `create_async_engine` per task (each `asyncio.run()` creates a new event loop) |
+| **Serialisation** | File bytes sent as hex string for JSON safety |
 
 ---
 
-## RAG Query Pipeline — How Retrieval Works
+## RAG Query Pipeline — Two-Stage Retrieval
 
-When the RAG Agent receives a query, this is the retrieval + synthesis flow:
+The RAG Agent uses a **two-stage retrieval** approach: first narrow down *which documents* are relevant (Stage 1), then search *within those documents* for the best chunks (Stage 2). This dramatically reduces noise and improves precision, especially when a user has many uploaded documents.
 
 ```mermaid
 flowchart TD
     Query["User query arrives<br/><i>via Master → Orchestrator</i>"]
 
-    Query --> Entities["Extract entities<br/><i>date_range, doc_type,<br/>metric, names</i>"]
-    Entities --> Filters["Build Qdrant filters<br/><i>metadata.date, metadata.doc_type,<br/>metadata.topic</i>"]
+    Query --> Stage1
 
-    Filters --> Hybrid
-
-    subgraph Hybrid["Hybrid Search"]
+    subgraph Stage1["Stage 1 — Document Discovery"]
         direction TB
-        Dense["Dense Vector Search<br/><i>embed query →<br/>cosine similarity in Qdrant</i>"]
-        Sparse["BM25 Sparse Search<br/><i>keyword matching</i>"]
+        EmbedQ1["Embed query<br/><i>text-embedding-3-small</i>"]
+        EmbedQ1 --> DescSearch["Dense search over<br/><b>document_entry</b> points<br/><i>cosine similarity on<br/>description embeddings</i>"]
+        DescSearch --> Filter["Filter by score threshold<br/><i>default ≥ 0.40</i><br/>top-K = 5"]
+        Filter --> DocIDs["Matched doc_ids<br/><i>+ filenames, descriptions, scores</i>"]
+    end
+
+    DocIDs --> Decision{"≥ 2 docs<br/>above threshold?"}
+
+    Decision -->|"Yes"| Stage2Scoped["Stage 2 — Scoped Search<br/><i>search only matched doc_ids</i>"]
+    Decision -->|"No"| Stage2Fallback["Stage 2 — Fallback<br/><i>scoped + unscoped hybrid,<br/>deduplicate by chunk_id</i>"]
+
+    Stage2Scoped --> Hybrid
+    Stage2Fallback --> Hybrid
+
+    subgraph Hybrid["Stage 2 — Hybrid Chunk Search (parallel)"]
+        direction TB
+        Dense["Dense Vector Search<br/><i>embed query → cosine similarity<br/>filter type=chunk + doc_ids</i>"]
+        Sparse["BM25 Sparse Search<br/><i>keyword matching<br/>scoped to doc_ids</i>"]
         Dense --> RRF["Reciprocal Rank Fusion<br/><i>score = Σ 1/(k + rank)<br/>merge + deduplicate</i>"]
         Sparse --> RRF
     end
@@ -341,28 +532,61 @@ flowchart TD
 
     Top20 --> Rerank
 
-    subgraph Rerank["LLM Reranking"]
+    subgraph Rerank["LLM Reranking (configurable)"]
         direction TB
-        RePrompt["Prompt LLM with query<br/>+ all 20 chunk previews"]
+        Check{"rag_use_llm_reranking<br/>= True?"}
+        Check -->|"Yes"| RePrompt["Prompt LLM with query<br/>+ all 20 chunk previews"]
         RePrompt --> Score["LLM ranks by:<br/>• Direct relevance<br/>• Information quality<br/>• Context completeness"]
         Score --> Top8["Return top 8<br/>ranked_indices"]
+        Check -->|"No"| PassThrough["Return top 8<br/>by RRF score<br/><i>(no LLM call)</i>"]
     end
 
     Top8 --> Sources["Extract unique sources<br/><i>filename, page, section</i>"]
+    PassThrough --> Sources
     Top8 --> Confidence["Calculate confidence<br/><i>avg chunk scores</i>"]
+    PassThrough --> Confidence
 
-    Sources --> Output["AgentOutput<br/><i>chunks, sources, query<br/>confidence_score</i>"]
+    Sources --> Output["AgentOutput<br/><i>chunks, sources, query,<br/>confidence_score,<br/>matched_documents</i>"]
     Confidence --> Output
 
     Output -->|"passed to"| Composer["Composer Agent<br/><i>synthesise answer<br/>with [1], [2] citations</i>"]
 
     style Query fill:#2196F3,color:#fff
+    style EmbedQ1 fill:#2196F3,color:#fff
+    style DescSearch fill:#2196F3,color:#fff
+    style Filter fill:#2196F3,color:#fff
+    style DocIDs fill:#2196F3,color:#fff
     style Dense fill:#4CAF50,color:#fff
     style Sparse fill:#8BC34A,color:#fff
     style RRF fill:#FF9800,color:#fff
     style RePrompt fill:#FF9800,color:#fff
     style Composer fill:#9C27B0,color:#fff
+    style Decision fill:#FF9800,color:#fff
 ```
+
+**How it works:**
+
+| Stage | What happens | Why |
+|-------|-------------|-----|
+| **Stage 1 — Document Discovery** | The query embedding is compared against **document-level description embeddings** (`type=document_entry`). Top-K documents above the score threshold are selected. | Narrows search space from *all* chunks across *all* documents to only relevant documents. Descriptions are LLM-generated summaries rich in entities, topics, and keywords. |
+| **Fallback check** | If fewer than 2 documents pass the threshold, the system also runs an **unscoped hybrid search** (all chunks) and merges/deduplicates results. | Prevents empty results when descriptions don't closely match the query wording. |
+| **Stage 2 — Scoped Hybrid Search** | Dense vector search + BM25 keyword search run **in parallel** (`asyncio.gather`), both scoped to chunks belonging to matched `doc_ids`. Results are merged via Reciprocal Rank Fusion. | Scoping BM25 to matched doc_ids avoids scrolling the entire collection — critical at scale (e.g., 100K chunks → only ~500 scoped chunks). |
+| **LLM Reranking** | Configurable via `rag_use_llm_reranking` (default: `True`). When enabled, an LLM scores each chunk for relevance, quality, and completeness. When disabled, top chunks by RRF score are returned directly. | Adds semantic understanding but costs an extra LLM call. Can be toggled off for cost/latency savings. |
+
+**Configuration** (in `config/settings.py` or `.env`):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `rag_description_top_k` | `5` | Max documents to consider in Stage 1 |
+| `rag_description_score_threshold` | `0.40` | Min cosine similarity for a document to be "matched" |
+| `rag_use_llm_reranking` | `True` | Whether to use LLM-based reranking after RRF |
+
+**Qdrant point types** stored per user collection (`user_{id}_documents`):
+
+| Point type | Key payload fields | Purpose |
+|------------|-------------------|---------|
+| `document_entry` | `doc_id`, `filename`, `description`, `doc_type`, `uploaded_at`, `total_chunks` | Document-level vector for Stage 1 broad retrieval |
+| `chunk` | `doc_id`, `text`, `metadata` (page, section_title, chunk_index, parent_id) | Chunk-level vector for Stage 2 fine-grained retrieval |
 
 ---
 
@@ -445,16 +669,16 @@ flowchart TD
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| **`users`** | Registered users | `user_id` (UUID PK), `email`, `display_name`, `created_at`,`password`,`username` |
-| **`sessions`** | Login/chat sessions | `session_id` (UUID PK), `user_id` (FK), `started_at`, `is_active` |
-| **`conversations`** | Conversation threads within a session | `conversation_id` (UUID PK), `session_id` (FK), `user_id` (FK), `title` |
-| **`messages`** | Individual messages in a conversation | `message_id` (UUID PK), `conversation_id` (FK), `role` (`user`/`assistant`/`system`), `content`, `metadata` (JSONB) |
-| **`agent_executions`** | Audit log of every agent run | `execution_id` (UUID PK), `conversation_id` (FK), `agent_name`, `status` (`pending`/`running`/`success`/`failed`), `input_payload` (JSONB), `output_payload` (JSONB), `error_message` |
-| **`documents`** | Uploaded document metadata | `doc_id` (UUID PK), `user_id` (FK), `filename`, `doc_type`, `total_chunks`, `qdrant_collection` |
-| **`conversation_summaries`** | Rolling summaries of every 3 conversation turns | `summary_id` (UUID PK), `conversation_id` (FK), `summary_text`, `turns_covered` |
-| **`user_long_term_memory`** | Persistent user profile extracted by the Memory Extractor | `user_id` (UUID PK), `critical_facts` (JSONB), `preferences` (JSONB), `updated_at` |
-| **`hitl_requests`** | HITL approval requests for agents with dangerous tools | `request_id` (UUID PK), `conversation_id` (FK), `agent_id`, `agent_name`, `tool_names` (TEXT[]), `status` (`pending`/`approved`/`denied`/`timed_out`/`expired`), `user_instructions`, `expires_at` |
-| **`user_connections`** | OAuth connections per user per provider | `connection_id` (UUID PK), `user_id` (FK), `provider` (VARCHAR), `account_label`, `account_id`, `access_token` (encrypted), `refresh_token` (encrypted), `expires_at`, `scopes` (TEXT[]), `provider_meta` (JSONB), `status` (`active`/`expired`/`error`/`revoked`) |
+| **`users`** | Registered users | `user_id` (UUID PK), `email` (UNIQUE), `display_name`, `password_hash`, `created_at` |
+| **`sessions`** | Login sessions (closed on logout) | `session_id` (UUID PK), `user_id` (FK), `started_at`, `ended_at`, `is_active` (BOOL) |
+| **`conversations`** | Chat threads within a session | `conversation_id` (UUID PK), `session_id` (FK), `user_id` (FK), `title`, `created_at`, `updated_at` |
+| **`messages`** | Individual messages | `message_id` (UUID PK), `conversation_id` (FK), `role` (`user`/`assistant`/`system`), `content`, `metadata` (JSONB), `created_at` |
+| **`agent_executions`** | Audit log of every agent run | `execution_id` (UUID PK), `conversation_id` (FK), `agent_name`, `task_description`, `status` (`pending`/`running`/`success`/`failed`), `input_payload` (JSONB), `output_payload` (JSONB), `error_message`, `started_at`, `completed_at` |
+| **`documents`** | Uploaded document metadata & processing status | `doc_id` (UUID PK), `user_id` (FK), `filename`, `doc_type`, `description`, `total_chunks`, `qdrant_collection`, `processing_status` (`pending`/`processing`/`ready`/`failed`), `error_message`, `uploaded_at` |
+| **`conversation_summaries`** | Rolling summaries of every 3 conversation turns | `summary_id` (UUID PK), `conversation_id` (FK), `summary_text`, `turns_covered`, `created_at` |
+| **`user_long_term_memory`** | Persistent user profile extracted by the Memory Extractor | `user_id` (UUID PK, FK), `critical_facts` (JSONB), `preferences` (JSONB), `updated_at` |
+| **`hitl_requests`** | HITL approval requests for agents with dangerous tools | `request_id` (UUID PK), `conversation_id` (FK), `agent_id`, `agent_name`, `tool_names` (TEXT[]), `task_description`, `status` (`pending`/`approved`/`denied`/`timed_out`/`expired`), `user_instructions`, `created_at`, `responded_at`, `expires_at` |
+| **`user_connections`** | OAuth connections per user per provider | `connection_id` (UUID PK), `user_id` (FK), `provider` (VARCHAR), `account_label`, `account_id`, `access_token`, `refresh_token`, `token_type`, `expires_at`, `scopes` (TEXT[]), `provider_meta` (JSONB), `status` (`active`/`expired`/`revoked`/`error`), `connected_at`, `last_refreshed`, `last_used_at`, `error_message` — UNIQUE(`user_id`, `provider`, `account_id`) |
 
 #### `user_long_term_memory` — JSONB Column Detail
 
@@ -475,12 +699,12 @@ Each user gets a dedicated collection: **`user_{user_id}_documents`**
 
 | Point Type | Stored Payload Fields | Purpose |
 |------------|----------------------|---------|
-| **`document_entry`** | `doc_id`, `filename`, `description`, `doc_type`, `uploaded_at`, `total_chunks` | Document-level vector for broad retrieval |
-| **`chunk`** | `text`, `metadata` (`filename`, `page`, `section_title`, `doc_type`, `date`, …) | Individual text chunk for fine-grained search |
+| **`document_entry`** | `doc_id`, `filename`, `description`, `doc_type`, `uploaded_at`, `total_chunks` | Document-level vector for Stage 1 broad retrieval |
+| **`chunk`** | `doc_id`, `text`, `metadata` (`filename`, `page`, `section_title`, `doc_type`, `date`, …) | Individual text chunk for Stage 2 fine-grained search |
 
 **Vector config:** `text-embedding-3-small` (1536 dimensions), cosine distance.
 
-**Payload indexes:** `metadata.doc_type` (keyword), `metadata.date` (keyword), `metadata.section_title` (text).
+**Payload indexes:** `type` (keyword), `doc_id` (keyword), `metadata.doc_type` (keyword), `metadata.date` (keyword), `metadata.section_title` (text).
 
 ---
 

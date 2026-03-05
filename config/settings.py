@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     rag_model_provider: str = "openai"
     rag_model: str = "gpt-4o-mini"
     rag_temperature: float = 0.1
+    rag_use_llm_reranking: bool = True
+    rag_description_top_k: int = 5
+    rag_description_score_threshold: float = 0.4
     code_model_provider: str = "openai"
     code_model: str = "gpt-4o"
     code_temperature: float = 0.2

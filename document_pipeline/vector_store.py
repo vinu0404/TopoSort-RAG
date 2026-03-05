@@ -59,6 +59,8 @@ class VectorStore:
 
         # Payload indexes
         for field, schema in [
+            ("type", "keyword"),
+            ("doc_id", "keyword"),
             ("metadata.doc_type", "keyword"),
             ("metadata.date", "keyword"),
             ("metadata.section_title", "text"),
@@ -120,6 +122,7 @@ class VectorStore:
             },
         )
 
+        doc_id = document.get("doc_id", doc_uuid)
         chunk_points = []
         for chunk, embedding in zip(chunks, chunk_embeddings):
             cid = chunk.get("chunk_id", str(uuid.uuid4()))
@@ -129,6 +132,7 @@ class VectorStore:
                     vector=embedding,
                     payload={
                         "type": "chunk",
+                        "doc_id": doc_id,
                         "text": chunk["text"],
                         "metadata": chunk.get("metadata", {}),
                     },
@@ -272,6 +276,161 @@ class VectorStore:
         scored.sort(key=lambda d: d["score"], reverse=True)
         return scored
 
+
+    # ── two-level retrieval helpers ──────────────────────────────────
+
+    async def search_documents(
+        self,
+        collection: str,
+        embedding: List[float],
+        filters: Dict[str, Any] | None = None,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Stage-1 search: find document-level entries by description similarity.
+
+        Returns list of dicts with doc_id, filename, description, score.
+        """
+        type_condition = FieldCondition(
+            key="type", match=MatchValue(value="document_entry")
+        )
+        conditions: List[FieldCondition] = [type_condition]
+        if filters:
+            extra = self._build_filter(filters)
+            if extra and extra.must:
+                conditions.extend(extra.must)
+
+        response = await self.client.query_points(
+            collection_name=collection,
+            query=embedding,
+            query_filter=Filter(must=conditions),
+            limit=limit,
+            with_payload=True,
+        )
+        return [
+            {
+                "doc_id": r.payload.get("doc_id", str(r.id)),
+                "filename": r.payload.get("filename", ""),
+                "description": r.payload.get("description", ""),
+                "score": r.score,
+            }
+            for r in response.points
+        ]
+
+    async def search_chunks(
+        self,
+        collection: str,
+        embedding: List[float],
+        doc_ids: List[str] | None = None,
+        filters: Dict[str, Any] | None = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Dense search restricted to type="chunk".  Optionally scoped to
+        a set of *doc_ids* (two-level stage-2).
+        """
+        conditions: List[FieldCondition] = [
+            FieldCondition(key="type", match=MatchValue(value="chunk"))
+        ]
+        if doc_ids:
+            for did in doc_ids:
+                # Qdrant OR-semantics: use should for multi-value match
+                pass  # handled below
+        if filters:
+            extra = self._build_filter(filters)
+            if extra and extra.must:
+                conditions.extend(extra.must)
+
+        # doc_id scoping: must match ANY of the given doc_ids
+        if doc_ids:
+            doc_id_conditions = [
+                FieldCondition(key="doc_id", match=MatchValue(value=did))
+                for did in doc_ids
+            ]
+            query_filter = Filter(
+                must=conditions,
+                should=doc_id_conditions,
+            )
+        else:
+            query_filter = Filter(must=conditions)
+
+        response = await self.client.query_points(
+            collection_name=collection,
+            query=embedding,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return [
+            {
+                "chunk_id": str(r.id),
+                "score": r.score,
+                "text": r.payload.get("text", ""),
+                "metadata": r.payload.get("metadata", {}),
+            }
+            for r in response.points
+        ]
+
+    async def bm25_search_by_doc_ids(
+        self,
+        collection: str,
+        query: str,
+        doc_ids: List[str],
+        filters: Dict[str, Any] | None = None,
+        limit: int = 20,
+        k1: float = 1.5,
+        b: float = 0.75,
+    ) -> List[Dict[str, Any]]:
+        """
+        BM25 over chunks belonging to specific documents only.
+        Much faster than full-collection scroll.
+        """
+        if not doc_ids:
+            return []
+
+        chunk_condition = FieldCondition(
+            key="type", match=MatchValue(value="chunk")
+        )
+        doc_id_conditions = [
+            FieldCondition(key="doc_id", match=MatchValue(value=did))
+            for did in doc_ids
+        ]
+
+        base_conditions = [chunk_condition]
+        if filters:
+            extra = self._build_filter(filters)
+            if extra and extra.must:
+                base_conditions.extend(extra.must)
+
+        scroll_filter = Filter(must=base_conditions, should=doc_id_conditions)
+        all_chunks: List[Dict[str, Any]] = []
+        next_offset = None
+        batch_size = 100
+
+        while True:
+            records, next_offset = await self.client.scroll(
+                collection_name=collection,
+                scroll_filter=scroll_filter,
+                limit=batch_size,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for record in records:
+                text = record.payload.get("text", "")
+                if text:
+                    all_chunks.append({
+                        "chunk_id": str(record.id),
+                        "text": text,
+                        "metadata": record.payload.get("metadata", {}),
+                    })
+            if next_offset is None:
+                break
+
+        if not all_chunks:
+            return []
+        scored = self._bm25_rank(query, all_chunks, k1=k1, b=b)
+        return scored[:limit]
 
     @staticmethod
     def _build_filter(filters: Dict[str, Any]):
