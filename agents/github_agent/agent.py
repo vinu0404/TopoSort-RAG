@@ -59,7 +59,7 @@ class GitHubAgent(BaseAgent):
             # HITL-aware effective task (handles enhance/override)
             effective_task = await self._effective_task(task_config)
 
-            plan = await self.llm.generate(
+            plan_result = await self.llm.generate(
                 prompt=self.prompts.action_prompt(
                     task=effective_task,
                     entities=task_config.entities,
@@ -75,6 +75,8 @@ class GitHubAgent(BaseAgent):
                     "reasoning": "string",
                 },
             )
+            tokens_used = plan_result.usage.get("total_tokens", 0)
+            plan = plan_result.data
 
             if not isinstance(plan, dict):
                 plan = {"action": "repo_info", "params": {}}
@@ -166,6 +168,7 @@ class GitHubAgent(BaseAgent):
                 confidence_score=0.85 if status == "success" else 0.4,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )

@@ -62,7 +62,7 @@ class MasterAgent:
 
         logger.info(f"[MasterAgent] Planning for query_id={query_id}, user_id={user_id}, query={query}")
         logger.debug(f"[MasterAgent] Prompt: {prompt[:500]}")
-        raw: Dict[str, Any] = await self.llm.generate(
+        result = await self.llm.generate(
             prompt=prompt,
             temperature=config.master_temperature,
             model=config.master_model,
@@ -101,10 +101,11 @@ class MasterAgent:
                 },
             },
         )
+        raw = result.data
         if not isinstance(raw, dict):
+            logger.info(f"[MasterAgent] Output for query_id={query_id}: {result.text}")
             raise ValueError(f"MasterAgent did not return a dict: {type(raw)}")
 
-            logger.info(f"[MasterAgent] Output for query_id={query_id}: {raw}")
         master_output = MasterAgentOutput(
             query_id=query_id,
             user_id=user_id,

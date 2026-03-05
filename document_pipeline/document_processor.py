@@ -48,8 +48,8 @@ Content (first 3000 characters):
 
 Description:
 """
-    response = await llm.generate(prompt=prompt, max_tokens=200, temperature=0.3)
-    return response.strip() if isinstance(response, str) else str(response).strip()
+    result = await llm.generate(prompt=prompt, max_tokens=200, temperature=0.3)
+    return result.text.strip()
 
 
 async def process_document(

@@ -834,6 +834,38 @@ Also returns a `result` field with an LLM-generated human-readable summary.
 
 Also returns a `result` field with the LLM-synthesised final answer.
 
+### LLM Provider — `LLMResult`
+
+All `generate()` calls return an `LLMResult` dataclass (defined in `utils/llm_providers.py`) instead of raw `str` / `dict`:
+
+```python
+@dataclass
+class LLMResult:
+    text:  str                    # Raw text response from the LLM
+    data:  Dict[str, Any] | None  # Parsed JSON dict when output_schema was provided, else None
+    usage: Dict[str, int]         # {"prompt_tokens": …, "completion_tokens": …, "total_tokens": …}
+    model: str                    # The model that actually served the request
+```
+
+**Usage patterns:**
+
+```python
+# ── Text response (no output_schema) ──────────────────────────────
+result = await self.llm.generate(prompt=prompt, temperature=0.7)
+answer = result.text                      # plain string
+tokens = result.usage["total_tokens"]     # real API token count
+
+# ── Structured response (with output_schema) ──────────────────────
+result = await self.llm.generate(
+    prompt=prompt,
+    output_schema={"action": "string", "params": "dict"},
+)
+plan = result.data                        # parsed dict
+tokens = result.usage["total_tokens"]
+```
+
+Every agent accumulates `tokens_used` from `result.usage["total_tokens"]` and reports it in `resource_usage`. All token counts come from the provider API response — no client-side estimation.
+
 ### Master Agent → Composer Pipeline
 
 ```
@@ -1595,7 +1627,7 @@ class SlackAgent(BaseAgent):
             # HITL-aware effective task (handles enhance/override)
             effective_task = await self._effective_task(task_config)
 
-            plan = await self.llm.generate(
+            plan_result = await self.llm.generate(
                 prompt=self.prompts.action_prompt(
                     task=effective_task,
                     entities=task_config.entities,
@@ -1610,6 +1642,8 @@ class SlackAgent(BaseAgent):
                     "reasoning": "string",
                 },
             )
+            tokens_used = plan_result.usage.get("total_tokens", 0)
+            plan = plan_result.data    # LLMResult.data — parsed JSON dict
             if not isinstance(plan, dict):
                 plan = {"action": "search", "params": {"query": task_config.task}}
 
@@ -1655,7 +1689,10 @@ class SlackAgent(BaseAgent):
                        or result_data.get("messages") or result_data.get("channels"),
                 data=result_data,
                 confidence_score=0.85,
-                resource_usage={"time_taken_ms": int((time.perf_counter() - start) * 1000)},
+                resource_usage={
+                    "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
+                },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )
         except Exception:
@@ -1711,7 +1748,7 @@ class GitHubAgent(BaseAgent):
         try:
             effective_task = await self._effective_task(task_config)
 
-            plan = await self.llm.generate(
+            plan_result = await self.llm.generate(
                 prompt=self.prompts.action_prompt(
                     task=effective_task,
                     entities=task_config.entities,
@@ -1726,6 +1763,8 @@ class GitHubAgent(BaseAgent):
                     "reasoning": "string",
                 },
             )
+            tokens_used = plan_result.usage.get("total_tokens", 0)
+            plan = plan_result.data    # LLMResult.data — parsed JSON dict
             if not isinstance(plan, dict):
                 plan = {"action": "repo_info", "params": {}}
 
@@ -1779,7 +1818,10 @@ class GitHubAgent(BaseAgent):
                        or result_data.get("pull_requests"),
                 data=result_data,
                 confidence_score=0.85,
-                resource_usage={"time_taken_ms": int((time.perf_counter() - start) * 1000)},
+                resource_usage={
+                    "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
+                },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )
         except Exception:
@@ -2269,11 +2311,13 @@ class SummaryAgent(BaseAgent):
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,     # ← always pass memory
             )
-            summary: str = await self.llm.generate(
+            llm_result = await self.llm.generate(
                 prompt=prompt,
                 temperature=config.summary_temperature,
                 model=config.summary_model,
             )
+            summary = llm_result.text    # LLMResult.text — raw string response
+            tokens_used = llm_result.usage.get("total_tokens", 0)
 
             return AgentOutput(
                 agent_id=task_config.agent_id,
@@ -2285,6 +2329,7 @@ class SummaryAgent(BaseAgent):
                 confidence_score=0.9,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )

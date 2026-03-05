@@ -82,7 +82,7 @@ Respond ONLY with valid JSON."""
                 config.hitl_classifier_provider,
                 default_model=config.hitl_classifier_model,
             )
-            result = await llm.generate(
+            llm_result = await llm.generate(
                 prompt=BaseAgent._HITL_CLASSIFY_PROMPT.format(
                     original_task=original_task,
                     instructions=instructions,
@@ -95,11 +95,8 @@ Respond ONLY with valid JSON."""
                     "reasoning": "string",
                 },
             )
-            if isinstance(result, dict):
-                intent = result.get("intent", "enhance").strip().lower()
-            else:
-                parsed = json.loads(result)
-                intent = parsed.get("intent", "enhance").strip().lower()
+            parsed = llm_result.data or json.loads(llm_result.text)
+            intent = parsed.get("intent", "enhance").strip().lower()
 
             if intent not in ("enhance", "override"):
                 logger.warning(f"[HITL] Unexpected intent '{intent}', defaulting to 'enhance'")

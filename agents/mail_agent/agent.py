@@ -56,7 +56,7 @@ class MailAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
             )
-            plan = await self.llm.generate(
+            plan_result = await self.llm.generate(
                 prompt=plan_prompt,
                 temperature=config.mail_temperature,
                 model=config.mail_model,
@@ -74,6 +74,8 @@ class MailAgent(BaseAgent):
                     "reasoning": "string",
                 },
             )
+            tokens_used = plan_result.usage.get("total_tokens", 0)
+            plan = plan_result.data
 
             if not isinstance(plan, dict):
                 plan = {"action": "search_inbox", "search_query": task_config.task}
@@ -128,7 +130,7 @@ class MailAgent(BaseAgent):
                             long_term_memory=task_config.long_term_memory,
                             conversation_history=task_config.conversation_history,
                         )
-                        email = await self.llm.generate(
+                        compose_result = await self.llm.generate(
                             prompt=compose_prompt,
                             temperature=config.mail_temperature,
                             model=config.mail_model,
@@ -140,6 +142,8 @@ class MailAgent(BaseAgent):
                                 "html": "boolean",
                             },
                         )
+                        tokens_used += compose_result.usage.get("total_tokens", 0)
+                        email = compose_result.data
                         if not isinstance(email, dict):
                             email = plan.get("email", {})
 
@@ -163,7 +167,7 @@ class MailAgent(BaseAgent):
                     long_term_memory=task_config.long_term_memory,
                     conversation_history=task_config.conversation_history,
                 )
-                email = await self.llm.generate(
+                draft_result = await self.llm.generate(
                     prompt=compose_prompt,
                     temperature=config.mail_temperature,
                     model=config.mail_model,
@@ -175,6 +179,8 @@ class MailAgent(BaseAgent):
                         "html": "boolean",
                     },
                 )
+                tokens_used += draft_result.usage.get("total_tokens", 0)
+                email = draft_result.data
                 if not isinstance(email, dict):
                     email = plan.get("email", {})
 
@@ -219,6 +225,7 @@ class MailAgent(BaseAgent):
                 confidence_score=0.9 if status == "success" else 0.4,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )

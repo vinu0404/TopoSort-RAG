@@ -46,9 +46,9 @@ class MemoryManager:
             config.master_model_provider,
             default_model=config.master_model,
         )
-        self._turns: Dict[str, List[ConversationTurn]] = {}
-        self._summaries: Dict[str, List[ConversationSummary]] = {}
-        self._long_term: Dict[str, LongTermMemory] = {}
+        self._turns: Dict[str, List[ConversationTurn]] = {}       # keyed by conversation_id
+        self._summaries: Dict[str, List[ConversationSummary]] = {} # keyed by conversation_id
+        self._long_term: Dict[str, LongTermMemory] = {}            # keyed by user_id
 
     async def add_turn(
         self,
@@ -58,7 +58,8 @@ class MemoryManager:
         db_session: AsyncSession | None = None,
         conversation_id: str | None = None,
     ) -> ConversationTurn:
-        turns = self._turns.setdefault(user_id, [])
+        cache_key = conversation_id or user_id
+        turns = self._turns.setdefault(cache_key, [])
         turn = ConversationTurn(
             turn=len(turns) + 1,
             user_query=query,
@@ -73,6 +74,7 @@ class MemoryManager:
                 user_id, group,
                 db_session=db_session,
                 conversation_id=conversation_id,
+                cache_key=cache_key,
             )
 
         return turn
@@ -153,10 +155,10 @@ class MemoryManager:
             ))
 
         if turns:
-            self._turns[user_id] = turns
+            self._turns[conversation_id] = turns
             logger.info(
-                "Hydrated %d conversation turns from DB for user %s",
-                len(turns), user_id,
+                "Hydrated %d conversation turns from DB for user %s (conversation %s)",
+                len(turns), user_id, conversation_id,
             )
 
         # ── Load summaries → rebuild _summaries ──────────────────────────
@@ -177,10 +179,10 @@ class MemoryManager:
             ))
 
         if summaries:
-            self._summaries[user_id] = summaries
+            self._summaries[conversation_id] = summaries
             logger.info(
-                "Hydrated %d conversation summaries from DB for user %s",
-                len(summaries), user_id,
+                "Hydrated %d conversation summaries from DB for user %s (conversation %s)",
+                len(summaries), user_id, conversation_id,
             )
 
     async def get_agent_history(
@@ -197,11 +199,12 @@ class MemoryManager:
         ``db_session`` and ``conversation_id`` are provided.
         """
         # Hydrate from DB on cold start
-        if user_id not in self._turns and db_session and conversation_id:
+        cache_key = conversation_id or user_id
+        if cache_key not in self._turns and db_session and conversation_id:
             await self._hydrate_from_db(user_id, db_session, conversation_id)
 
-        summaries = self._summaries.get(user_id, [])
-        turns = self._turns.get(user_id, [])
+        summaries = self._summaries.get(cache_key, [])
+        turns = self._turns.get(cache_key, [])
         interval = config.conversation_summary_interval
         summarised_count = len(summaries) * interval
         unsummarised = turns[summarised_count:]
@@ -333,6 +336,7 @@ class MemoryManager:
         group: List[ConversationTurn],
         db_session: AsyncSession | None = None,
         conversation_id: str | None = None,
+        cache_key: str | None = None,
     ) -> ConversationSummary:
         text = "\n".join(
             f"User: {t.user_query}\nAssistant: {t.composer_answer}" for t in group
@@ -342,14 +346,15 @@ class MemoryManager:
             f"Also list any key facts or data points.\n\n{text}\n\n"
             f'Return JSON: {{"summary": "...", "key_points": ["..."]}}'
         )
-        result = await self.llm.generate(
+        llm_result = await self.llm.generate(
             prompt=prompt,
             output_schema={"summary": "string", "key_points": ["string"]},
             temperature=0.2,
         )
 
+        result = llm_result.data
         if not isinstance(result, dict):
-            result = {"summary": str(result), "key_points": []}
+            result = {"summary": llm_result.text, "key_points": []}
 
         summary = ConversationSummary(
             turns=[t.turn for t in group],
@@ -357,7 +362,7 @@ class MemoryManager:
             key_points=result.get("key_points", []),
             timestamp=str(__import__("time").time()),
         )
-        self._summaries.setdefault(user_id, []).append(summary)
+        self._summaries.setdefault(cache_key or conversation_id or user_id, []).append(summary)
 
         if db_session is not None and conversation_id is not None:
             try:

@@ -10,10 +10,31 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from config.settings import config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMResult:
+    """Structured return value from LLM generate() calls.
+
+    Attributes:
+        text:  Raw text response from the LLM.
+        data:  Parsed JSON dict when output_schema was requested, else None.
+        usage: Token usage from the provider API.
+        model: The model that actually served the request.
+    """
+    text: str = ""
+    data: Dict[str, Any] | None = None
+    usage: Dict[str, int] = field(default_factory=lambda: {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    })
+    model: str = ""
 
 
 class BaseLLMProvider(ABC):
@@ -28,7 +49,7 @@ class BaseLLMProvider(ABC):
         model: str | None = None,
         max_tokens: int = 4096,
         output_schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any] | str:
+    ) -> LLMResult:
         ...
 
     @abstractmethod
@@ -63,7 +84,7 @@ class OpenAIProvider(BaseLLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         output_schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any] | str:
+    ) -> LLMResult:
         model = model or self.default_model
 
         messages = [{"role": "user", "content": prompt}]
@@ -84,15 +105,23 @@ class OpenAIProvider(BaseLLMProvider):
         )
 
         text = response.choices[0].message.content or ""
+        usage = {}
+        if response.usage:
+            usage = {
+                "prompt_tokens": response.usage.prompt_tokens or 0,
+                "completion_tokens": response.usage.completion_tokens or 0,
+                "total_tokens": response.usage.total_tokens or 0,
+            }
 
+        parsed_data = None
         if output_schema is not None:
             try:
-                return json.loads(text)
+                parsed_data = json.loads(text)
             except json.JSONDecodeError:
                 logger.warning("LLM did not return valid JSON; returning raw text")
-                return {"raw": text}
+                parsed_data = {"raw": text}
 
-        return text
+        return LLMResult(text=text, data=parsed_data, usage=usage, model=model)
 
     async def stream(
         self,
@@ -110,11 +139,11 @@ class OpenAIProvider(BaseLLMProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            stream_options={"include_usage": True},
         )
         async for chunk in response:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                yield delta.content
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -137,7 +166,7 @@ class AnthropicProvider(BaseLLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         output_schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any] | str:
+    ) -> LLMResult:
         model = model or self.default_model
 
         extra_instruction = ""
@@ -155,15 +184,23 @@ class AnthropicProvider(BaseLLMProvider):
         )
 
         text = response.content[0].text
+        usage = {}
+        if response.usage:
+            usage = {
+                "prompt_tokens": response.usage.input_tokens or 0,
+                "completion_tokens": response.usage.output_tokens or 0,
+                "total_tokens": (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0),
+            }
 
+        parsed_data = None
         if output_schema is not None:
             try:
-                return json.loads(text)
+                parsed_data = json.loads(text)
             except json.JSONDecodeError:
                 logger.warning("LLM did not return valid JSON; returning raw text")
-                return {"raw": text}
+                parsed_data = {"raw": text}
 
-        return text
+        return LLMResult(text=text, data=parsed_data, usage=usage, model=model)
 
     async def stream(
         self,

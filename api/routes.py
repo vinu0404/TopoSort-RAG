@@ -150,10 +150,17 @@ async def handle_query(
         bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}),
     )
 
+    total_tokens = sum(
+        getattr(o, "resource_usage", {}).get("tokens_used", 0)
+        for o in results.values()
+        if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
+    )
+
     return {
         "answer": output.answer,
         "sources": sources_data,
         "agents_used": list(results.keys()),
+        "tokens_used": total_tokens,
         "session_id": sess_id,
         "conversation_id": conv_id,
     }

@@ -28,12 +28,12 @@ class ComposerAgent:
         prompt = self._build_prompt(composer_input)
         logger.info(f"[ComposerAgent] Input: {composer_input}")
         logger.debug(f"[ComposerAgent] Prompt: {prompt[:500]}")
-        response = await self.llm.generate(
+        result = await self.llm.generate(
             prompt=prompt,
             temperature=config.composer_temperature,
             model=config.composer_model,
         )
-        answer_text = response if isinstance(response, str) else str(response)
+        answer_text = result.text
         answer_text = self._append_source_list(answer_text, composer_input.all_sources)
 
         logger.info(f"[ComposerAgent] Output: {answer_text[:500]}")

@@ -2,7 +2,7 @@
 RAG Agent – retrieves information from the user's document collection
 using a two-level retrieval pipeline:
 
-  Stage 1  →  description-level search → candidate doc_ids
+  Stage 1  →  description-level search → get relevant doc_ids
   Stage 2  →  hybrid (dense ‖ BM25) within matched docs → RRF merge
   Optional →  LLM reranking (controlled by config.rag_use_llm_reranking)
   Final    →  LLM synthesis with citations
@@ -44,8 +44,8 @@ class RAGAgent(BaseAgent):
             entities = task_config.entities
             dependency_outputs = task_config.dependency_outputs
             user_id = task_config.metadata.get("user_id", "default")
-            enhanced_query = await self._expand_query(original_query, entities, dependency_outputs)
-            tokens_used += 100  
+            enhanced_query, expand_tokens = await self._expand_query(original_query, entities, dependency_outputs)
+            tokens_used += expand_tokens
             
             logger.info(f"[RAGAgent] Original query: {original_query}")
             logger.info(f"[RAGAgent] Enhanced query: {enhanced_query}")
@@ -68,9 +68,8 @@ class RAGAgent(BaseAgent):
             )
 
             # ── Rerank (skipped when config.rag_use_llm_reranking=False) ─
-            reranked_chunks = await rerank(query=enhanced_query, chunks=chunks, top_k=8)
-            if config.rag_use_llm_reranking:
-                tokens_used += 300
+            reranked_chunks, rerank_tokens = await rerank(query=enhanced_query, chunks=chunks, top_k=8)
+            tokens_used += rerank_tokens
 
             sources = self._extract_sources(reranked_chunks)
             conversation_context = task_config.conversation_history
@@ -82,12 +81,13 @@ class RAGAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
             )
             
-            final_answer = await self.llm.generate(
+            synthesis_result = await self.llm.generate(
                 prompt=synthesis_prompt,
                 temperature=config.rag_temperature,
                 model=config.rag_model,
             )
-            tokens_used += 500 
+            final_answer = synthesis_result.text
+            tokens_used += synthesis_result.usage.get("total_tokens", 0)
             
             logger.info(f"[RAGAgent] Generated answer: {final_answer[:200]}...")
 
@@ -149,7 +149,7 @@ class RAGAgent(BaseAgent):
 
 
 
-    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> str:
+    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> tuple[str, int]:
         """
         Expand the original query using LLM to generate a more comprehensive search query.
         
@@ -165,13 +165,13 @@ class RAGAgent(BaseAgent):
         try:
             prompt = self.prompts.query_expansion_prompt(query, entities, dependency_outputs)
             
-            response = await self.llm.generate(
+            result = await self.llm.generate(
                 prompt=prompt,
                 temperature=0.3,  
                 max_tokens=150,   
             )
-            
-            response_text = response.strip()
+            expand_usage = result.usage.get("total_tokens", 0)
+            response_text = result.text.strip()
             
             if "```json" in response_text:
                 response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -183,16 +183,16 @@ class RAGAgent(BaseAgent):
             
             if not enhanced_query or not enhanced_query.strip():
                 logger.warning(f"[RAGAgent] Query expansion returned empty, using original query")
-                return query
+                return query, expand_usage
                 
-            return enhanced_query
+            return enhanced_query, expand_usage
             
         except json.JSONDecodeError as e:
             logger.warning(f"[RAGAgent] Failed to parse query expansion JSON: {e}. Using original query.")
-            return query
+            return query, 0
         except Exception as e:
             logger.warning(f"[RAGAgent] Query expansion failed: {e}. Using original query.")
-            return query
+            return query, 0
 
 
 

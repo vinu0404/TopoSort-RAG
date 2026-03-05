@@ -270,7 +270,7 @@ async def rerank_chunks(
     top_k: int = 8,
     *,
     _llm=None,
-) -> List[Dict[str, Any]]:
+) -> tuple[List[Dict[str, Any]], int]:
     """LLM-based reranking of retrieved chunks.
 
     Skipped automatically when ``config.rag_use_llm_reranking`` is False
@@ -278,18 +278,21 @@ async def rerank_chunks(
     """
 
     if not config.rag_use_llm_reranking:
-        return chunks[:top_k]
+        return chunks[:top_k], 0
 
     llm = _llm or get_llm_provider(config.rag_model_provider)
 
     prompt = RAGPrompts.rerank_prompt(query, chunks)
-    response = await llm.generate(
+    result = await llm.generate(
         prompt=prompt,
         output_schema={"ranked_indices": "List[int]"},
         temperature=0.1,
         model=config.rag_model,
     )
+    rerank_tokens = result.usage.get("total_tokens", 0)
 
+    response = result.data or {}
     ranked_indices = response.get("ranked_indices", [])[:top_k]
     valid = [i for i in ranked_indices if 0 <= i < len(chunks)]
-    return [chunks[i] for i in valid] if valid else chunks[:top_k]
+    reranked = [chunks[i] for i in valid] if valid else chunks[:top_k]
+    return reranked, rerank_tokens
