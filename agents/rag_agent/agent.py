@@ -35,7 +35,7 @@ class RAGAgent(BaseAgent):
         start_time = time.perf_counter()
         tokens_used = 0
         chunks: List[Dict[str, Any]] = []
-        logger.info(f"[RAGAgent] Input: {task_config}")
+        logger.info("[RAGAgent] Input: agent_id=%s task=%s tools=%s", task_config.agent_id, task_config.task[:150], task_config.tools)
         try:
             two_level_search = self.get_tool("two_level_search")
             rerank = self.get_tool("rerank_chunks")

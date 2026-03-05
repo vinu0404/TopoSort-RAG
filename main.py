@@ -104,5 +104,6 @@ if __name__ == "__main__":
         host=config.host,
         port=config.port,
         reload=config.debug,
+        reload_excludes=["**/__pycache__/**", "**/*.pyc", "**/*.pyo"] if config.debug else None,
         log_level="debug" if config.debug else "info",
     )
