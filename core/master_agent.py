@@ -186,11 +186,21 @@ Choose the primary intent:
   `web_research` | `multi_step_analysis` | `comparison` | `summarisation` |
   `conversation_memory`
 
-⚠ **`conversation_memory`** — Use this intent when the user is asking about the
+⚠ **`conversation_memory`** — Use this intent **ONLY** when the user is asking about the
   conversation itself (e.g. "what did I ask before?", "repeat my last question",
   "summarise our conversation", "what topics have we discussed?").
-  These questions can be answered entirely from the **Recent Conversation** context
-  above — no agents are needed. Return an **empty** `agents` list in the plan.
+  These are meta-questions about the chat — NOT factual look-ups.
+  Return an **empty** `agents` list in the plan.
+
+⚠ **`data_retrieval` vs `conversation_memory` — how to decide:**
+  - If the query references documents, files, PDFs, "from my docs", "from my files",
+    OR asks for factual information ("my name", "my salary", "my skills", "my internship",
+    "what does X do") → use `data_retrieval` and route to `rag_agent`.
+  - If the query does NOT mention documents but asks personal facts ("my name",
+    "my company") and the answer might exist in uploaded files → STILL use
+    `data_retrieval` with `rag_agent`. Default to `rag_agent` when unsure.
+  - `conversation_memory` is ONLY for questions about the conversation flow itself
+    ("what did we talk about?", "repeat that", "what was my first question?").
 
 **Step 3 — Complexity Assessment**:
   `simple` — single agent, no dependencies
@@ -210,6 +220,11 @@ Choose the primary intent:
   The underlying issue may have been fixed. Only use `conversation_memory` when
   the user is asking *about* the conversation itself (e.g. "what did I ask?",
   "summarise our chat") — never as a fallback for action requests.
+
+⚠ **IMPORTANT — When in doubt, prefer `rag_agent` over `conversation_memory`.**
+  If a query could be answered by looking up documents OR by recalling the
+  conversation, always choose `rag_agent`. The user's documents are the
+  primary source of truth for factual questions.
 
 - Specify `depends_on_indices` as integer indices referencing earlier agents in the array.
   Agent at index 0 has no dependencies. Agent at index 1 can depend on [0], etc.

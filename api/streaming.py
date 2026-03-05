@@ -305,7 +305,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             agent_results=agent_outputs,
             all_sources=all_sources,
             long_term_memory=long_term,
-            conversation_history=memory_mgr._turns.get(user_id, []),
+            conversation_history=memory_mgr._turns.get(conv_id, []),
         )
 
         composer_answer = ""
