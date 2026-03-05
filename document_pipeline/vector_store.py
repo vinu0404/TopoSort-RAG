@@ -80,13 +80,31 @@ class VectorStore:
         document: Dict[str, Any],
         chunks: List[Dict[str, Any]],
         embed_fn,
+        embed_batch_fn=None,
     ) -> None:
         
         collection_name = f"user_{user_id}_documents"
         doc_uuid = str(uuid.uuid4())
-        doc_embedding = await embed_fn(
-            f"{document['filename']}: {document.get('description', '')}"
-        )
+
+        # ── Collect ALL texts to embed in one batch ─────────────────────
+        doc_text = f"{document['filename']}: {document.get('description', '')}"
+        chunk_texts = [c["text"] for c in chunks]
+        all_texts = [doc_text, *chunk_texts]
+
+        # Single batch API call when possible, else fall back to gather
+        if embed_batch_fn and len(all_texts) > 1:
+            _BATCH_LIMIT = 100  # OpenAI max batch size
+            all_embeddings: List[List[float]] = []
+            for i in range(0, len(all_texts), _BATCH_LIMIT):
+                batch_embeddings = await embed_batch_fn(all_texts[i:i + _BATCH_LIMIT])
+                all_embeddings.extend(batch_embeddings)
+        else:
+            all_embeddings = await asyncio.gather(
+                *[embed_fn(t) for t in all_texts]
+            )
+
+        doc_embedding = all_embeddings[0]
+        chunk_embeddings = all_embeddings[1:]
 
         doc_point = PointStruct(
             id=doc_uuid,
@@ -103,25 +121,19 @@ class VectorStore:
         )
 
         chunk_points = []
-        _EMBED_BATCH = 15
-        for i in range(0, len(chunks), _EMBED_BATCH):
-            batch = chunks[i:i + _EMBED_BATCH]
-            embeddings = await asyncio.gather(
-                *[embed_fn(c["text"]) for c in batch]
-            )
-            for chunk, embedding in zip(batch, embeddings):
-                cid = chunk.get("chunk_id", str(uuid.uuid4()))
-                chunk_points.append(
-                    PointStruct(
-                        id=cid,
-                        vector=embedding,
-                        payload={
-                            "type": "chunk",
-                            "text": chunk["text"],
-                            "metadata": chunk.get("metadata", {}),
-                        },
-                    )
+        for chunk, embedding in zip(chunks, chunk_embeddings):
+            cid = chunk.get("chunk_id", str(uuid.uuid4()))
+            chunk_points.append(
+                PointStruct(
+                    id=cid,
+                    vector=embedding,
+                    payload={
+                        "type": "chunk",
+                        "text": chunk["text"],
+                        "metadata": chunk.get("metadata", {}),
+                    },
                 )
+            )
 
         await self.client.upsert(
             collection_name=collection_name,

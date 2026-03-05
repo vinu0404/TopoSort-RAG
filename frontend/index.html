@@ -242,6 +242,22 @@
     margin-top: 8px;
     min-height: 18px;
   }
+  .upload-status .doc-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .upload-status .doc-status .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-pending     { background: #f0ad4e; }
+  .dot-processing  { background: #5bc0de; animation: pulse 1s infinite; }
+  .dot-ready       { background: #5cb85c; }
+  .dot-failed      { background: #d9534f; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
   /* ── Pipeline ──────────────────────────────────────────── */
   .pipeline-section {
@@ -640,8 +656,8 @@
   <aside class="sidebar">
     <h3>Upload</h3>
     <div class="upload-zone" id="uploadZone">
-      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json">
-      <p>Drop file or click</p>
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+      <p>Drop files or click</p>
     </div>
     <div class="upload-status" id="uploadStatus"></div>
 
@@ -1037,37 +1053,126 @@ queryInput.addEventListener('keydown', (e) => {
 uploadZone.addEventListener('dragover', (e) => e.preventDefault());
 uploadZone.addEventListener('drop', (e) => {
   e.preventDefault();
-  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+  if (fileInput.files.length) uploadFiles(fileInput.files);
 });
 
-async function uploadFile(file) {
+let _pendingDocIds = [];  // doc_ids being tracked for status
+let _docStatusSource = null;  // SSE EventSource for real-time updates
+
+async function uploadFiles(fileList) {
   if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
-  uploadStatus.textContent = `Uploading ${file.name}...`;
   const form = new FormData();
   form.append('user_id', currentUser.user_id);
-  form.append('file', file);
+  for (const f of fileList) form.append('files', f);
+
+  uploadStatus.innerHTML = `<div class="doc-status"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`;
+
   try {
     const r = await fetch(`${API}/documents/upload`, {
       method: 'POST',
       headers: authHeaders(),
       body: form,
     });
+    if (r.status === 401) { doLogout(); return; }
     const data = await r.json();
-    if (r.ok) {
-      uploadStatus.textContent = `Uploaded: ${file.name}`;
-      addSystemMessage(`Document uploaded`);
-    } else if (r.status === 401) {
-      doLogout();
-    } else {
-      uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`;
-    }
+    if (!r.ok) { uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`; return; }
+
+    // Render initial per-file status rows
+    const docs = data.documents || [];
+    _pendingDocIds = docs.map(d => d.doc_id);
+    renderDocStatuses(docs);
+    addSystemMessage(`${docs.length} file(s) queued for processing`);
+
+    // Open SSE stream for real-time status updates
+    startDocStatusSSE();
   } catch (err) {
     uploadStatus.textContent = `Error: ${err.message}`;
   }
   fileInput.value = '';
+}
+
+function renderDocStatuses(docs) {
+  uploadStatus.innerHTML = docs.map(d =>
+    `<div class="doc-status" data-docid="${d.doc_id}">` +
+    `<span class="dot dot-${d.processing_status || d.status}"></span>` +
+    `<span>${d.filename} — ${d.processing_status || d.status}</span>` +
+    `</div>`
+  ).join('');
+}
+
+function startDocStatusSSE() {
+  // Close any existing connection
+  if (_docStatusSource) { _docStatusSource.close(); _docStatusSource = null; }
+  if (!currentUser || !_pendingDocIds.length) return;
+
+  const token = currentUser.access_token;
+  // EventSource doesn't support headers, so we pass token as query param
+  // The SSE endpoint uses Depends(get_current_user_id) which reads Bearer header,
+  // so we use fetch-based SSE instead.
+  const ctrl = new AbortController();
+  _docStatusSource = ctrl;  // store reference for cleanup
+
+  (async function readSSE() {
+    try {
+      const res = await fetch(`${API}/documents/status/stream`, {
+        headers: { ...authHeaders(), 'Accept': 'text/event-stream' },
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();  // keep incomplete chunk
+
+        for (const part of parts) {
+          if (!part.trim() || part.startsWith(':')) continue;  // skip heartbeats
+          const dataMatch = part.match(/^data:\s*(.+)$/m);
+          if (!dataMatch) continue;
+          try {
+            const evt = JSON.parse(dataMatch[1]);
+            if (!_pendingDocIds.includes(evt.doc_id)) continue;
+
+            // Update the specific doc status row in the UI
+            const row = uploadStatus.querySelector(`[data-docid="${evt.doc_id}"]`);
+            if (row) {
+              const dot = row.querySelector('.dot');
+              dot.className = `dot dot-${evt.processing_status}`;
+              row.querySelector('span:last-child').textContent =
+                `${evt.filename} — ${evt.processing_status}`;
+            }
+
+            // Check if all done
+            if (evt.processing_status === 'ready' || evt.processing_status === 'failed') {
+              _pendingDocIds = _pendingDocIds.filter(id => id !== evt.doc_id);
+              if (evt.processing_status === 'ready') {
+                addSystemMessage(`${evt.filename} processed (${evt.total_chunks || '?'} chunks)`);
+              } else {
+                addSystemMessage(`${evt.filename} failed: ${evt.error || 'unknown error'}`);
+              }
+              if (!_pendingDocIds.length) {
+                ctrl.abort();
+                _docStatusSource = null;
+                return;
+              }
+            }
+          } catch (e) { /* skip malformed events */ }
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error('SSE doc status error:', e);
+    }
+  })();
 }
 
 // ── Messages ────────────────────────────────────────────────

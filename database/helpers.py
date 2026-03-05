@@ -224,6 +224,7 @@ async def save_document_record(
     description: str | None = None,
     total_chunks: int | None = None,
     qdrant_collection: str | None = None,
+    processing_status: str = "pending",
 ) -> None:
     """Persist document metadata to the ``documents`` table."""
     uid = _to_uuid(user_id)
@@ -238,9 +239,69 @@ async def save_document_record(
             description=description,
             total_chunks=total_chunks,
             qdrant_collection=qdrant_collection,
+            processing_status=processing_status,
         )
     )
     await session.flush()
+
+
+async def update_document_status(
+    session: AsyncSession,
+    doc_id: str,
+    status: str,
+    description: str | None = None,
+    total_chunks: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update document processing status in the DB."""
+    from sqlalchemy import update
+
+    did = _to_uuid(doc_id)
+    values: dict = {"processing_status": status}
+    if description is not None:
+        values["description"] = description
+    if total_chunks is not None:
+        values["total_chunks"] = total_chunks
+    if error_message is not None:
+        values["error_message"] = error_message
+
+    await session.execute(
+        update(Document).where(Document.doc_id == did).values(**values)
+    )
+    await session.flush()
+
+
+async def get_document_statuses(
+    session: AsyncSession,
+    user_id: str,
+    doc_ids: list[str] | None = None,
+) -> list[dict]:
+    """
+    Query document processing statuses from the DB.
+    If doc_ids is provided, filter to those; otherwise return all for the user.
+    """
+    from sqlalchemy import select
+
+    uid = _to_uuid(user_id)
+    stmt = select(Document).where(Document.user_id == uid)
+    if doc_ids:
+        uuid_ids = [_to_uuid(d) for d in doc_ids]
+        stmt = stmt.where(Document.doc_id.in_(uuid_ids))
+    stmt = stmt.order_by(Document.uploaded_at.desc())
+
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    return [
+        {
+            "doc_id": str(r.doc_id),
+            "filename": r.filename,
+            "processing_status": r.processing_status,
+            "description": r.description,
+            "total_chunks": r.total_chunks,
+            "error_message": r.error_message,
+        }
+        for r in rows
+    ]
 
 
 async def load_conversation_messages(

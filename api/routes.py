@@ -5,10 +5,12 @@ REST API routes (non-streaming).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import db_session, get_current_user_id
@@ -28,8 +30,12 @@ from database.helpers import (
     get_or_create_conversation,
     resolve_hitl_request,
     save_document_record,
+    update_document_status,
+    get_document_statuses,
 )
+from database.session import async_session_factory
 from document_pipeline.document_processor import process_document
+from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
 
@@ -152,36 +158,116 @@ async def handle_query(
 
 
 @router.post("/documents/upload")
-async def upload_document(
+async def upload_documents(
     user_id: str = Form(...),
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
-    """Upload and index a document."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+    """
+    Accept one or more files.  Creates a DB record for each with
+    status='pending', enqueues a Celery task per file, and returns
+    immediately so the client is not blocked.
+    """
+    import uuid as _uuid
+
     user_id = auth_user_id
     await ensure_user_exists(session, user_id)
 
-    file_bytes = await file.read()
-    result = await process_document(
-        user_id=user_id,
-        file_path=file.filename,
-        file_bytes=file_bytes,
-    )
-    await save_document_record(
-        session,
-        user_id=user_id,
-        doc_id=result["doc_id"],
-        filename=result["filename"],
-        doc_type=result.get("doc_type"),
-        description=result.get("description"),
-        total_chunks=result.get("total_chunks"),
-        qdrant_collection=f"user_{user_id}_documents",
-    )
+    accepted: List[Dict[str, str]] = []
 
-    return result
+    for f in files:
+        if not f.filename:
+            continue
+        doc_id = str(_uuid.uuid4())
+        file_bytes = await f.read()
+
+        # Persist a 'pending' record in the DB
+        await save_document_record(
+            session,
+            user_id=user_id,
+            doc_id=doc_id,
+            filename=f.filename,
+            qdrant_collection=f"user_{user_id}_documents",
+            processing_status="pending",
+        )
+        await session.commit()
+
+        # Enqueue Celery task (file bytes sent as hex for JSON serialisation)
+        process_document_task.delay(
+            user_id=user_id,
+            doc_id=doc_id,
+            filename=f.filename,
+            file_bytes_hex=file_bytes.hex(),
+        )
+
+        accepted.append({"doc_id": doc_id, "filename": f.filename, "status": "pending"})
+
+    if not accepted:
+        raise HTTPException(status_code=400, detail="No valid files provided")
+
+    return {"documents": accepted}
+
+
+@router.get("/documents/status")
+async def document_status(
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Return processing status for all of this user's documents."""
+    docs = await get_document_statuses(session, auth_user_id)
+    return {"documents": docs}
+
+
+@router.get("/documents/status/stream")
+async def document_status_stream(
+    request: Request,
+    auth_user_id: str = Depends(get_current_user_id),
+):
+    """
+    SSE endpoint that pushes real-time document processing status.
+
+    Subscribes to the Redis Pub/Sub channel ``doc_status:{user_id}``
+    and forwards events to the client as SSE.  The connection stays
+    open until the client disconnects.
+    """
+    import redis.asyncio as aioredis
+
+    channel_name = f"doc_status:{auth_user_id}"
+
+    async def _event_stream():
+        r = aioredis.from_url(config.redis_url, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(channel_name)
+
+        try:
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0,
+                )
+                if msg and msg["type"] == "message":
+                    yield f"event: doc_status\ndata: {msg['data']}\n\n"
+                else:
+                    # Send keepalive comment every ~1s to detect disconnects
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(1)
+        finally:
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()
+            await r.close()
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/health")
