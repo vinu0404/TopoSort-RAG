@@ -35,8 +35,6 @@ from database.helpers import (
     update_document_status,
     get_document_statuses,
 )
-from database.session import async_session_factory
-from document_pipeline.document_processor import process_document
 from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
@@ -70,7 +68,6 @@ async def handle_query(
         title=request.query[:120],
         conversation_id=request.conversation_id,
     )
-    # Commit parent records so background tasks (new sessions) can reference them
     await session.commit()
     master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
     memory_mgr = MemoryManager(llm_provider=master_llm)
@@ -196,7 +193,7 @@ async def upload_documents(
         )
         await session.commit()
 
-        # Enqueue Celery task (file bytes sent as hex for JSON serialisation)
+        # Enqueue Celery task to process the document asynchronously
         process_document_task.delay(
             user_id=user_id,
             doc_id=doc_id,
@@ -255,9 +252,9 @@ async def document_status_stream(
                 if msg and msg["type"] == "message":
                     yield f"event: doc_status\ndata: {msg['data']}\n\n"
                 else:
-                    # Send keepalive comment every ~1s to detect disconnects
+                    # Send keepalive comment every ~2s to detect disconnects
                     yield ": heartbeat\n\n"
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
         finally:
             await pubsub.unsubscribe(channel_name)
             await pubsub.close()
@@ -332,6 +329,18 @@ async def get_conversation_messages(
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
-    """Load all messages for a specific conversation."""
+    """Load all messages for a specific conversation owned by the authenticated user."""
+    from database.models import Conversation
+    from sqlalchemy import select as sa_select
+
+    conv = (await session.execute(
+        sa_select(Conversation).where(
+            Conversation.conversation_id == conversation_id,
+            Conversation.user_id == auth_user_id,
+        )
+    )).scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
     messages = await load_conversation_messages_full(session, conversation_id)
     return {"conversation_id": conversation_id, "messages": messages}

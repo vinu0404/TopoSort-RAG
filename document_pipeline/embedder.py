@@ -17,7 +17,7 @@ def get_embedding_model() -> "EmbeddingModel":
 
 
 class EmbeddingModel:
-    MAX_TOKENS = 8191  # text-embedding-3-small / ada-002 limit
+    MAX_TOKENS = 8191 
 
     def __init__(self):
         from openai import AsyncOpenAI

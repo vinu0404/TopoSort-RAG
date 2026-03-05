@@ -326,22 +326,15 @@ class VectorStore:
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         """
-        Dense search restricted to type="chunk".  Optionally scoped to
-        a set of *doc_ids* (two-level stage-2).
+        Stage-2 search: find relevant chunks within specific documents.
         """
         conditions: List[FieldCondition] = [
             FieldCondition(key="type", match=MatchValue(value="chunk"))
         ]
-        if doc_ids:
-            for did in doc_ids:
-                # Qdrant OR-semantics: use should for multi-value match
-                pass  # handled below
         if filters:
             extra = self._build_filter(filters)
             if extra and extra.must:
                 conditions.extend(extra.must)
-
-        # doc_id scoping: must match ANY of the given doc_ids
         if doc_ids:
             doc_id_conditions = [
                 FieldCondition(key="doc_id", match=MatchValue(value=did))

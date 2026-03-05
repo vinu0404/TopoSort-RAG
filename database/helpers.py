@@ -5,7 +5,6 @@ Database helper functions — ensure parent records exist and persist data.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -114,8 +113,6 @@ async def get_or_create_conversation(
             existing.updated_at = datetime.now(timezone.utc)
             await session.flush()
             return str(existing.conversation_id)
-        # conversation_id provided but not found — fall through to create
-
     cid = uuid.uuid4()
     session.add(
         Conversation(
@@ -147,7 +144,7 @@ async def close_user_sessions(
         .values(is_active=False, ended_at=now)
     )
     await session.flush()
-    return result.rowcount  # type: ignore[return-value]
+    return result.rowcount  
 
 
 async def list_user_conversations(
@@ -421,13 +418,6 @@ async def load_conversation_messages(
 ) -> list[dict[str, str]]:
     """
     Load the most recent messages for a conversation from PostgreSQL.
-
-    Returns pairs of user/assistant messages ordered chronologically,
-    capped at *limit* rows to bound token usage.
-
-    The secondary sort ensures *user* always precedes *assistant*
-    within the same timestamp (covers legacy rows written before the
-    1-µs offset was added to ``save_messages``).
     """
     from sqlalchemy import case
 
@@ -435,7 +425,7 @@ async def load_conversation_messages(
     role_order = case(
         (Message.role == "user", 0),
         (Message.role == "system", 1),
-        else_=2,  # assistant
+        else_=2,
     )
     result = await session.execute(
         select(Message)

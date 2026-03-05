@@ -8,6 +8,7 @@ import logging
 import sys
 
 import pathlib
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -37,35 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(
-        title="Multi-Agentic RAG System",
-        version="3.0.0",
-        description="Production multi-agent RAG with Connectors, HITL",
-    )
 
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    register_middleware(app)
-
-    # Routes
-    app.include_router(auth_router, prefix="/api/v1/auth")
-    app.include_router(connector_router, prefix="/api/v1/connectors")
-    app.include_router(api_router, prefix="/api/v1")
-    app.include_router(stream_router, prefix="/api/v1")
-
-    frontend_dir = pathlib.Path(__file__).resolve().parent / "frontend"
-    if frontend_dir.is_dir():
-        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
-
-    @app.on_event("startup")
-    async def on_startup():
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
         logger.info("Discovering tools…")
         registry = ToolRegistry()
         registry.auto_discover_tools()
@@ -88,6 +63,35 @@ def create_app() -> FastAPI:
             logger.info("HITL-protected tools: %s", hitl_tools)
 
         logger.info("Application ready to accept requests.")
+        yield
+
+    app = FastAPI(
+        title="Multi-Agentic RAG System",
+        version="3.0.0",
+        description="Production multi-agent RAG with Connectors, HITL",
+        lifespan=lifespan,
+    )
+
+    # CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    register_middleware(app)
+
+    # Routes
+    app.include_router(auth_router, prefix="/api/v1/auth")
+    app.include_router(connector_router, prefix="/api/v1/connectors")
+    app.include_router(api_router, prefix="/api/v1")
+    app.include_router(stream_router, prefix="/api/v1")
+
+    frontend_dir = pathlib.Path(__file__).resolve().parent / "frontend"
+    if frontend_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
     return app
 

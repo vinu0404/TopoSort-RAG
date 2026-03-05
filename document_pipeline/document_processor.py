@@ -39,7 +39,7 @@ Include:
 4. Scope: time ranges, geographic regions, departments, or projects mentioned.
 5. Key metrics, figures, or conclusions visible in the content.
 
-Use terms a user would naturally search for.  Keep it to 3-4 dense sentences.
+Use terms a user would naturally search for.  Keep it to 4-6 dense sentences.
 
 Filename: {filename}
 
@@ -62,8 +62,6 @@ async def process_document(
     """
 
     parsed = await parse_document(file_path, file_bytes)
-
-    # ── Run description + chunking in parallel (independent) ────────
     chunker = StructureAwareChunker(chunk_size=1024)
     description_task = generate_document_description(
         parsed["metadata"]["filename"],
@@ -89,8 +87,6 @@ async def process_document(
         "doc_type": parsed["metadata"]["doc_type"],
         "uploaded_at": parsed["metadata"]["uploaded_at"],
     }
-
-    # Pass both embed and embed_batch — store uses batch for speed
     await store.add_document(
         user_id=user_id,
         document=doc_record,

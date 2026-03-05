@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-# Ensure the project root is on sys.path so "tasks", "config", etc. are importable
 _project_root = str(Path(__file__).resolve().parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -29,32 +27,20 @@ celery = Celery(
 )
 
 celery.conf.update(
-    # ── Serialisation ────────────────────────────────────────────────────
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-
-    # ── Reliability ──────────────────────────────────────────────────────
-    task_acks_late=True,                  # ack only after task completes
-    worker_prefetch_multiplier=1,         # one task at a time per worker
-    task_reject_on_worker_lost=True,      # re-queue if worker crashes
-
-    # ── Result expiry ────────────────────────────────────────────────────
-    result_expires=3600,                  # discard results after 1 hour
-
-    # ── Time limits ──────────────────────────────────────────────────────
-    task_soft_time_limit=300,             # 5 min soft limit
-    task_time_limit=360,                  # 6 min hard kill
-
-    # ── Retry defaults ───────────────────────────────────────────────────
+    task_acks_late=True,                 
+    worker_prefetch_multiplier=1,        
+    task_reject_on_worker_lost=True,     
+    result_expires=3600,                 
+    task_soft_time_limit=300,           
+    task_time_limit=360,                  
     task_default_retry_delay=10,
     task_max_retries=3,
-
-    # ── Worker ───────────────────────────────────────────────────────────
-    worker_concurrency=4,                 # parallel tasks per worker
+    worker_concurrency=4,                 
 )
 
-# Explicitly include task modules instead of autodiscover
 celery.conf.update(
     include=["tasks.document_tasks"],
 )

@@ -23,8 +23,6 @@ from config.settings import config
 
 logger = logging.getLogger(__name__)
 
-# ── Shared Redis connection for Pub/Sub publishing ───────────────────────
-
 _redis_client: redis.Redis | None = None
 
 
@@ -42,26 +40,24 @@ def _publish_status(user_id: str, doc_id: str, status: str, **extra: Any) -> Non
     _get_redis().publish(channel, json.dumps(payload))
 
 
-# ── The Celery task ──────────────────────────────────────────────────────
-
 @celery.task(
     bind=True,
     name="tasks.process_document",
     autoretry_for=(Exception,),
     dont_autoretry_for=(SoftTimeLimitExceeded, ValueError),
     max_retries=3,
-    retry_backoff=True,          # exponential: 10s, 20s, 40s
-    retry_backoff_max=120,       # cap at 2 min
-    retry_jitter=True,           # randomise to avoid thundering herd
+    retry_backoff=True,         
+    retry_backoff_max=120,      
+    retry_jitter=True,           
     acks_late=True,
-    rate_limit="20/m",           # max 20 docs/min per worker (rate-limit embedding API)
+    rate_limit="20/m",         
 )
 def process_document_task(
     self: Task,
     user_id: str,
     doc_id: str,
     filename: str,
-    file_bytes_hex: str,         # bytes serialised as hex for JSON safety
+    file_bytes_hex: str,        
 ) -> Dict[str, Any]:
     """
     Celery task entry point.  Bridges sync → async via asyncio.run().
@@ -102,7 +98,6 @@ async def _process_document_async(
 
     async with _session_factory() as session:
         try:
-            # ── Mark processing ──────────────────────────────────────────
             await update_document_status(session, doc_id, "processing")
             await session.commit()
             _publish_status(user_id, doc_id, "processing", filename=filename)
@@ -112,8 +107,6 @@ async def _process_document_async(
                 file_path=filename,
                 file_bytes=file_bytes,
             )
-
-            # ── Mark ready ───────────────────────────────────────────────
             await update_document_status(
                 session,
                 doc_id=doc_id,
@@ -157,7 +150,6 @@ async def _process_document_async(
             logger.exception("Document processing failed for %s (attempt %d/%d)",
                              doc_id, task.request.retries + 1, task.max_retries + 1)
 
-            # Only mark as 'failed' on the final retry
             if task.request.retries >= task.max_retries:
                 try:
                     await session.rollback()
@@ -173,7 +165,6 @@ async def _process_document_async(
                 except Exception:
                     logger.exception("Failed to persist error for doc %s", doc_id)
             else:
-                # Still retrying — revert to pending so UI shows correct state
                 try:
                     await session.rollback()
                     await update_document_status(session, doc_id, "pending")
@@ -184,9 +175,9 @@ async def _process_document_async(
                         retry=task.request.retries + 1,
                     )
                 except Exception:
-                    pass
+                    logger.exception("Failed to persist retry for doc %s", doc_id)
 
-            raise  # Celery will auto-retry
+            raise 
 
         finally:
             await _engine.dispose()

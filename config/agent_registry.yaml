@@ -7,14 +7,9 @@ agents:
       - question_answering
       - two_level_retrieval
     tools:
-      - vector_search
-      - bm25_search
-      - hybrid_search
       - two_level_search
-      - rerank_chunks
     typical_use_cases:
       - "Find information in uploaded documents"
-      - "two-level search for better results on complex queries"
       - "Answer questions based on user's files"
       - "Search company knowledge base"
     default_timeout: 30
