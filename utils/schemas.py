@@ -285,8 +285,8 @@ class ComposerOutput(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str
-    user_id: str = Field(..., description="User ID for memory and document access")
     session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
 
 
 class MasterAgentInput(BaseModel):

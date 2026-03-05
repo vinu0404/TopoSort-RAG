@@ -44,7 +44,7 @@ class WebSearchAgent(BaseAgent):
                 conversation_history=task_config.conversation_history,
             )
 
-            strategy: str = await self.llm.generate(
+            strategy_result = await self.llm.generate(
                 prompt=strategy_prompt,
                 temperature=config.web_temperature,
                 model=config.web_model,
@@ -55,14 +55,11 @@ class WebSearchAgent(BaseAgent):
                     "reasoning": "string",
                 },
             )
-            if isinstance(strategy, dict):
-                search_query = strategy.get("search_query", task_config.task)
-                search_type = strategy.get("search_type", "basic")
-                should_follow_up = strategy.get("follow_up_urls", False)
-            else:
-                search_query = str(strategy).strip().strip('"')
-                search_type = "basic"
-                should_follow_up = True
+            tokens_used = strategy_result.usage.get("total_tokens", 0)
+            strategy = strategy_result.data or {}
+            search_query = strategy.get("search_query", task_config.task)
+            search_type = strategy.get("search_type", "basic")
+            should_follow_up = strategy.get("follow_up_urls", False)
             if search_type == "news" and search_news:
                 search_result = await search_news(query=search_query, num_results=7)
             elif search_type == "deep" and search_deep:
@@ -93,11 +90,13 @@ class WebSearchAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
             )
-            final_answer: str = await self.llm.generate(
+            synthesis_result = await self.llm.generate(
                 prompt=synthesis_prompt,
                 temperature=config.web_temperature,
                 model=config.web_model,
             )
+            final_answer = synthesis_result.text
+            tokens_used += synthesis_result.usage.get("total_tokens", 0)
 
             sources = [
                 {
@@ -130,6 +129,7 @@ class WebSearchAgent(BaseAgent):
                 confidence_score=confidence,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
                     "api_calls_made": 1 + len(fetched_contents) + 1, 
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),

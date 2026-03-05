@@ -91,22 +91,17 @@ class MemoryExtractor:
         prompt = _EXTRACTION_PROMPT.format(query=query, current_memory=mem_str)
 
         try:
-            raw = await self.llm.generate(
+            result = await self.llm.generate(
                 prompt=prompt,
                 temperature=0.1,  
                 model=config.master_model,
                 max_tokens=512,    
             )
 
-            if isinstance(raw, str):
-                cleaned = raw.strip()
-                if cleaned.startswith("```"):
-                    cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-                parsed = json.loads(cleaned)
-            elif isinstance(raw, dict):
-                parsed = raw
-            else:
-                return None
+            text = result.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+            parsed = json.loads(text)
 
             if not parsed.get("found", False):
                 return None

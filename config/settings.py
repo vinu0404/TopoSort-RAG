@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     rag_model_provider: str = "openai"
     rag_model: str = "gpt-4o-mini"
     rag_temperature: float = 0.1
+    rag_use_llm_reranking: bool = True
+    rag_description_top_k: int = 5
+    rag_description_score_threshold: float = 0.4
     code_model_provider: str = "openai"
     code_model: str = "gpt-4o"
     code_temperature: float = 0.2
@@ -75,6 +78,11 @@ class Settings(BaseSettings):
     hitl_poll_interval: float = 5   # seconds between DB polls
     hitl_classifier_provider: str = "openai"   # model for classify enhance vs override
     hitl_classifier_model: str = "gpt-4o-mini"
+
+    # ── Redis / Celery ─────────────────────────────────────────────────────────────
+    redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
 
     model_config = {
         "env_file": ".env",

@@ -8,6 +8,7 @@ import logging
 import sys
 
 import pathlib
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -37,10 +38,38 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        logger.info("Discovering tools…")
+        registry = ToolRegistry()
+        registry.auto_discover_tools()
+
+        logger.info("Validating tool ↔ agent bindings…")
+        agents = build_agent_instances(registry)
+        validate_tools_for_agents(agents, registry)
+
+        # Discover OAuth connectors
+        connector_registry = ConnectorRegistry()
+        connector_registry.discover()
+
+        # Clean up orphaned HITL requests from previous server instances
+        expired = await expire_stale_hitl_requests()
+        if expired:
+            logger.info("Cleaned up %d stale HITL requests from previous run", expired)
+
+        hitl_tools = registry.get_hitl_tools_for_agent_task(registry.list_tools())
+        if hitl_tools:
+            logger.info("HITL-protected tools: %s", hitl_tools)
+
+        logger.info("Application ready to accept requests.")
+        yield
+
     app = FastAPI(
         title="Multi-Agentic RAG System",
         version="3.0.0",
         description="Production multi-agent RAG with Connectors, HITL",
+        lifespan=lifespan,
     )
 
     # CORS
@@ -64,41 +93,18 @@ def create_app() -> FastAPI:
     if frontend_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
-    @app.on_event("startup")
-    async def on_startup():
-        logger.info("Discovering tools…")
-        registry = ToolRegistry()
-        registry.auto_discover_tools()
-
-        logger.info("Validating tool ↔ agent bindings…")
-        agents = build_agent_instances(registry)
-        validate_tools_for_agents(agents, registry)
-
-        # Discover OAuth connectors
-        connector_registry = ConnectorRegistry()
-        connector_registry.discover()
-
-        # Clean up orphaned HITL requests from previous server instances
-        expired = await expire_stale_hitl_requests()
-        if expired:
-            logger.info("Cleaned up %d stale HITL requests from previous run", expired)
-
-        hitl_tools = registry.get_hitl_tools_for_agent_task(registry.list_tools())
-        if hitl_tools:
-            logger.info("HITL-protected tools: %s", hitl_tools)
-
-        logger.info("Application ready to accept requests.")
-
     return app
 
 
 app = create_app()
 
 if __name__ == "__main__":
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
     uvicorn.run(
         "main:app",
         host=config.host,
         port=config.port,
         reload=config.debug,
+        reload_excludes=["**/__pycache__/**", "**/*.pyc", "**/*.pyo"] if config.debug else None,
         log_level="debug" if config.debug else "info",
     )

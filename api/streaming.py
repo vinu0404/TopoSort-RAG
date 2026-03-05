@@ -62,11 +62,10 @@ router = APIRouter(tags=["streaming"])
 async def stream_query(
     request: QueryRequest,
     session: AsyncSession = Depends(db_session),
-    auth_user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id),
 ):
-    request.user_id = auth_user_id
     return StreamingResponse(
-        _stream_events(request, session),
+        _stream_events(request, session, user_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -185,7 +184,7 @@ def _make_hitl_callback(
 # ── SSE stream generator ───────────────────────────────────────────────
 
 
-async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncIterator[str]:
+async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: str) -> AsyncIterator[str]:
     """
     Full pipeline:  plan (|| memory extraction) → orchestrate → compose (streamed).
 
@@ -194,13 +193,14 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
     responds via ``POST /hitl/respond``.
     """
     start_time = time.perf_counter()
-    user_id = request.user_id
 
     try:
         await ensure_user_exists(session, user_id)
         sess_id = await ensure_session_exists(session, user_id, request.session_id)
         conv_id = await get_or_create_conversation(
-            session, user_id, sess_id, title=request.query[:120],
+            session, user_id, sess_id,
+            title=request.query[:120],
+            conversation_id=request.conversation_id,
         )
         await session.commit()
         yield _sse_event("status", {"phase": "planning"})
@@ -319,9 +319,17 @@ async def _stream_events(request: QueryRequest, session: AsyncSession) -> AsyncI
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
         await bg_save_messages(conv_id, request.query, composer_answer, metadata)
         elapsed = time.perf_counter() - start_time
+        total_tokens = sum(
+            getattr(o, "resource_usage", {}).get("tokens_used", 0)
+            for o in results.values()
+            if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
+        )
         yield _sse_event("done", {
             "total_time": round(elapsed, 3),
+            "tokens_used": total_tokens,
             "answer_length": len(composer_answer),
+            "session_id": sess_id,
+            "conversation_id": conv_id,
         })
 
     except Exception as exc:

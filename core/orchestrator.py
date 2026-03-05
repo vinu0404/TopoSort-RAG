@@ -123,7 +123,12 @@ class Orchestrator:
                         error=str(result),
                     )
                 else:
-                    logger.info("[Orchestrator] Output from agent %s: %s", aid, result)
+                    logger.info(
+                        "[Orchestrator] Output from agent %s: task_done=%s error=%s data_keys=%s tokens=%s",
+                        aid, result.task_done, result.error,
+                        list(result.data.keys()) if isinstance(result.data, dict) else type(result.data).__name__,
+                        result.resource_usage.get("tokens_used", 0) if result.resource_usage else 0,
+                    )
                     self.shared_state[aid] = result
 
     # ── HITL-aware agent runner ─────────────────────────────────────────

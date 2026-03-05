@@ -5,7 +5,6 @@ Database helper functions — ensure parent records exist and persist data.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -91,23 +90,29 @@ async def get_or_create_conversation(
     user_id: str,
     session_id: str,
     title: str | None = None,
+    conversation_id: str | None = None,
 ) -> str:
-    """Return the latest ``conversation_id`` for a session, creating one if needed."""
+    """Return an existing or newly-created ``conversation_id``.
+
+    * If *conversation_id* is given, validate it exists and return it.
+    * Otherwise create a **new** conversation (supports "New Chat").
+    """
     uid = _to_uuid(user_id)
     sid = _to_uuid(session_id)
 
-    result = await session.execute(
-        select(Conversation)
-        .where(Conversation.session_id == sid, Conversation.user_id == uid)
-        .order_by(Conversation.created_at.desc())
-        .limit(1)
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        existing.updated_at = datetime.now(timezone.utc)
-        await session.flush()
-        return str(existing.conversation_id)
-
+    if conversation_id:
+        cid = _to_uuid(conversation_id)
+        result = await session.execute(
+            select(Conversation).where(
+                Conversation.conversation_id == cid,
+                Conversation.user_id == uid,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.updated_at = datetime.now(timezone.utc)
+            await session.flush()
+            return str(existing.conversation_id)
     cid = uuid.uuid4()
     session.add(
         Conversation(
@@ -119,6 +124,108 @@ async def get_or_create_conversation(
     )
     await session.flush()
     return str(cid)
+
+
+async def close_user_sessions(
+    session: AsyncSession,
+    user_id: str,
+) -> int:
+    """Mark all active sessions for *user_id* as inactive.
+
+    Returns the number of sessions closed.
+    """
+    from sqlalchemy import update
+
+    uid = _to_uuid(user_id)
+    now = datetime.now(timezone.utc)
+    result = await session.execute(
+        update(Session)
+        .where(Session.user_id == uid, Session.is_active.is_(True))
+        .values(is_active=False, ended_at=now)
+    )
+    await session.flush()
+    return result.rowcount  
+
+
+async def list_user_conversations(
+    session: AsyncSession,
+    user_id: str,
+    limit: int = 50,
+) -> list[dict]:
+    """Return recent conversations for a user (newest first).
+
+    Each dict contains ``conversation_id``, ``title``, ``created_at``,
+    ``updated_at``, and ``message_count``.
+    """
+    from sqlalchemy import func
+
+    uid = _to_uuid(user_id)
+    # Sub-query for message count
+    msg_count = (
+        select(func.count(Message.message_id))
+        .where(Message.conversation_id == Conversation.conversation_id)
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(
+            Conversation.conversation_id,
+            Conversation.title,
+            Conversation.created_at,
+            Conversation.updated_at,
+            msg_count.label("message_count"),
+        )
+        .where(Conversation.user_id == uid)
+        .order_by(Conversation.updated_at.desc())
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {
+            "conversation_id": str(r.conversation_id),
+            "title": r.title,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            "message_count": r.message_count or 0,
+        }
+        for r in rows
+    ]
+
+
+async def load_conversation_messages_full(
+    session: AsyncSession,
+    conversation_id: str,
+    limit: int = 100,
+) -> list[dict]:
+    """Load messages for a conversation (for frontend display), oldest first.
+
+    Unlike ``load_conversation_messages`` (used internally for LLM context),
+    this returns full metadata including ``message_id`` and ``created_at``.
+    """
+    from sqlalchemy import case
+
+    cid = _to_uuid(conversation_id)
+    role_order = case(
+        (Message.role == "user", 0),
+        (Message.role == "system", 1),
+        else_=2,
+    )
+    stmt = (
+        select(Message)
+        .where(Message.conversation_id == cid)
+        .order_by(Message.created_at.asc(), role_order)
+        .limit(limit)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {
+            "message_id": str(m.message_id),
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in rows.scalars()
+    ]
 
 
 async def save_messages(
@@ -224,6 +331,7 @@ async def save_document_record(
     description: str | None = None,
     total_chunks: int | None = None,
     qdrant_collection: str | None = None,
+    processing_status: str = "pending",
 ) -> None:
     """Persist document metadata to the ``documents`` table."""
     uid = _to_uuid(user_id)
@@ -238,9 +346,69 @@ async def save_document_record(
             description=description,
             total_chunks=total_chunks,
             qdrant_collection=qdrant_collection,
+            processing_status=processing_status,
         )
     )
     await session.flush()
+
+
+async def update_document_status(
+    session: AsyncSession,
+    doc_id: str,
+    status: str,
+    description: str | None = None,
+    total_chunks: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update document processing status in the DB."""
+    from sqlalchemy import update
+
+    did = _to_uuid(doc_id)
+    values: dict = {"processing_status": status}
+    if description is not None:
+        values["description"] = description
+    if total_chunks is not None:
+        values["total_chunks"] = total_chunks
+    if error_message is not None:
+        values["error_message"] = error_message
+
+    await session.execute(
+        update(Document).where(Document.doc_id == did).values(**values)
+    )
+    await session.flush()
+
+
+async def get_document_statuses(
+    session: AsyncSession,
+    user_id: str,
+    doc_ids: list[str] | None = None,
+) -> list[dict]:
+    """
+    Query document processing statuses from the DB.
+    If doc_ids is provided, filter to those; otherwise return all for the user.
+    """
+    from sqlalchemy import select
+
+    uid = _to_uuid(user_id)
+    stmt = select(Document).where(Document.user_id == uid)
+    if doc_ids:
+        uuid_ids = [_to_uuid(d) for d in doc_ids]
+        stmt = stmt.where(Document.doc_id.in_(uuid_ids))
+    stmt = stmt.order_by(Document.uploaded_at.desc())
+
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    return [
+        {
+            "doc_id": str(r.doc_id),
+            "filename": r.filename,
+            "processing_status": r.processing_status,
+            "description": r.description,
+            "total_chunks": r.total_chunks,
+            "error_message": r.error_message,
+        }
+        for r in rows
+    ]
 
 
 async def load_conversation_messages(
@@ -250,13 +418,6 @@ async def load_conversation_messages(
 ) -> list[dict[str, str]]:
     """
     Load the most recent messages for a conversation from PostgreSQL.
-
-    Returns pairs of user/assistant messages ordered chronologically,
-    capped at *limit* rows to bound token usage.
-
-    The secondary sort ensures *user* always precedes *assistant*
-    within the same timestamp (covers legacy rows written before the
-    1-µs offset was added to ``save_messages``).
     """
     from sqlalchemy import case
 
@@ -264,7 +425,7 @@ async def load_conversation_messages(
     role_order = case(
         (Message.role == "user", 0),
         (Message.role == "system", 1),
-        else_=2,  # assistant
+        else_=2,
     )
     result = await session.execute(
         select(Message)

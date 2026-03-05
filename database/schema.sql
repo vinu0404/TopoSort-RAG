@@ -75,10 +75,14 @@ CREATE TABLE IF NOT EXISTS documents (
     description     TEXT,
     total_chunks    INT,
     qdrant_collection VARCHAR(128),
+    processing_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | processing | ready | failed
+    error_message   TEXT,
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_user   ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(user_id, processing_status);
 
 -- Conversation summaries (for memory) ────────────────────────────────────────
 

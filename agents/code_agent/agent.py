@@ -36,11 +36,13 @@ class CodeAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
             )
-            code: str = await self.llm.generate(
+            code_result = await self.llm.generate(
                 prompt=prompt,
                 temperature=config.code_temperature,
                 model=config.code_model,
             )
+            code = code_result.text
+            tokens_used = code_result.usage.get("total_tokens", 0)
             if code.startswith("```"):
                 lines = code.split("\n")
                 code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
@@ -72,6 +74,7 @@ class CodeAgent(BaseAgent):
                 confidence_score=1.0 if result.get("exit_code") == 0 else 0.3,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
+                    "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
             )

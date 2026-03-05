@@ -1,6 +1,11 @@
 """
 RAG Agent – retrieves information from the user's document collection
-using hybrid search (dense + BM25) and LLM-based reranking.
+using a two-level retrieval pipeline:
+
+  Stage 1  →  description-level search → get relevant doc_ids
+  Stage 2  →  hybrid (dense ‖ BM25) within matched docs → RRF merge
+  Optional →  LLM reranking (controlled by config.rag_use_llm_reranking)
+  Final    →  LLM synthesis with citations
 """
 
 from __future__ import annotations
@@ -24,35 +29,48 @@ class RAGAgent(BaseAgent):
         self.prompts = RAGPrompts()
 
     def get_required_tools(self) -> List[str]:
-        return ["vector_search", "hybrid_search", "rerank_chunks"]
+        return ["two_level_search", "rerank_chunks"]
 
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start_time = time.perf_counter()
         tokens_used = 0
         chunks: List[Dict[str, Any]] = []
-        logger.info(f"[RAGAgent] Input: {task_config}")
+        logger.info("[RAGAgent] Input: agent_id=%s task=%s tools=%s", task_config.agent_id, task_config.task[:150], task_config.tools)
         try:
-            hybrid_search = self.get_tool("hybrid_search")
+            two_level_search = self.get_tool("two_level_search")
             rerank = self.get_tool("rerank_chunks")
 
             original_query = task_config.task
             entities = task_config.entities
             dependency_outputs = task_config.dependency_outputs
             user_id = task_config.metadata.get("user_id", "default")
-            enhanced_query = await self._expand_query(original_query, entities, dependency_outputs)
-            tokens_used += 100  
+            enhanced_query, expand_tokens = await self._expand_query(original_query, entities, dependency_outputs)
+            tokens_used += expand_tokens
             
             logger.info(f"[RAGAgent] Original query: {original_query}")
             logger.info(f"[RAGAgent] Enhanced query: {enhanced_query}")
             filters = self._build_filters(entities)
-            chunks = await hybrid_search(
+
+            # ── Two-level retrieval ─────────────────────────────────────
+            search_result = await two_level_search(
                 query=enhanced_query,
                 user_id=user_id,
                 filters=filters,
                 top_k=20,
             )
+            chunks = search_result["chunks"]
+            matched_documents = search_result.get("matched_documents", [])
 
-            reranked_chunks = await rerank(query=enhanced_query, chunks=chunks, top_k=8)
+            logger.info(
+                "[RAGAgent] Two-level search: %d matched docs, %d chunks",
+                len(matched_documents),
+                len(chunks),
+            )
+
+            # ── Rerank (skipped when config.rag_use_llm_reranking=False) ─
+            reranked_chunks, rerank_tokens = await rerank(query=enhanced_query, chunks=chunks, top_k=8)
+            tokens_used += rerank_tokens
+
             sources = self._extract_sources(reranked_chunks)
             conversation_context = task_config.conversation_history
             
@@ -63,15 +81,22 @@ class RAGAgent(BaseAgent):
                 long_term_memory=task_config.long_term_memory,
             )
             
-            final_answer = await self.llm.generate(
+            synthesis_result = await self.llm.generate(
                 prompt=synthesis_prompt,
-                temperature=config.rag_temperature if hasattr(config, 'rag_temperature') else 0.3,
+                temperature=config.rag_temperature,
                 model=config.rag_model,
             )
-            tokens_used += 500 
+            final_answer = synthesis_result.text
+            tokens_used += synthesis_result.usage.get("total_tokens", 0)
             
             logger.info(f"[RAGAgent] Generated answer: {final_answer[:200]}...")
-            
+
+            # Count API calls dynamically
+            api_calls = 2  # query_expansion + synthesis (always)
+            api_calls += 1  # two_level_search (stage-1 + stage-2 internally)
+            if config.rag_use_llm_reranking:
+                api_calls += 1
+
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
@@ -82,22 +107,39 @@ class RAGAgent(BaseAgent):
                     "answer": final_answer,  
                     "chunks": reranked_chunks,
                     "sources": sources,
-                    "query": original_query
+                    "query": original_query,
+                    "matched_documents": matched_documents,
                 },
                 confidence_score=self._calculate_confidence(reranked_chunks),
                 execution_metadata={"attempt_number": 1, "warnings": []},
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start_time) * 1000),
                     "tokens_used": tokens_used,
-                    "api_calls_made": 4,  # hybrid_search + rerank + query_expansion + synthesis
+                    "api_calls_made": api_calls,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
-                metadata={"sources": sources, "model_used": config.rag_model},
+                metadata={
+                    "sources": sources,
+                    "model_used": config.rag_model,
+                    "llm_reranking": config.rag_use_llm_reranking,
+                },
             )
 
         except asyncio.TimeoutError:
             logger.warning(f"[RAGAgent] Timeout for input: {task_config}")
-            return self._create_partial_response(task_config, chunks)
+            return AgentOutput(
+                agent_id=task_config.agent_id,
+                agent_name=self.agent_name,
+                task_description=task_config.task,
+                task_done=False,
+                result="Search timed out. Partial results may be available.",
+                data={"chunks": chunks, "partial": True},
+                confidence_score=self._calculate_confidence(chunks),
+                error="timeout",
+                execution_metadata={"attempt_number": 1, "warnings": ["Timed out during retrieval"]},
+                resource_usage={"time_taken_ms": int((time.perf_counter() - start_time) * 1000)},
+                depends_on=list(task_config.dependency_outputs.keys()),
+            )
 
         except Exception:
             logger.exception(f"[RAGAgent] Error for input: {task_config}")
@@ -107,7 +149,7 @@ class RAGAgent(BaseAgent):
 
 
 
-    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> str:
+    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> tuple[str, int]:
         """
         Expand the original query using LLM to generate a more comprehensive search query.
         
@@ -123,13 +165,13 @@ class RAGAgent(BaseAgent):
         try:
             prompt = self.prompts.query_expansion_prompt(query, entities, dependency_outputs)
             
-            response = await self.llm.generate(
+            result = await self.llm.generate(
                 prompt=prompt,
                 temperature=0.3,  
                 max_tokens=150,   
             )
-            
-            response_text = response.strip()
+            expand_usage = result.usage.get("total_tokens", 0)
+            response_text = result.text.strip()
             
             if "```json" in response_text:
                 response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -141,16 +183,16 @@ class RAGAgent(BaseAgent):
             
             if not enhanced_query or not enhanced_query.strip():
                 logger.warning(f"[RAGAgent] Query expansion returned empty, using original query")
-                return query
+                return query, expand_usage
                 
-            return enhanced_query
+            return enhanced_query, expand_usage
             
         except json.JSONDecodeError as e:
             logger.warning(f"[RAGAgent] Failed to parse query expansion JSON: {e}. Using original query.")
-            return query
+            return query, 0
         except Exception as e:
             logger.warning(f"[RAGAgent] Query expansion failed: {e}. Using original query.")
-            return query
+            return query, 0
 
 
 

@@ -108,6 +108,8 @@ class Document(Base):
     description = Column(Text)
     total_chunks = Column(Integer)
     qdrant_collection = Column(String(128))
+    processing_status = Column(String(16), nullable=False, default="pending")
+    error_message = Column(Text)
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="documents")

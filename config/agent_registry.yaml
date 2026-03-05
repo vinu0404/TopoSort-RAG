@@ -1,14 +1,13 @@
 agents:
   rag_agent:
-    description: "Retrieves information from user's document collection"
+    description: "Retrieves information from user's document collection using two-level search"
     capabilities:
       - document_search
       - semantic_retrieval
       - question_answering
+      - two_level_retrieval
     tools:
-      - vector_search
-      - hybrid_search
-      - rerank_chunks
+      - two_level_search
     typical_use_cases:
       - "Find information in uploaded documents"
       - "Answer questions based on user's files"

@@ -1,5 +1,5 @@
 """
-Tests for the tool registry — especially (Windows path handling).
+Tests for the tool registry.
 """
 
 import pytest

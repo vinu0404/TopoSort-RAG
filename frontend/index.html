@@ -146,6 +146,60 @@
   .conn-btn-inline:disabled { opacity: 0.45; cursor: default; }
   .conn-btn-inline:disabled:hover { background: #fff; border-color: #ccc; color: #333; }
 
+  /* ── Conversation sidebar ───────────────────────────────── */
+  .new-chat-btn {
+    width: 100%;
+    padding: 10px 14px;
+    background: #000;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    font-weight: 500;
+  }
+  .new-chat-btn:hover { opacity: 0.8; }
+  .conversations-section { margin-bottom: 20px; }
+  .conversations-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
+  .conv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .conv-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #333;
+    transition: background 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
+  .conv-item:hover {
+    background: #f5f5f5;
+  }
+  .conv-item.active {
+    background: #e8e8e8;
+    font-weight: 600;
+  }
+  .conv-item .conv-time {
+    display: block;
+    font-size: 0.65rem;
+    color: #999;
+    font-weight: 400;
+    margin-top: 2px;
+  }
+
   /* ── Header ────────────────────────────────────────────── */
   .header {
     display: flex;
@@ -242,6 +296,22 @@
     margin-top: 8px;
     min-height: 18px;
   }
+  .upload-status .doc-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .upload-status .doc-status .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-pending     { background: #f0ad4e; }
+  .dot-processing  { background: #5bc0de; animation: pulse 1s infinite; }
+  .dot-ready       { background: #5cb85c; }
+  .dot-failed      { background: #d9534f; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
   /* ── Pipeline ──────────────────────────────────────────── */
   .pipeline-section {
@@ -638,10 +708,19 @@
 <!-- ── Main ────────────────────────────────────────────────── -->
 <div class="container">
   <aside class="sidebar">
+    <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+
+    <div class="conversations-section">
+      <h3>Conversations</h3>
+      <div class="conv-list" id="convList">
+        <div style="color:#888;font-size:0.8em">No conversations yet</div>
+      </div>
+    </div>
+
     <h3>Upload</h3>
     <div class="upload-zone" id="uploadZone">
-      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json">
-      <p>Drop file or click</p>
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+      <p>Drop files or click</p>
     </div>
     <div class="upload-status" id="uploadStatus"></div>
 
@@ -701,6 +780,7 @@ const API = `${BASE}/api/v1`;
 
 let currentUser = null;
 let currentSessionId = null;
+let currentConversationId = null;
 let isProcessing = false;
 
 const authOverlay = document.getElementById('authOverlay');
@@ -817,20 +897,114 @@ function onLoginSuccess(data) {
   setStoredAuth(data);
   authOverlay.classList.add('hidden');
   userNameEl.textContent = data.display_name || 'User';
-  currentSessionId = null; // Let backend create new session
+  currentSessionId = null;
+  currentConversationId = null;
   loadConnections();
   loadAgents();
+  loadConversations();
 }
 
-function doLogout() {
+async function doLogout() {
+  // Call backend to close sessions
+  if (currentUser) {
+    try {
+      await fetch(`${API}/auth/logout`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+    } catch (e) { /* ignore — user is logging out regardless */ }
+  }
   currentUser = null;
   currentSessionId = null;
+  currentConversationId = null;
   clearStoredAuth();
   authOverlay.classList.remove('hidden');
   messagesEl.innerHTML = '';
   messagesEl.appendChild(welcomeEl);
   welcomeEl.style.display = '';
   document.getElementById('connList').innerHTML = '';
+  document.getElementById('convList').innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
+}
+
+// ─── Conversation Management ──────────────────────────────
+async function loadConversations() {
+  const convList = document.getElementById('convList');
+  if (!convList || !currentUser) return;
+  try {
+    const res = await fetch(`${API}/conversations`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const convos = data.conversations || [];
+    if (!convos.length) {
+      convList.innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
+      return;
+    }
+    convList.innerHTML = convos.map(c => {
+      const isActive = c.conversation_id === currentConversationId;
+      const title = c.title || 'Untitled';
+      const time = c.updated_at ? new Date(c.updated_at).toLocaleDateString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      return `<div class="conv-item${isActive ? ' active' : ''}" onclick="switchConversation('${c.conversation_id}')" title="${escapeHtml(title)}">
+        ${escapeHtml(title.length > 30 ? title.slice(0, 30) + '…' : title)}
+        <span class="conv-time">${time}</span>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('loadConversations error:', err);
+  }
+}
+
+async function switchConversation(conversationId) {
+  if (isProcessing) return;
+  currentConversationId = conversationId;
+
+  // Clear chat and show loading
+  messagesEl.innerHTML = '';
+  messagesEl.appendChild(welcomeEl);
+  welcomeEl.style.display = 'none';
+
+  // Highlight active conversation in sidebar
+  document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+  const activeEl = document.querySelector(`.conv-item[onclick*="${conversationId}"]`);
+  if (activeEl) activeEl.classList.add('active');
+
+  // Load messages from backend
+  try {
+    const res = await fetch(`${API}/conversations/${conversationId}/messages`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const msgs = data.messages || [];
+    if (!msgs.length) {
+      welcomeEl.style.display = '';
+      return;
+    }
+    for (const m of msgs) {
+      if (m.role === 'user') {
+        addUserMessage(m.content);
+      } else if (m.role === 'assistant') {
+        const el = createAssistantMessage();
+        appendToAssistant(el, m.content);
+      } else if (m.role === 'system') {
+        addSystemMessage(m.content);
+      }
+    }
+  } catch (err) {
+    console.error('switchConversation error:', err);
+    addSystemMessage('Failed to load conversation');
+  }
+}
+
+function newChat() {
+  if (isProcessing) return;
+  currentConversationId = null;
+  messagesEl.innerHTML = '';
+  messagesEl.appendChild(welcomeEl);
+  welcomeEl.style.display = '';
+  clearPipeline();
+  // Remove active state from sidebar
+  document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+  queryInput.focus();
 }
 
 // ─── Connections (OAuth) ──────────────────────────────
@@ -967,6 +1141,7 @@ window.addEventListener('message', (event) => {
     authOverlay.classList.add('hidden');
     userNameEl.textContent = stored.display_name || 'User';
     loadConnections();
+    loadConversations();
   }
 })();
 
@@ -1037,37 +1212,125 @@ queryInput.addEventListener('keydown', (e) => {
 uploadZone.addEventListener('dragover', (e) => e.preventDefault());
 uploadZone.addEventListener('drop', (e) => {
   e.preventDefault();
-  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
 });
 fileInput.addEventListener('change', () => {
-  if (fileInput.files.length) uploadFile(fileInput.files[0]);
+  if (fileInput.files.length) uploadFiles(fileInput.files);
 });
 
-async function uploadFile(file) {
+let _pendingDocIds = [];  // doc_ids being tracked for status
+let _docStatusSource = null;  // SSE EventSource for real-time updates
+
+async function uploadFiles(fileList) {
   if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
-  uploadStatus.textContent = `Uploading ${file.name}...`;
   const form = new FormData();
-  form.append('user_id', currentUser.user_id);
-  form.append('file', file);
+  for (const f of fileList) form.append('files', f);
+
+  uploadStatus.innerHTML = `<div class="doc-status"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`;
+
   try {
     const r = await fetch(`${API}/documents/upload`, {
       method: 'POST',
       headers: authHeaders(),
       body: form,
     });
+    if (r.status === 401) { doLogout(); return; }
     const data = await r.json();
-    if (r.ok) {
-      uploadStatus.textContent = `Uploaded: ${file.name}`;
-      addSystemMessage(`Document uploaded`);
-    } else if (r.status === 401) {
-      doLogout();
-    } else {
-      uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`;
-    }
+    if (!r.ok) { uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`; return; }
+
+    // Render initial per-file status rows
+    const docs = data.documents || [];
+    _pendingDocIds = docs.map(d => d.doc_id);
+    renderDocStatuses(docs);
+    addSystemMessage(`${docs.length} file(s) queued for processing`);
+
+    // Open SSE stream for real-time status updates
+    startDocStatusSSE();
   } catch (err) {
     uploadStatus.textContent = `Error: ${err.message}`;
   }
   fileInput.value = '';
+}
+
+function renderDocStatuses(docs) {
+  uploadStatus.innerHTML = docs.map(d =>
+    `<div class="doc-status" data-docid="${d.doc_id}">` +
+    `<span class="dot dot-${d.processing_status || d.status}"></span>` +
+    `<span>${d.filename} — ${d.processing_status || d.status}</span>` +
+    `</div>`
+  ).join('');
+}
+
+function startDocStatusSSE() {
+  // Close any existing connection
+  if (_docStatusSource) { _docStatusSource.close(); _docStatusSource = null; }
+  if (!currentUser || !_pendingDocIds.length) return;
+
+  const token = currentUser.access_token;
+  // EventSource doesn't support headers, so we pass token as query param
+  // The SSE endpoint uses Depends(get_current_user_id) which reads Bearer header,
+  // so we use fetch-based SSE instead.
+  const ctrl = new AbortController();
+  _docStatusSource = ctrl;  // store reference for cleanup
+
+  (async function readSSE() {
+    try {
+      const res = await fetch(`${API}/documents/status/stream`, {
+        headers: { ...authHeaders(), 'Accept': 'text/event-stream' },
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();  // keep incomplete chunk
+
+        for (const part of parts) {
+          if (!part.trim() || part.startsWith(':')) continue;  // skip heartbeats
+          const dataMatch = part.match(/^data:\s*(.+)$/m);
+          if (!dataMatch) continue;
+          try {
+            const evt = JSON.parse(dataMatch[1]);
+            if (!_pendingDocIds.includes(evt.doc_id)) continue;
+
+            // Update the specific doc status row in the UI
+            const row = uploadStatus.querySelector(`[data-docid="${evt.doc_id}"]`);
+            if (row) {
+              const dot = row.querySelector('.dot');
+              dot.className = `dot dot-${evt.processing_status}`;
+              row.querySelector('span:last-child').textContent =
+                `${evt.filename} — ${evt.processing_status}`;
+            }
+
+            // Check if all done
+            if (evt.processing_status === 'ready' || evt.processing_status === 'failed') {
+              _pendingDocIds = _pendingDocIds.filter(id => id !== evt.doc_id);
+              if (evt.processing_status === 'ready') {
+                addSystemMessage(`${evt.filename} processed (${evt.total_chunks || '?'} chunks)`);
+              } else {
+                addSystemMessage(`${evt.filename} failed: ${evt.error || 'unknown error'}`);
+              }
+              if (!_pendingDocIds.length) {
+                ctrl.abort();
+                _docStatusSource = null;
+                return;
+              }
+            }
+          } catch (e) { /* skip malformed events */ }
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error('SSE doc status error:', e);
+    }
+  })();
 }
 
 // ── Messages ────────────────────────────────────────────────
@@ -1195,8 +1458,8 @@ async function sendStreaming(query) {
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ 
         query, 
-        user_id: currentUser.user_id,
-        session_id: currentSessionId
+        session_id: currentSessionId,
+        conversation_id: currentConversationId
       }),
     });
 
@@ -1280,6 +1543,11 @@ async function sendStreaming(query) {
       case 'done':
         typingInd.classList.remove('visible');
         if (msgEl) finalizeAssistant(msgEl, sources);
+        // Capture session/conversation IDs from backend
+        if (data.session_id) currentSessionId = data.session_id;
+        if (data.conversation_id) currentConversationId = data.conversation_id;
+        // Refresh conversation list in sidebar
+        loadConversations();
         break;
 
       case 'error':
