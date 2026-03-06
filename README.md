@@ -18,6 +18,8 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 ### Backend:
 - http://localhost:8000/docs#/
 ![Backend Screenshot](images/backend.png)
+![Backend Screenshot](images/backend_2.png)
+![Backend Screenshot](images/backend_3.png)
 
 ---
 
@@ -105,6 +107,9 @@ In a **separate terminal** (with the venv activated):
 ```bash
 # Windows (solo pool required)
 python -m celery -A celery_app worker --loglevel=info --pool=solo
+ OR 
+python -m celery -A celery_app worker --pool=threads --concurrency=4
+
 
 # Linux / macOS
 celery -A celery_app worker --loglevel=info --concurrency=4
@@ -129,7 +134,7 @@ python dashboard.py
 
 Then open **http://localhost:8080/dashboard.html** in your browser.
 
-The dashboard connects to PostgreSQL via Docker and displays all 10 database tables with sorting, search, filtering, column resizing, CSV export, and row detail panels. It's a read-only admin view — no writes.
+The dashboard connects to PostgreSQL via Docker and displays all database tables with sorting, search, filtering, column resizing, CSV export, and row detail panels. It's a read-only admin view — no writes.
 
 ### Quick Start Summary
 
