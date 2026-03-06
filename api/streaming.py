@@ -45,11 +45,12 @@ from database.helpers import (
     create_hitl_request,
     ensure_user_exists,
     ensure_session_exists,
+    get_conversation_persona,
     get_or_create_conversation,
     poll_hitl_decision,
 )
 from tools.registry import ToolRegistry
-from utils.schemas import HitlResolvedDecision, Source
+from utils.schemas import HitlResolvedDecision, PersonaContext, Source
 
 from utils.llm_providers import get_llm_provider
 from utils.schemas import ComposerInput, QueryRequest
@@ -201,6 +202,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             session, user_id, sess_id,
             title=request.query[:120],
             conversation_id=request.conversation_id,
+            persona_id=request.persona_id,
         )
         await session.commit()
         yield _sse_event("status", {"phase": "planning"})
@@ -306,6 +308,9 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                 elif isinstance(s, Source):
                     all_sources.append(s)
 
+        persona_data = await get_conversation_persona(session, conv_id)
+        persona_ctx = PersonaContext(**persona_data) if persona_data else None
+
         composer_input = ComposerInput(
             query_id=plan.query_id,
             original_query=request.query,
@@ -314,6 +319,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             all_sources=all_sources,
             long_term_memory=long_term,
             conversation_history=memory_mgr._turns.get(conv_id, []),
+            persona=persona_ctx,
         )
 
         composer_answer = ""

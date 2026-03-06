@@ -14,6 +14,7 @@ from utils.schemas import (
     AgentOutput,
     ComposerInput,
     ComposerOutput,
+    PersonaContext,
     Source,
 )
 
@@ -74,7 +75,7 @@ class ComposerAgent:
 
         if is_memory_query:
             return f"""You are the Final Response Composer for a multi-agent RAG system.
-The user has asked a question about the conversation itself — no specialised agents were needed.
+{self._format_persona_block(ci.persona)}The user has asked a question about the conversation itself — no specialised agents were needed.
 Answer ENTIRELY from the conversation history and user profile below.
 
 ### Original User Query
@@ -101,7 +102,7 @@ Answer ENTIRELY from the conversation history and user profile below.
 ### Answer"""
 
         return f"""You are the Final Response Composer for a multi-agent RAG system.
-Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
+{self._format_persona_block(ci.persona)}Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
 
 ### Original User Query
 {ci.original_query}
@@ -149,6 +150,19 @@ Your job is to synthesise outputs from specialised agents into one coherent, pol
 
 ### Answer"""
 
+
+    @staticmethod
+    def _format_persona_block(persona: PersonaContext | None) -> str:
+        """Build a persona instruction block for the system prompt."""
+        if not persona:
+            return ""
+        return (
+            f"### Persona\n"
+            f"You MUST adopt the following persona for your entire response.\n"
+            f"Name: {persona.name}\n"
+            f"Description: {persona.description}\n"
+            f"Stay fully in character — tone, vocabulary, and personality must match this persona.\n\n"
+        )
 
     @staticmethod
     def _detect_hitl_overrides(outputs: list[AgentOutput]) -> str:

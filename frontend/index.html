@@ -147,6 +147,106 @@
   .conn-btn-inline:disabled:hover { background: #fff; border-color: #ccc; color: #333; }
 
   /* ── Conversation sidebar ───────────────────────────────── */
+
+  /* ── Personas ───────────────────────────────────────────── */
+  .personas-section { margin-bottom: 20px; }
+  .personas-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
+  .persona-list {
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: 180px; overflow-y: auto;
+  }
+  .persona-item {
+    padding: 7px 10px; border-radius: 6px;
+    cursor: pointer; font-size: 0.8rem;
+    color: #333; transition: background 0.15s;
+    white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; line-height: 1.4;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .persona-item:hover { background: #f5f5f5; }
+  .persona-item.active { background: #e8e8e8; font-weight: 600; }
+  .persona-item .persona-icon { font-size: 0.9rem; flex-shrink: 0; }
+  .persona-item .persona-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .persona-item .persona-del {
+    background: none; border: none; cursor: pointer;
+    color: #ccc; font-size: 0.7rem; padding: 2px 4px;
+    border-radius: 4px; flex-shrink: 0; opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .persona-item:hover .persona-del { opacity: 1; }
+  .persona-item .persona-del:hover { color: #ff3b30; background: #fee; }
+  .add-persona-btn {
+    width: 100%; padding: 7px 10px; margin-top: 4px;
+    border: 1px dashed #d0d0d0; border-radius: 6px;
+    background: none; cursor: pointer;
+    font-size: 0.78rem; color: #888;
+    transition: all 0.15s;
+  }
+  .add-persona-btn:hover { border-color: #000; color: #000; }
+
+  /* ── Persona modal ─────────────────────────────────────── */
+  .persona-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2000;
+  }
+  .persona-modal {
+    background: #fff; border-radius: 12px;
+    width: 400px; max-width: 90vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+    animation: popupIn 0.2s ease;
+  }
+  .persona-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid #eee;
+  }
+  .persona-modal-header h3 { font-size: 0.95rem; font-weight: 600; }
+  .persona-modal-close {
+    background: none; border: none; font-size: 1.2rem;
+    cursor: pointer; color: #999; padding: 0 4px;
+  }
+  .persona-modal-body { padding: 16px 20px; }
+  .persona-modal-body label {
+    display: block; font-size: 0.82rem;
+    margin-bottom: 4px; color: #555; font-weight: 500;
+  }
+  .persona-modal-body input,
+  .persona-modal-body textarea {
+    width: 100%; padding: 9px 12px;
+    border: 1.5px solid #e0e0e0; border-radius: 8px;
+    font-size: 0.88rem; font-family: inherit;
+    outline: none; margin-bottom: 14px; transition: border-color 0.15s;
+  }
+  .persona-modal-body input:focus,
+  .persona-modal-body textarea:focus { border-color: #000; }
+  .persona-modal-body textarea { resize: vertical; min-height: 80px; }
+  .persona-modal-footer {
+    padding: 12px 20px 16px; display: flex; gap: 10px;
+    justify-content: flex-end;
+  }
+  .persona-modal-footer button {
+    padding: 8px 20px; border-radius: 8px;
+    font-size: 0.85rem; cursor: pointer;
+    border: none; font-weight: 500;
+  }
+  .persona-modal-cancel { background: #f0f0f0; color: #333; }
+  .persona-modal-save { background: #000; color: #fff; }
+  .persona-modal-save:hover { opacity: 0.85; }
+
+  /* ── Active persona indicator in chat ───────────────────── */
+  .persona-indicator {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: #666;
+    padding: 5px 12px;
+    background: #f8f8f8; border-radius: 20px;
+  }
+  .persona-indicator .pi-name { font-weight: 600; color: #333; }
+  .persona-indicator .pi-clear {
+    background: none; border: none; cursor: pointer;
+    color: #bbb; font-size: 0.75rem; padding: 0 2px;
+  }
+  .persona-indicator .pi-clear:hover { color: #ff3b30; }
+
   .new-chat-btn {
     width: 100%;
     padding: 10px 14px;
@@ -205,12 +305,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: 1px solid #e0e0e0;
+    padding: 12px 24px;
+    border-bottom: 1px solid #e8e8e8;
+    background: #fff;
+    backdrop-filter: blur(8px);
   }
   .header h1 {
     font-size: 1rem;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: -0.3px;
   }
   .header-right {
     display: flex;
@@ -268,13 +371,14 @@
     margin-bottom: 12px;
   }
   .upload-zone {
-    border: 1px dashed #ccc;
-    border-radius: 4px;
-    padding: 24px;
+    border: 1.5px dashed #d0d0d0;
+    border-radius: 8px;
+    padding: 20px;
     text-align: center;
     cursor: pointer;
     margin-bottom: 24px;
     position: relative;
+    transition: all 0.15s;
   }
   .upload-zone:hover {
     border-color: #000;
@@ -331,9 +435,10 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    background: #f5f5f5;
-    border-radius: 4px;
-    font-size: 0.85rem;
+    background: #f8f8f8;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    transition: background 0.15s;
   }
   .pipeline-agent .dot {
     width: 8px;
@@ -401,22 +506,110 @@
   }
   .msg-content {
     padding: 12px 16px;
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 0.9rem;
-    line-height: 1.5;
+    line-height: 1.6;
   }
   .msg.user .msg-content {
     background: #000;
     color: #fff;
+    border-radius: 16px 16px 4px 16px;
   }
   .msg.assistant .msg-content {
     background: #f5f5f5;
-    color: #000;
+    color: #1a1a1a;
+    border-radius: 16px 16px 16px 4px;
   }
   .msg.system {
     text-align: center;
     color: #999;
+    font-size: 0.8rem;
+    margin-bottom: 8px;
+  }
+
+  /* ── Markdown rendering in messages ────────────────────── */
+  .msg-content h1, .msg-content h2, .msg-content h3,
+  .msg-content h4, .msg-content h5 {
+    margin: 14px 0 6px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .msg-content h1 { font-size: 1.2rem; }
+  .msg-content h2 { font-size: 1.1rem; }
+  .msg-content h3 { font-size: 1rem; }
+  .msg-content h4 { font-size: 0.95rem; }
+  .msg-content h1:first-child, .msg-content h2:first-child,
+  .msg-content h3:first-child { margin-top: 0; }
+  .msg-content p {
+    margin: 0 0 8px;
+  }
+  .msg-content p:last-child { margin-bottom: 0; }
+  .msg-content strong { font-weight: 600; }
+  .msg-content em { font-style: italic; }
+  .msg-content ul, .msg-content ol {
+    margin: 6px 0 10px;
+    padding-left: 20px;
+  }
+  .msg-content li {
+    margin-bottom: 3px;
+    line-height: 1.5;
+  }
+  .msg-content li > ul, .msg-content li > ol {
+    margin: 2px 0 2px;
+  }
+  .msg-content code {
+    background: rgba(0,0,0,0.06);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.84em;
+  }
+  .msg.user .msg-content code {
+    background: rgba(255,255,255,0.15);
+  }
+  .msg-content pre {
+    margin: 8px 0;
+    border-radius: 6px;
+    overflow-x: auto;
+    background: #1a1a1a;
+    position: relative;
+  }
+  .msg-content pre code {
+    display: block;
+    padding: 14px 16px;
+    background: none;
+    color: #e0e0e0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .msg-content blockquote {
+    border-left: 3px solid #ddd;
+    padding: 2px 0 2px 12px;
+    margin: 6px 0;
+    color: #666;
+    font-style: italic;
+  }
+  .msg-content hr {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 12px 0;
+  }
+  .msg-content table {
+    border-collapse: collapse;
+    margin: 8px 0;
     font-size: 0.85rem;
+    width: 100%;
+  }
+  .msg-content th, .msg-content td {
+    border: 1px solid #e0e0e0;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .msg-content th {
+    background: #f5f5f5;
+    font-weight: 600;
   }
   
   .inline-ref {
@@ -466,12 +659,17 @@
   }
   .sources-popup {
     background: #fff;
-    border-radius: 8px;
-    width: 420px;
+    border-radius: 12px;
+    width: 440px;
     max-width: 90vw;
     max-height: 70vh;
     overflow-y: auto;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+    animation: popupIn 0.2s ease;
+  }
+  @keyframes popupIn {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
   }
   .sources-popup-header {
     display: flex;
@@ -574,23 +772,25 @@
 
   /* ── Input ─────────────────────────────────────────────── */
   .input-area {
-    padding: 16px 24px;
-    border-top: 1px solid #e0e0e0;
+    padding: 12px 24px 16px;
+    border-top: 1px solid #e8e8e8;
     display: flex;
-    gap: 12px;
+    gap: 10px;
     align-items: flex-end;
+    background: #fff;
   }
   .input-area textarea {
     flex: 1;
     resize: none;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
-    padding: 10px 12px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 10px 14px;
     font-size: 0.9rem;
     font-family: inherit;
     outline: none;
     min-height: 44px;
     max-height: 120px;
+    transition: border-color 0.15s;
   }
   .input-area textarea:focus {
     border-color: #000;
@@ -599,11 +799,12 @@
     background: #000;
     color: #fff;
     border: none;
-    border-radius: 4px;
+    border-radius: 12px;
     padding: 10px 20px;
     font-size: 0.9rem;
     cursor: pointer;
     white-space: nowrap;
+    transition: opacity 0.15s;
   }
   .btn-send:hover { opacity: 0.8; }
   .btn-send:disabled { opacity: 0.3; }
@@ -823,6 +1024,14 @@
       </div>
     </div>
 
+    <div class="personas-section">
+      <h3>Personas</h3>
+      <div class="persona-list" id="personaList">
+        <div style="color:#888;font-size:0.8em">No personas yet</div>
+      </div>
+      <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
+    </div>
+
     <h3>Upload</h3>
     <div class="upload-zone" id="uploadZone">
       <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
@@ -856,6 +1065,14 @@
   </aside>
 
   <main class="chat">
+    <div id="personaBar" style="display:none; padding: 6px 24px; border-bottom: 1px solid #eee;">
+      <div class="persona-indicator">
+        <span>🎭</span>
+        <span>Chatting as</span>
+        <span class="pi-name" id="personaBarName"></span>
+        <button class="pi-clear" onclick="clearPersona()" title="Remove persona">&times;</button>
+      </div>
+    </div>
     <div class="messages" id="messages">
       <div class="welcome" id="welcome">
         <h2>Multi-Agentic RAG</h2>
@@ -887,7 +1104,9 @@ const API = `${BASE}/api/v1`;
 let currentUser = null;
 let currentSessionId = null;
 let currentConversationId = null;
+let currentPersonaId = null;
 let isProcessing = false;
+let _convPersonaMap = {};  // conversation_id → persona_id
 
 const authOverlay = document.getElementById('authOverlay');
 const authError = document.getElementById('authError');
@@ -1008,6 +1227,7 @@ function onLoginSuccess(data) {
   loadConnections();
   loadAgents();
   loadConversations();
+  loadPersonas();
 }
 
 async function doLogout() {
@@ -1030,6 +1250,9 @@ async function doLogout() {
   welcomeEl.style.display = '';
   document.getElementById('connList').innerHTML = '';
   document.getElementById('convList').innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
+  document.getElementById('personaList').innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
+  currentPersonaId = null;
+  updatePersonaBar();
 }
 
 // ─── Conversation Management ──────────────────────────────
@@ -1049,6 +1272,7 @@ async function loadConversations() {
       const isActive = c.conversation_id === currentConversationId;
       const title = c.title || 'Untitled';
       const time = c.updated_at ? new Date(c.updated_at).toLocaleDateString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      if (c.persona_id) _convPersonaMap[c.conversation_id] = c.persona_id;
       return `<div class="conv-item${isActive ? ' active' : ''}" onclick="switchConversation('${c.conversation_id}')" title="${escapeHtml(title)}">
         ${escapeHtml(title.length > 30 ? title.slice(0, 30) + '…' : title)}
         <span class="conv-time">${time}</span>
@@ -1062,6 +1286,21 @@ async function loadConversations() {
 async function switchConversation(conversationId) {
   if (isProcessing) return;
   currentConversationId = conversationId;
+
+  // Restore persona if this conversation has one
+  const pid = _convPersonaMap[conversationId];
+  if (pid) {
+    currentPersonaId = pid;
+    // Try to find the persona name from the sidebar list
+    const item = document.querySelector(`.persona-item[onclick*="${pid}"]`);
+    const pname = item ? item.querySelector('.persona-name')?.textContent : '';
+    updatePersonaBar(pname || 'Persona');
+    loadPersonas();
+  } else {
+    currentPersonaId = null;
+    updatePersonaBar();
+    loadPersonas();
+  }
 
   // Clear chat and show loading
   messagesEl.innerHTML = '';
@@ -1104,13 +1343,127 @@ async function switchConversation(conversationId) {
 function newChat() {
   if (isProcessing) return;
   currentConversationId = null;
+  currentPersonaId = null;
   messagesEl.innerHTML = '';
   messagesEl.appendChild(welcomeEl);
   welcomeEl.style.display = '';
   clearPipeline();
+  updatePersonaBar();
   // Remove active state from sidebar
   document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
   queryInput.focus();
+}
+
+// ─── Personas ─────────────────────────────────────────
+const personaListEl = document.getElementById('personaList');
+const personaBar = document.getElementById('personaBar');
+const personaBarName = document.getElementById('personaBarName');
+
+async function loadPersonas() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(`${API}/personas`, { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const personas = data.personas || [];
+    if (!personas.length) {
+      personaListEl.innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
+      return;
+    }
+    personaListEl.innerHTML = personas.map(p => `
+      <div class="persona-item ${currentPersonaId === p.persona_id ? 'active' : ''}"
+           onclick="selectPersona('${p.persona_id}', '${escapeHtml(p.name)}')">
+        <span class="persona-icon">🎭</span>
+        <span class="persona-name">${escapeHtml(p.name)}</span>
+        <button class="persona-del" onclick="event.stopPropagation(); deletePersonaUI('${p.persona_id}')" title="Delete">&times;</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('loadPersonas error:', err);
+  }
+}
+
+function selectPersona(personaId, name) {
+  currentPersonaId = personaId;
+  updatePersonaBar(name);
+  loadPersonas();
+}
+
+function clearPersona() {
+  currentPersonaId = null;
+  updatePersonaBar();
+  loadPersonas();
+}
+
+function updatePersonaBar(name) {
+  if (currentPersonaId && name) {
+    personaBar.style.display = '';
+    personaBarName.textContent = name;
+  } else {
+    personaBar.style.display = 'none';
+    personaBarName.textContent = '';
+  }
+}
+
+function showPersonaModal(existingId, existingName, existingDesc) {
+  document.querySelector('.persona-modal-overlay')?.remove();
+  const isEdit = !!existingId;
+  const overlay = document.createElement('div');
+  overlay.className = 'persona-modal-overlay';
+  overlay.innerHTML = `
+    <div class="persona-modal">
+      <div class="persona-modal-header">
+        <h3>${isEdit ? 'Edit' : 'Create'} Persona</h3>
+        <button class="persona-modal-close" onclick="this.closest('.persona-modal-overlay').remove()">&times;</button>
+      </div>
+      <div class="persona-modal-body">
+        <label>Name</label>
+        <input type="text" id="personaNameInput" placeholder="e.g. Sales Girl, Teacher, Friend..." maxlength="128" value="${escapeHtml(existingName || '')}">
+        <label>Description</label>
+        <textarea id="personaDescInput" placeholder="Describe the persona's personality, tone, and how they should respond..." maxlength="2000">${escapeHtml(existingDesc || '')}</textarea>
+      </div>
+      <div class="persona-modal-footer">
+        <button class="persona-modal-cancel" onclick="this.closest('.persona-modal-overlay').remove()">Cancel</button>
+        <button class="persona-modal-save" onclick="savePersona(${isEdit ? `'${existingId}'` : ''})">Save</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  document.getElementById('personaNameInput').focus();
+}
+
+async function savePersona(editId) {
+  const name = document.getElementById('personaNameInput').value.trim();
+  const desc = document.getElementById('personaDescInput').value.trim();
+  if (!name) { document.getElementById('personaNameInput').style.borderColor = '#ff3b30'; return; }
+  try {
+    const url = editId ? `${API}/personas/${editId}` : `${API}/personas`;
+    const method = editId ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ name, description: desc }),
+    });
+    if (!res.ok) throw new Error('Failed to save persona');
+    document.querySelector('.persona-modal-overlay')?.remove();
+    await loadPersonas();
+  } catch (err) {
+    console.error('savePersona error:', err);
+  }
+}
+
+async function deletePersonaUI(personaId) {
+  try {
+    const res = await fetch(`${API}/personas/${personaId}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete');
+    if (currentPersonaId === personaId) clearPersona();
+    await loadPersonas();
+  } catch (err) {
+    console.error('deletePersona error:', err);
+  }
 }
 
 // ─── Connections (OAuth) ──────────────────────────────
@@ -1507,11 +1860,10 @@ function finalizeAssistant(msgEl, sources) {
     rawText = rawText.slice(0, sourcesMatch.index).trimEnd();
   }
 
-  // Escape HTML and make [1], [2] etc clickable
-  const escaped = rawText
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Render markdown, then make [1], [2] etc clickable
+  const rendered = renderMarkdown(rawText);
   
-  const withRefs = escaped.replace(/\[(\d+)\]/g, (match, num) => {
+  const withRefs = rendered.replace(/\[(\d+)\]/g, (match, num) => {
     const idx = parseInt(num) - 1;
     const src = sources[idx];
     if (src && src.url) {
@@ -1617,6 +1969,87 @@ function escapeHtml(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function renderMarkdown(text) {
+  // Lightweight markdown-to-HTML renderer
+  let html = escapeHtml(text);
+
+  // Code blocks: ```lang\n...\n```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `<pre><code class="lang-${lang || 'text'}">${code.replace(/\n$/, '')}</code></pre>`;
+  });
+
+  // Inline code: `...`
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+  // Headings: # through #####
+  html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Horizontal rule
+  html = html.replace(/^---+$/gm, '<hr>');
+
+  // Bold + italic: ***text***
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  // Bold: **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text*
+  html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+
+  // Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Unordered lists: - item or * item
+  html = html.replace(/(^[\-\*] .+$\n?)+/gm, (block) => {
+    const items = block.trim().split('\n').map(l =>
+      `<li>${l.replace(/^[\-\*] /, '')}</li>`
+    ).join('');
+    return `<ul>${items}</ul>`;
+  });
+
+  // Ordered lists: 1. item
+  html = html.replace(/(^\d+\. .+$\n?)+/gm, (block) => {
+    const items = block.trim().split('\n').map(l =>
+      `<li>${l.replace(/^\d+\. /, '')}</li>`
+    ).join('');
+    return `<ol>${items}</ol>`;
+  });
+
+  // Tables: | col | col |
+  html = html.replace(/(^\|.+\|$\n?)+/gm, (block) => {
+    const rows = block.trim().split('\n').filter(r => !/^\|[\s\-:]+\|$/.test(r));
+    if (!rows.length) return block;
+    let table = '<table>';
+    rows.forEach((row, i) => {
+      const cells = row.split('|').slice(1, -1).map(c => c.trim());
+      const tag = i === 0 ? 'th' : 'td';
+      const wrap = i === 0 ? 'thead' : (i === 1 ? 'tbody' : '');
+      if (wrap === 'thead') table += '<thead>';
+      if (wrap === 'tbody') table += '</thead><tbody>';
+      table += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+    });
+    table += '</tbody></table>';
+    return table;
+  });
+
+  // Paragraphs: wrap remaining loose lines (not already wrapped in block elements)
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = html.replace(/\n/g, '<br>');
+  // Remove <br> right after block elements
+  html = html.replace(/(<\/(?:pre|h[1-5]|ul|ol|table|blockquote|hr)>)<br>/g, '$1');
+  html = html.replace(/<br>(<(?:pre|h[1-5]|ul|ol|table|blockquote|hr)[\s>])/g, '$1');
+  html = `<p>${html}</p>`;
+  // Clean up empty paragraphs
+  html = html.replace(/<p>\s*<\/p>/g, '');
+  // Remove p wrapping block elements
+  html = html.replace(/<p>(<(?:pre|h[1-5]|ul|ol|table|blockquote|hr)[\s>])/g, '$1');
+  html = html.replace(/(<\/(?:pre|h[1-5]|ul|ol|table|blockquote|hr)>)<\/p>/g, '$1');
+
+  return html;
+}
+
 // ── Send query ──────────────────────────────────────────────
 async function sendQuery() {
   const query = queryInput.value.trim();
@@ -1650,7 +2083,8 @@ async function sendStreaming(query) {
       body: JSON.stringify({ 
         query, 
         session_id: currentSessionId,
-        conversation_id: currentConversationId
+        conversation_id: currentConversationId,
+        persona_id: currentPersonaId,
       }),
     });
 
@@ -1736,7 +2170,10 @@ async function sendStreaming(query) {
         if (msgEl) finalizeAssistant(msgEl, sources);
         // Capture session/conversation IDs from backend
         if (data.session_id) currentSessionId = data.session_id;
-        if (data.conversation_id) currentConversationId = data.conversation_id;
+        if (data.conversation_id) {
+          currentConversationId = data.conversation_id;
+          if (currentPersonaId) _convPersonaMap[data.conversation_id] = currentPersonaId;
+        }
         // Refresh conversation list in sidebar
         loadConversations();
         break;

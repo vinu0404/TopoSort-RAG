@@ -24,10 +24,15 @@ from core.orchestrator import Orchestrator
 from database.helpers import (
     bg_save_agent_executions,
     bg_save_messages,
+    create_persona,
+    delete_persona,
     ensure_user_exists,
     ensure_session_exists,
+    get_conversation_persona,
     get_or_create_conversation,
     get_document_for_user,
+    get_user_personas,
+    update_persona,
     list_user_conversations,
     load_conversation_messages_full,
     resolve_hitl_request,
@@ -37,9 +42,8 @@ from database.helpers import (
 from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
-
 from utils.llm_providers import get_llm_provider
-from utils.schemas import ComposerInput, QueryRequest
+from utils.schemas import ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,7 @@ async def handle_query(
         session, user_id, sess_id,
         title=request.query[:120],
         conversation_id=request.conversation_id,
+        persona_id=request.persona_id,
     )
     await session.commit()
     master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
@@ -137,6 +142,7 @@ async def handle_query(
         all_sources=all_sources,
         long_term_memory=long_term,
         conversation_history=memory_mgr._turns.get(conv_id, []),
+        persona=PersonaContext(**persona_data) if (persona_data := await get_conversation_persona(session, conv_id)) else None,
     )
     output = await composer.compose(composer_input)
 
@@ -396,3 +402,60 @@ async def get_conversation_messages(
 
     messages = await load_conversation_messages_full(session, conversation_id)
     return {"conversation_id": conversation_id, "messages": messages}
+
+
+# ── Persona CRUD ────────────────────────────────────────────────────────
+
+
+@router.post("/personas")
+async def create_persona_endpoint(
+    body: PersonaCreate,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Create a new persona for the authenticated user."""
+    persona = await create_persona(session, auth_user_id, body.name, body.description)
+    await session.commit()
+    return persona
+
+
+@router.get("/personas")
+async def list_personas(
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """List all personas for the authenticated user."""
+    personas = await get_user_personas(session, auth_user_id)
+    return {"personas": personas}
+
+
+@router.put("/personas/{persona_id}")
+async def update_persona_endpoint(
+    persona_id: str,
+    body: PersonaUpdate,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Update a persona owned by the authenticated user."""
+    updated = await update_persona(
+        session, persona_id, auth_user_id,
+        name=body.name, description=body.description,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    await session.commit()
+    return updated
+
+
+@router.delete("/personas/{persona_id}")
+async def delete_persona_endpoint(
+    persona_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Delete a persona owned by the authenticated user."""
+    ok = await delete_persona(session, persona_id, auth_user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    await session.commit()
+    return {"deleted": True}

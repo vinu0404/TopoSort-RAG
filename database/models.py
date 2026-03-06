@@ -38,6 +38,7 @@ class User(Base):
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
     connections = relationship("UserConnection", back_populates="user", cascade="all, delete-orphan")
+    personas = relationship("Persona", back_populates="user", cascade="all, delete-orphan")
 
 
 class Session(Base):
@@ -53,17 +54,33 @@ class Session(Base):
     conversations = relationship("Conversation", back_populates="session", cascade="all, delete-orphan")
 
 
+class Persona(Base):
+    __tablename__ = "personas"
+
+    persona_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="personas")
+    conversations = relationship("Conversation", back_populates="persona")
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
     conversation_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.session_id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    persona_id = Column(UUID(as_uuid=True), ForeignKey("personas.persona_id", ondelete="SET NULL"), nullable=True)
     title = Column(Text)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     session = relationship("Session", back_populates="conversations")
+    persona = relationship("Persona", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     agent_executions = relationship("AgentExecution", back_populates="conversation", cascade="all, delete-orphan")
     summaries = relationship("ConversationSummary", back_populates="conversation", cascade="all, delete-orphan")

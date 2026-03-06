@@ -19,12 +19,26 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
+-- Personas ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS personas (
+    persona_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name         VARCHAR(128) NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_personas_user ON personas(user_id);
+
 -- Conversations ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS conversations (
     conversation_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id       UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    persona_id       UUID REFERENCES personas(persona_id) ON DELETE SET NULL,
     title            TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()

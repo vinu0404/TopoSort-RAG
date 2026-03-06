@@ -21,6 +21,7 @@ from database.models import (
     Document,
     HitlRequest,
     Message,
+    Persona,
     Session,
     User,
 )
@@ -91,11 +92,13 @@ async def get_or_create_conversation(
     session_id: str,
     title: str | None = None,
     conversation_id: str | None = None,
+    persona_id: str | None = None,
 ) -> str:
     """Return an existing or newly-created ``conversation_id``.
 
     * If *conversation_id* is given, validate it exists and return it.
     * Otherwise create a **new** conversation (supports "New Chat").
+    * If *persona_id* is given on a new conversation, attach it.
     """
     uid = _to_uuid(user_id)
     sid = _to_uuid(session_id)
@@ -114,11 +117,13 @@ async def get_or_create_conversation(
             await session.flush()
             return str(existing.conversation_id)
     cid = uuid.uuid4()
+    pid = _to_uuid(persona_id) if persona_id else None
     session.add(
         Conversation(
             conversation_id=cid,
             session_id=sid,
             user_id=uid,
+            persona_id=pid,
             title=title or "New conversation",
         )
     )
@@ -170,6 +175,7 @@ async def list_user_conversations(
         select(
             Conversation.conversation_id,
             Conversation.title,
+            Conversation.persona_id,
             Conversation.created_at,
             Conversation.updated_at,
             msg_count.label("message_count"),
@@ -183,6 +189,7 @@ async def list_user_conversations(
         {
             "conversation_id": str(r.conversation_id),
             "title": r.title,
+            "persona_id": str(r.persona_id) if r.persona_id else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             "message_count": r.message_count or 0,
@@ -637,3 +644,116 @@ async def expire_stale_hitl_requests() -> int:
         if rows:
             logger.info("Expired %d stale HITL requests on startup", len(rows))
         return len(rows)
+
+
+# ── Persona helpers ─────────────────────────────────────────────────
+
+
+async def create_persona(
+    session: AsyncSession,
+    user_id: str,
+    name: str,
+    description: str,
+) -> dict:
+    """Create a new persona for a user. Returns the serialised row."""
+    uid = _to_uuid(user_id)
+    row = Persona(user_id=uid, name=name, description=description)
+    session.add(row)
+    await session.flush()
+    return _persona_to_dict(row)
+
+
+async def get_user_personas(
+    session: AsyncSession,
+    user_id: str,
+) -> list[dict]:
+    """Return all personas belonging to a user (newest first)."""
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(Persona)
+        .where(Persona.user_id == uid)
+        .order_by(Persona.created_at.desc())
+    )
+    return [_persona_to_dict(r) for r in result.scalars()]
+
+
+async def get_persona(
+    session: AsyncSession,
+    persona_id: str,
+    user_id: str,
+) -> Persona | None:
+    """Fetch a single persona — only if owned by *user_id*."""
+    pid = _to_uuid(persona_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(Persona).where(Persona.persona_id == pid, Persona.user_id == uid)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_persona(
+    session: AsyncSession,
+    persona_id: str,
+    user_id: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> dict | None:
+    """Update name/description of a persona. Returns updated dict or None."""
+    row = await get_persona(session, persona_id, user_id)
+    if row is None:
+        return None
+    if name is not None:
+        row.name = name
+    if description is not None:
+        row.description = description
+    row.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+    return _persona_to_dict(row)
+
+
+async def delete_persona(
+    session: AsyncSession,
+    persona_id: str,
+    user_id: str,
+) -> bool:
+    """Delete a persona owned by *user_id*. Returns True if deleted."""
+    row = await get_persona(session, persona_id, user_id)
+    if row is None:
+        return False
+    await session.delete(row)
+    await session.flush()
+    return True
+
+
+async def get_conversation_persona(
+    session: AsyncSession,
+    conversation_id: str,
+) -> dict | None:
+    """Load the persona attached to a conversation (if any).
+
+    Returns ``{"name": ..., "description": ...}`` or None.
+    """
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(Conversation).where(Conversation.conversation_id == cid)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is None or conv.persona_id is None:
+        return None
+    result2 = await session.execute(
+        select(Persona).where(Persona.persona_id == conv.persona_id)
+    )
+    persona = result2.scalar_one_or_none()
+    if persona is None:
+        return None
+    return {"name": persona.name, "description": persona.description}
+
+
+def _persona_to_dict(row: Persona) -> dict:
+    return {
+        "persona_id": str(row.persona_id),
+        "name": row.name,
+        "description": row.description,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
