@@ -67,7 +67,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 'conversation_summaries', (SELECT json_agg(row_to_json(t)) FROM conversation_summaries t),
                 'user_long_term_memory', (SELECT json_agg(row_to_json(t)) FROM user_long_term_memory t),
                 'hitl_requests', (SELECT json_agg(row_to_json(t)) FROM hitl_requests t),
-                'user_connections', (SELECT json_agg(row_to_json(t)) FROM user_connections t)
+                'user_connections', (SELECT json_agg(row_to_json(t)) FROM user_connections t),
+                'personas', (SELECT json_agg(row_to_json(t)) FROM personas t)
             ) AS data;
             """
             
@@ -106,7 +107,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 
                 for table in ['users', 'sessions', 'conversations', 'messages', 
                              'agent_executions', 'documents', 'conversation_summaries',
-                             'user_long_term_memory', 'hitl_requests', 'user_connections']:
+                             'user_long_term_memory', 'hitl_requests', 'user_connections',
+                             'personas']:
                     if data.get(table) is None:
                         data[table] = []
                 
@@ -228,7 +230,7 @@ def main():
     print("=" * 60)
     print("MRAG Database Dashboard Server")
     print("=" * 60)
-    print(f"Starting server on http://localhost:{port}")
+    print(f"Starting server on http://localhost:8000")
     print(f"\nOpen dashboard.html in your browser, or visit:")
     print(f"  http://localhost:{port}/dashboard.html")
     print("\nAPI Endpoints:")

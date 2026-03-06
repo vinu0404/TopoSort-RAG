@@ -91,7 +91,6 @@ class RAGAgent(BaseAgent):
             
             logger.info(f"[RAGAgent] Generated answer: {final_answer[:200]}...")
 
-            # Count API calls dynamically
             api_calls = 2  # query_expansion + synthesis (always)
             api_calls += 1  # two_level_search (stage-1 + stage-2 internally)
             if config.rag_use_llm_reranking:
@@ -196,9 +195,6 @@ class RAGAgent(BaseAgent):
 
 
 
-
-
-
     def _build_filters(self, entities: Dict[str, Any]) -> Dict[str, Any]:
         filters: Dict[str, Any] = {}
         if entities.get("date_range"):
@@ -213,20 +209,36 @@ class RAGAgent(BaseAgent):
     @staticmethod
     def _extract_sources(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         sources = []
-        seen = set()
+        seen: dict[str, int] = {}          
         for chunk in chunks:
             meta = chunk.get("metadata", {})
-            key = meta.get("filename", "")
-            if key and key not in seen:
-                seen.add(key)
+            fname = meta.get("filename", "")
+            page = meta.get("page")
+            doc_id = chunk.get("doc_id")
+            if not fname:
+                continue
+            if fname not in seen:
+                seen[fname] = len(sources)
                 sources.append(
                     {
                         "type": "document",
-                        "source": key,
-                        "page": meta.get("page"),
+                        "source": fname,
+                        "page": [page] if page else [],
                         "section": meta.get("section_title"),
+                        "doc_id": doc_id,
                     }
                 )
+            else:
+                if page and page not in sources[seen[fname]]["page"]:
+                    sources[seen[fname]]["page"].append(page)
+                if doc_id and not sources[seen[fname]].get("doc_id"):
+                    sources[seen[fname]]["doc_id"] = doc_id
+        for s in sources:
+            pages = s["page"]
+            if not pages:
+                s["page"] = None
+            elif len(pages) == 1:
+                s["page"] = pages[0]
         return sources
 
 

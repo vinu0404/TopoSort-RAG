@@ -56,6 +56,7 @@ async def process_document(
     user_id: str,
     file_path: str,
     file_bytes: bytes | None = None,
+    doc_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Full pipeline: parse → (describe ‖ chunk) → batch-embed → store.
@@ -81,7 +82,7 @@ async def process_document(
     embed_model = get_embedding_model()
 
     doc_record = {
-        "doc_id": str(uuid.uuid4()),
+        "doc_id": doc_id or str(uuid.uuid4()),
         "filename": parsed["metadata"]["filename"],
         "description": description,
         "doc_type": parsed["metadata"]["doc_type"],

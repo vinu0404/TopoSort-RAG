@@ -166,6 +166,7 @@ class VectorStore:
                 "score": r.score,
                 "text": r.payload.get("text", ""),
                 "metadata": r.payload.get("metadata", {}),
+                "doc_id": r.payload.get("doc_id"),
             }
             for r in response.points
         ]
@@ -213,6 +214,7 @@ class VectorStore:
                         "chunk_id": str(record.id),
                         "text": text,
                         "metadata": record.payload.get("metadata", {}),
+                        "doc_id": record.payload.get("doc_id"),
                     })
             if next_offset is None:
                 break
@@ -360,6 +362,7 @@ class VectorStore:
                 "score": r.score,
                 "text": r.payload.get("text", ""),
                 "metadata": r.payload.get("metadata", {}),
+                "doc_id": r.payload.get("doc_id"),
             }
             for r in response.points
         ]
@@ -416,6 +419,7 @@ class VectorStore:
                         "chunk_id": str(record.id),
                         "text": text,
                         "metadata": record.payload.get("metadata", {}),
+                        "doc_id": record.payload.get("doc_id"),
                     })
             if next_offset is None:
                 break

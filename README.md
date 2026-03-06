@@ -421,22 +421,28 @@ flowchart TD
 
 ## RAG Document Pipeline — How Documents Are Processed
 
-Document processing is **fully asynchronous**. The upload endpoint returns immediately with status `pending`; a **Celery worker** picks up the task from a **Redis** queue and runs the heavy pipeline (parsing, chunking, embedding) in the background. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
+Document processing is **fully asynchronous**. The upload endpoint stores the original file in **S3-compatible cloud storage** (Backblaze B2 / AWS S3 / MinIO), saves the DB record with `storage_key` and `storage_bucket`, then dispatches a **Celery task** via **Redis**. The heavy pipeline (parsing, chunking, embedding) runs in the background. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
+
+### Upload & Storage Flow
 
 ```mermaid
 flowchart TD
     Upload["User uploads file(s)<br/><i>PDF / DOCX / Excel / CSV / TXT / MD</i>"]
 
-    Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i><br/>saves DB record (status=pending)<br/>returns immediately"]
+    Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i>"]
 
-    API -->|"Celery .delay()"| Queue["Redis Task Queue<br/><i>broker</i>"]
+    API --> S3["Upload to S3-compatible storage<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
+
+    S3 --> DB["Save DB record<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
+
+    DB -->|"Celery .delay()"| Queue["Redis Task Queue<br/><i>broker</i>"]
 
     Queue --> Worker["Celery Worker<br/><i>process_document_task</i><br/>autoretry ×3, exponential backoff<br/>soft limit 5 min, hard limit 6 min"]
 
     Worker --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
     Status1 --> Parser["Parser<br/><i>Extract raw text</i>"]
 
-    Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()"]
+    Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()<br/><i>+ &lt;!-- PAGE N --&gt; markers</i>"]
     Parser -->|"DOCX"| PythonDocx["python-docx<br/>paragraphs"]
     Parser -->|"Excel/CSV"| Pandas["pandas<br/>df.to_string()"]
     Parser -->|"TXT/MD"| RawText["Read bytes<br/>UTF-8 decode"]
@@ -451,7 +457,7 @@ flowchart TD
     subgraph Parallel["Parallel: description ‖ chunking"]
         direction LR
         Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
-        Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships</i>"]
+        Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships,<br/>page number extraction</i>"]
     end
 
     Parallel --> BatchEmbed["Batch Embedding<br/><i>text-embedding-3-small<br/>1536 dims, embed_batch()</i>"]
@@ -462,7 +468,7 @@ flowchart TD
         direction TB
         Collection["Create / get collection<br/><i>user_{id}_documents</i>"]
         Collection --> DocPoint["Upsert document-level point<br/><i>UUID, description embedding,<br/>filename, doc_type, total_chunks</i>"]
-        DocPoint --> ChunkPoints["Upsert chunk points<br/><i>UUID, chunk embedding,<br/>text, metadata, parent_id</i>"]
+        DocPoint --> ChunkPoints["Upsert chunk points<br/><i>UUID, chunk embedding,<br/>text, metadata (page, section),<br/>doc_id at payload level</i>"]
         ChunkPoints --> PayloadIdx["Create payload indexes<br/><i>doc_type, date, section_title</i>"]
     end
 
@@ -470,6 +476,8 @@ flowchart TD
 
     style Upload fill:#2196F3,color:#fff
     style API fill:#2196F3,color:#fff
+    style S3 fill:#FF9800,color:#fff
+    style DB fill:#FF9800,color:#fff
     style Queue fill:#e53935,color:#fff
     style Worker fill:#e53935,color:#fff
     style Describe fill:#FF9800,color:#fff
@@ -479,10 +487,46 @@ flowchart TD
     style Status2 fill:#4CAF50,color:#fff
 ```
 
+### Document Viewing — Pre-signed URLs
+
+When a user queries documents and clicks a source in the **Sources popup**, the system generates a **time-limited pre-signed URL** so the user can view the original file directly in the browser — without exposing storage credentials.
+
+```mermaid
+flowchart LR
+    Click["User clicks source<br/>in Sources popup"]
+    Click --> FE["Frontend calls<br/><i>GET /documents/{doc_id}/view</i><br/>with JWT"]
+    FE --> Auth["JWT verified<br/>→ user_id"]
+    Auth --> Own["DB ownership check<br/><i>WHERE doc_id = ? AND user_id = ?</i>"]
+    Own --> Gen["Generate pre-signed URL<br/><i>boto3 generate_presigned_url()</i><br/>TTL: 5 min (configurable)"]
+    Gen --> Resp["Return {url, filename,<br/>content_type, expires_in}"]
+    Resp --> Open["Browser opens<br/>document in new tab"]
+
+    style Click fill:#2196F3,color:#fff
+    style FE fill:#2196F3,color:#fff
+    style Auth fill:#4CAF50,color:#fff
+    style Own fill:#4CAF50,color:#fff
+    style Gen fill:#FF9800,color:#fff
+    style Resp fill:#9C27B0,color:#fff
+    style Open fill:#2196F3,color:#fff
+```
+
+**Security layers:**
+
+| Layer | Detail |
+|-------|--------|
+| **JWT authentication** | Every request requires a valid bearer token |
+| **DB ownership check** | `get_document_for_user()` verifies the document belongs to the requesting user |
+| **S3 path scoping** | Storage keys are namespaced: `uploads/{user_id}/{doc_id}/{filename}` |
+| **Time-limited URL** | Pre-signed URLs expire after `s3_presign_expiry` seconds (default 300 = 5 min) |
+| **Private bucket** | Bucket is not publicly accessible; only pre-signed URLs grant read access |
+
 **Key implementation details:**
 
 | Aspect | Detail |
 |--------|--------|
+| **Cloud storage** | S3-compatible (Backblaze B2, AWS S3, MinIO) via `boto3` with S3v4 signatures |
+| **Storage module** | `storage/s3.py` — `upload_file()`, `generate_presigned_url()`, `build_storage_key()` |
+| **DB columns** | `storage_key`, `storage_bucket`, `file_size_bytes`, `content_type` on `documents` table |
 | **Task queue** | Celery 5.x with Redis broker (`celery_app.py`) |
 | **Worker config** | `acks_late=True`, `prefetch_multiplier=1`, `concurrency=4` |
 | **Retry policy** | Up to 3 retries with exponential backoff (10 s → 20 s → 40 s, capped at 120 s, jittered) |
@@ -491,6 +535,8 @@ flowchart TD
 | **Status updates** | Redis Pub/Sub channel `doc_status:{user_id}` → SSE `GET /documents/status/stream` |
 | **DB sessions** | Fresh `create_async_engine` per task (each `asyncio.run()` creates a new event loop) |
 | **Serialisation** | File bytes sent as hex string for JSON safety |
+| **Page tracking** | PDF parser injects `<!-- PAGE N -->` markers; chunker extracts page numbers into metadata |
+| **Source linking** | Chunk payloads carry `doc_id` → RAG agent includes `doc_id` in source objects → frontend links to view endpoint |
 
 ---
 
@@ -541,15 +587,17 @@ flowchart TD
         Check -->|"No"| PassThrough["Return top 8<br/>by RRF score<br/><i>(no LLM call)</i>"]
     end
 
-    Top8 --> Sources["Extract unique sources<br/><i>filename, page, section</i>"]
+    Top8 --> Sources["Extract unique sources<br/><i>filename, page, section, doc_id</i>"]
     PassThrough --> Sources
     Top8 --> Confidence["Calculate confidence<br/><i>avg chunk scores</i>"]
     PassThrough --> Confidence
 
-    Sources --> Output["AgentOutput<br/><i>chunks, sources, query,<br/>confidence_score,<br/>matched_documents</i>"]
+    Sources --> Output["AgentOutput<br/><i>chunks, sources (with doc_id),<br/>query, confidence_score,<br/>matched_documents</i>"]
     Confidence --> Output
 
     Output -->|"passed to"| Composer["Composer Agent<br/><i>synthesise answer<br/>with [1], [2] citations</i>"]
+
+    Composer --> FE["Frontend Sources popup<br/><i>clickable filenames →<br/>GET /documents/{doc_id}/view<br/>→ pre-signed URL → new tab</i>"]
 
     style Query fill:#2196F3,color:#fff
     style EmbedQ1 fill:#2196F3,color:#fff
@@ -562,6 +610,7 @@ flowchart TD
     style RePrompt fill:#FF9800,color:#fff
     style Composer fill:#9C27B0,color:#fff
     style Decision fill:#FF9800,color:#fff
+    style FE fill:#2196F3,color:#fff
 ```
 
 **How it works:**
@@ -572,6 +621,7 @@ flowchart TD
 | **Fallback check** | If fewer than 2 documents pass the threshold, the system also runs an **unscoped hybrid search** (all chunks) and merges/deduplicates results. | Prevents empty results when descriptions don't closely match the query wording. |
 | **Stage 2 — Scoped Hybrid Search** | Dense vector search + BM25 keyword search run **in parallel** (`asyncio.gather`), both scoped to chunks belonging to matched `doc_ids`. Results are merged via Reciprocal Rank Fusion. | Scoping BM25 to matched doc_ids avoids scrolling the entire collection — critical at scale (e.g., 100K chunks → only ~500 scoped chunks). |
 | **LLM Reranking** | Configurable via `rag_use_llm_reranking` (default: `True`). When enabled, an LLM scores each chunk for relevance, quality, and completeness. When disabled, top chunks by RRF score are returned directly. | Adds semantic understanding but costs an extra LLM call. Can be toggled off for cost/latency savings. |
+| **Source extraction** | Unique sources are extracted from chunks with `filename`, `page` (from `<!-- PAGE N -->` markers), `section`, and `doc_id` (from Qdrant payload). The Composer includes `[1], [2]` inline citations. | Enables the frontend Sources popup where users click a filename to fetch a pre-signed URL (`GET /documents/{doc_id}/view`) and open the original document in a new tab. |
 
 **Configuration** (in `config/settings.py` or `.env`):
 
@@ -1929,6 +1979,17 @@ Add model config to `config/settings.py`:
     github_model_provider: str = "openai"
     github_model: str = "gpt-4o-mini"
     github_temperature: float = 0.2
+```
+
+Then add the mapping in `get_agent_model_config()` so `config.get_agent_model_config("slack_agent")` returns your configured values instead of the fallback default:
+
+```python
+    # config/settings.py — inside get_agent_model_config()
+    mapping = {
+        # ... existing agents ...
+        "slack_agent": (self.slack_model_provider, self.slack_model, self.slack_temperature),
+        "github_agent": (self.github_model_provider, self.github_model, self.github_temperature),
+    }
 ```
 
 ---

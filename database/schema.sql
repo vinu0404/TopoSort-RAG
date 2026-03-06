@@ -19,12 +19,26 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
+-- Personas ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS personas (
+    persona_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name         VARCHAR(128) NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_personas_user ON personas(user_id);
+
 -- Conversations ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS conversations (
     conversation_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id       UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    persona_id       UUID REFERENCES personas(persona_id) ON DELETE SET NULL,
     title            TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -78,6 +92,10 @@ CREATE TABLE IF NOT EXISTS documents (
     processing_status VARCHAR(16) NOT NULL DEFAULT 'pending',
                       -- pending | processing | ready | failed
     error_message   TEXT,
+    storage_key     VARCHAR(1024),           -- S3 object key: uploads/{user_id}/{doc_id}/{filename}
+    storage_bucket  VARCHAR(128),            -- bucket name
+    file_size_bytes BIGINT,                  -- original file size
+    content_type    VARCHAR(128),            -- MIME type (application/pdf, ...)
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -251,9 +251,16 @@ class Source(BaseModel):
     type: str  # "document" | "web" | "database"
     agent: str  # agent_id
     source: str  # filename or URL
-    page: Optional[int] = None
+    page: Optional[Any] = None  # int, list[int], or None
+    doc_id: Optional[str] = None
     url: Optional[str] = None
     excerpt: Optional[str] = None
+
+
+class PersonaContext(BaseModel):
+    """Persona info passed to the composer for response styling."""
+    name: str
+    description: str
 
 
 class ComposerInput(BaseModel):
@@ -267,6 +274,7 @@ class ComposerInput(BaseModel):
 
     conversation_history: List[ConversationTurn] = Field(default_factory=list)
     long_term_memory: LongTermMemory
+    persona: Optional[PersonaContext] = None
 
     timestamp: str = Field(default_factory=lambda: str(time.time()))
 
@@ -283,10 +291,29 @@ class ComposerOutput(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+class PersonaCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    description: str = Field("", max_length=2000)
+
+
+class PersonaUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=128)
+    description: Optional[str] = Field(None, max_length=2000)
+
+
+class PersonaResponse(BaseModel):
+    persona_id: str
+    name: str
+    description: str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    persona_id: Optional[str] = None
 
 
 class MasterAgentInput(BaseModel):

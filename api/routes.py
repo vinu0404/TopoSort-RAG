@@ -5,7 +5,6 @@ REST API routes (non-streaming).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List
 
@@ -25,36 +24,41 @@ from core.orchestrator import Orchestrator
 from database.helpers import (
     bg_save_agent_executions,
     bg_save_messages,
+    create_persona,
+    delete_persona,
     ensure_user_exists,
     ensure_session_exists,
+    get_conversation_persona,
+    seed_default_personas,
     get_or_create_conversation,
+    get_document_for_user,
+    get_user_personas,
+    update_persona,
     list_user_conversations,
     load_conversation_messages_full,
     resolve_hitl_request,
     save_document_record,
-    update_document_status,
     get_document_statuses,
 )
 from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
-
 from utils.llm_providers import get_llm_provider
-from utils.schemas import ComposerInput, QueryRequest
+from utils.schemas import ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/agents")
+@router.get("/agents", tags=["agents"])
 async def list_agents():
     """Return all registered agents and their capabilities."""
     registry = AgentRegistry()
     return {"agents": registry.get_agent_capabilities()}
 
 
-@router.post("/query")
+@router.post("/query", tags=["query"])
 async def handle_query(
     request: QueryRequest,
     session: AsyncSession = Depends(db_session),
@@ -62,11 +66,13 @@ async def handle_query(
 ) -> Dict[str, Any]:
     """Non-streaming query endpoint."""
     await ensure_user_exists(session, user_id)
+    await seed_default_personas(session, user_id)
     sess_id = await ensure_session_exists(session, user_id, request.session_id)
     conv_id = await get_or_create_conversation(
         session, user_id, sess_id,
         title=request.query[:120],
         conversation_id=request.conversation_id,
+        persona_id=request.persona_id,
     )
     await session.commit()
     master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
@@ -130,6 +136,7 @@ async def handle_query(
             elif isinstance(s, Source):
                 all_sources.append(s)
 
+    persona_data = await get_conversation_persona(session, conv_id)
     composer_input = ComposerInput(
         query_id=plan.query_id,
         original_query=request.query,
@@ -138,6 +145,7 @@ async def handle_query(
         all_sources=all_sources,
         long_term_memory=long_term,
         conversation_history=memory_mgr._turns.get(conv_id, []),
+        persona=PersonaContext(**persona_data) if persona_data else None,
     )
     output = await composer.compose(composer_input)
 
@@ -166,7 +174,7 @@ async def handle_query(
     }
 
 
-@router.post("/documents/upload")
+@router.post("/documents/upload", tags=["documents"])
 async def upload_documents(
     files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(db_session),
@@ -174,10 +182,11 @@ async def upload_documents(
 ) -> Dict[str, Any]:
     """
     Accept one or more files.  Creates a DB record for each with
-    status='pending', enqueues a Celery task per file, and returns
-    immediately so the client is not blocked.
+    status='pending', uploads the file to S3, enqueues a Celery task
+    per file, and returns immediately so the client is not blocked.
     """
     import uuid as _uuid
+    from storage.s3 import build_storage_key, upload_file
 
     await ensure_user_exists(session, user_id)
 
@@ -188,6 +197,11 @@ async def upload_documents(
             continue
         doc_id = str(_uuid.uuid4())
         file_bytes = await f.read()
+        ct = f.content_type or "application/octet-stream"
+        s_key = build_storage_key(user_id, doc_id, f.filename)
+
+        # Upload to S3-compatible storage (Backblaze B2 / AWS / MinIO)
+        upload_file(file_bytes, s_key, content_type=ct)
 
         # Persist a 'pending' record in the DB
         await save_document_record(
@@ -197,6 +211,10 @@ async def upload_documents(
             filename=f.filename,
             qdrant_collection=f"user_{user_id}_documents",
             processing_status="pending",
+            storage_key=s_key,
+            storage_bucket=config.s3_bucket,
+            file_size_bytes=len(file_bytes),
+            content_type=ct,
         )
         await session.commit()
 
@@ -216,7 +234,7 @@ async def upload_documents(
     return {"documents": accepted}
 
 
-@router.get("/documents/status")
+@router.get("/documents/status", tags=["documents"])
 async def document_status(
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
@@ -226,7 +244,43 @@ async def document_status(
     return {"documents": docs}
 
 
-@router.get("/documents/status/stream")
+@router.get("/documents/{doc_id}/view", tags=["documents"])
+async def document_view(
+    doc_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Generate a short-lived pre-signed URL for viewing a document.
+
+    Security:
+      1. JWT verified → user_id
+      2. DB ownership check: ``WHERE doc_id = ? AND user_id = ?``
+      3. S3 path scoped to ``uploads/{user_id}/...``
+      4. URL expires in ``s3_presign_expiry`` seconds (default 5 min)
+    """
+    from storage.s3 import generate_presigned_url
+
+    doc = await get_document_for_user(session, doc_id, auth_user_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.storage_key:
+        raise HTTPException(status_code=404, detail="File not available in cloud storage")
+
+    url = generate_presigned_url(
+        storage_key=doc.storage_key,
+        bucket=doc.storage_bucket,
+    )
+
+    return {
+        "url": url,
+        "filename": doc.filename,
+        "content_type": doc.content_type,
+        "expires_in": config.s3_presign_expiry,
+    }
+
+
+@router.get("/documents/status/stream", tags=["documents"])
 async def document_status_stream(
     request: Request,
     auth_user_id: str = Depends(get_current_user_id),
@@ -277,7 +331,7 @@ async def document_status_stream(
     )
 
 
-@router.get("/health")
+@router.get("/health", tags=["health"])
 async def health_check() -> Dict[str, str]:
     return {"status": "ok"}
 
@@ -285,7 +339,7 @@ async def health_check() -> Dict[str, str]:
 # ── HITL response endpoint ──────────────────────────────────────────────
 
 
-@router.post("/hitl/respond")
+@router.post("/hitl/respond", tags=["hitl"])
 async def hitl_respond(
     payload: HitlUserResponse,
     _auth_user_id: str = Depends(get_current_user_id),
@@ -320,17 +374,27 @@ async def hitl_respond(
 # ── Conversation list / load endpoints ──────────────────────────────────
 
 
-@router.get("/conversations")
+@router.get("/conversations", tags=["conversations"])
 async def get_conversations(
+    limit: int = 20,
+    offset: int = 0,
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
-    """List all conversations for the authenticated user (newest first)."""
-    convos = await list_user_conversations(session, auth_user_id)
-    return {"conversations": convos}
+    """List conversations for the authenticated user (newest first, paginated)."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    convos, total = await list_user_conversations(session, auth_user_id, limit=limit, offset=offset)
+    return {
+        "conversations": convos,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + limit < total,
+    }
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", tags=["conversations"])
 async def get_conversation_messages(
     conversation_id: str,
     session: AsyncSession = Depends(db_session),
@@ -351,3 +415,62 @@ async def get_conversation_messages(
 
     messages = await load_conversation_messages_full(session, conversation_id)
     return {"conversation_id": conversation_id, "messages": messages}
+
+
+# ── Persona CRUD ────────────────────────────────────────────────────────
+
+
+@router.post("/personas", tags=["personas"])
+async def create_persona_endpoint(
+    body: PersonaCreate,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Create a new persona for the authenticated user."""
+    persona = await create_persona(session, auth_user_id, body.name, body.description)
+    await session.commit()
+    return persona
+
+
+@router.get("/personas", tags=["personas"])
+async def list_personas(
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """List all personas for the authenticated user."""
+    await seed_default_personas(session, auth_user_id)
+    personas = await get_user_personas(session, auth_user_id)
+    await session.commit()
+    return {"personas": personas}
+
+
+@router.put("/personas/{persona_id}", tags=["personas"])
+async def update_persona_endpoint(
+    persona_id: str,
+    body: PersonaUpdate,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Update a persona owned by the authenticated user."""
+    updated = await update_persona(
+        session, persona_id, auth_user_id,
+        name=body.name, description=body.description,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    await session.commit()
+    return updated
+
+
+@router.delete("/personas/{persona_id}", tags=["personas"])
+async def delete_persona_endpoint(
+    persona_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Delete a persona owned by the authenticated user."""
+    ok = await delete_persona(session, persona_id, auth_user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    await session.commit()
+    return {"deleted": True}

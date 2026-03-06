@@ -137,7 +137,7 @@ Respond ONLY with valid JSON."""
                 f"### User Enhanced Instructions\n"
                 f"{instructions}"
             )
-        else:  # override
+        else:  
             return (
                 f"IMPORTANT — The user wants you to follow these override instructions "
                 f"INSTEAD of the original task.\n\n"

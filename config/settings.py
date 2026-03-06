@@ -70,12 +70,12 @@ class Settings(BaseSettings):
     default_max_retries: int = 2
     default_backoff_multiplier: float = 2.0
     
-    conversation_summary_interval: int = 3
-    max_conversation_history: int = 8
+    conversation_summary_interval: int = 5
+    max_conversation_history: int = 10
 
     # ── HITL (Human-in-the-Loop) ─────────────────────────────────────────────────
     hitl_timeout_seconds: int = 120   # how long to wait for user approval
-    hitl_poll_interval: float = 5   # seconds between DB polls
+    hitl_poll_interval: float = 6   # seconds between DB polls
     hitl_classifier_provider: str = "openai"   # model for classify enhance vs override
     hitl_classifier_model: str = "gpt-4o-mini"
 
@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
+
+    # ── S3-compatible Cloud Storage (Backblaze B2 / AWS / MinIO) ─────────────────
+    s3_endpoint: str = ""                       # e.g. https://s3.us-east-005.backblazeb2.com
+    s3_region: str = "us-east-005"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_bucket: str = ""                         # e.g. linkdrop
+    s3_presign_expiry: int = 300                # pre-signed URL TTL in seconds (5 min)
 
     model_config = {
         "env_file": ".env",
@@ -111,3 +119,32 @@ class Settings(BaseSettings):
 
 
 config = Settings()
+
+
+# ── Default personas seeded for every new user ──────────────────────────────
+DEFAULT_PERSONAS = [
+    {
+        "name": "Friend",
+        "description": (
+            "You are a close, supportive friend. Speak casually and warmly, "
+            "use humor when appropriate, be encouraging, and keep the tone "
+            "relaxed and genuine — like chatting with a best friend."
+        ),
+    },
+    {
+        "name": "Teacher",
+        "description": (
+            "You are a patient, knowledgeable teacher. Explain concepts clearly "
+            "with examples, break down complex topics step by step, encourage "
+            "curiosity, and check understanding along the way."
+        ),
+    },
+    {
+        "name": "Lover",
+        "description": (
+            "You are a caring, romantic partner. Speak affectionately and tenderly, "
+            "be emotionally supportive and attentive, use a warm intimate tone, "
+            "and make the user feel valued and cherished."
+        ),
+    },
+]
