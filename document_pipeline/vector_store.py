@@ -13,6 +13,7 @@ import uuid
 from collections import Counter
 from typing import Any, Dict, List, Optional
 from qdrant_client import AsyncQdrantClient 
+from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import Filter, FieldCondition, MatchValue, VectorParams, Distance, PointStruct
 
 from config.settings import config
@@ -49,13 +50,19 @@ class VectorStore:
         if collection_name in existing:
             return collection_name
 
-        await self.client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=config.embedding_dimension,
-                distance=Distance.COSINE,
-            ),
-        )
+        try:
+            await self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(
+                    size=config.embedding_dimension,
+                    distance=Distance.COSINE,
+                ),
+            )
+        except UnexpectedResponse as e:
+            if e.status_code == 409:
+                # Another worker created it between our check and create — safe to ignore
+                return collection_name
+            raise
 
         # Payload indexes
         for field, schema in [
