@@ -203,6 +203,125 @@ When a persona is selected in the frontend, its `persona_id` is sent with each q
 | `GET` | `/{provider}/callback` | No | OAuth redirect callback. Exchanges auth code for tokens, stores connection, returns HTML that auto-closes the popup. |
 | `DELETE` | `/connections/{connection_id}` | JWT | Disconnect and revoke an OAuth connection. Returns `{ status, connection_id }`. |
 
+### Voice — `/api/v1/voice`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/voice/transcribe` | JWT | Transcribe an audio file via the configured STT provider (default: AssemblyAI). Accepts multipart `audio` file (max 25 MB). Returns `{ text, confidence, language }`. |
+| `POST` | `/voice/synthesize` | JWT | Synthesize text to speech via the configured TTS provider (default: AWS Polly Neural). Body: `{ text, voice? }`. Returns `audio/mpeg` binary stream. |
+
+The `/voice/synthesize` endpoint exists for direct API consumers. In the chat frontend, TTS audio is delivered inline via SSE (`voice_audio` event) — no extra HTTP round-trip needed.
+
+---
+
+## Voice Input / Output Architecture
+
+The system supports full voice interaction: **microphone input** (Speech-to-Text) and **spoken responses** (Text-to-Speech). The key design decision is that voice summary generation runs **in parallel** with text streaming — the user hears the audio response while text is still being typed.
+
+### How It Works
+
+```mermaid
+flowchart TD
+    Mic["🎤 User presses mic button<br/><i>MediaRecorder API</i>"]
+    Mic -->|"audio blob"| STT["POST /voice/transcribe<br/><i>AssemblyAI STT</i>"]
+    STT -->|"transcribed text"| Stream["POST /query/stream<br/><i>source: 'voice'</i>"]
+
+    Stream --> Build["Build ComposerInput<br/><i>agent results, sources,<br/>memory, persona</i>"]
+
+    Build --> Fork["asyncio — two parallel tasks"]
+
+    Fork --> TextTask
+    Fork --> VoiceTask
+
+    subgraph TextTask["Text Streaming (Composer LLM)"]
+        direction TB
+        TextLLM["Composer LLM call<br/><i>full markdown answer<br/>with citations</i>"]
+        TextLLM --> Tokens["SSE token events<br/><i>streamed to frontend</i>"]
+    end
+
+    subgraph VoiceTask["Voice Task (asyncio.create_task)"]
+        direction TB
+        VoiceLLM["Voice Summary LLM call<br/><i>3-4 sentence spoken summary<br/>from raw ComposerInput</i>"]
+        VoiceLLM --> TTS["AWS Polly Neural TTS<br/><i>synthesize → MP3 bytes</i>"]
+        TTS --> B64["Base64 encode audio"]
+    end
+
+    Tokens -->|"each chunk"| Check{"voice_task<br/>.done()?"}
+    Check -->|"No"| Continue["Continue streaming<br/>next token"]
+    Check -->|"Yes"| Emit["Emit SSE voice_audio event<br/><i>base64 MP3 + content_type</i>"]
+
+    Continue --> Tokens
+    Emit --> Play["🔊 Frontend auto-plays audio<br/><i>+ adds replay button</i>"]
+
+    Tokens -->|"streaming done"| Fallback{"Voice task<br/>still pending?"}
+    Fallback -->|"Yes"| Await["await voice_task<br/>then emit voice_audio"]
+    Fallback -->|"No"| Done["Done — both complete"]
+    Await --> Done
+
+    style Mic fill:#2196F3,color:#fff
+    style STT fill:#2196F3,color:#fff
+    style TextLLM fill:#9C27B0,color:#fff
+    style VoiceLLM fill:#FF9800,color:#fff
+    style TTS fill:#FF9800,color:#fff
+    style Play fill:#4CAF50,color:#fff
+    style Emit fill:#4CAF50,color:#fff
+```
+
+### Why Parallel, Not Sequential
+
+A sequential approach (wait for full text → summarize → TTS) adds **8-12 seconds** of delay after the text finishes. The parallel design eliminates this:
+
+| Approach | Flow | User-Perceived Latency |
+|----------|------|----------------------|
+| **Sequential** | Text streaming → Voice LLM → TTS → play | +8-12s after text done |
+| **Parallel (our approach)** | Text streaming ‖ (Voice LLM → TTS) → play mid-stream | ~0s — audio arrives during text streaming |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Voice LLM uses raw `ComposerInput`, not finished text** | The voice summary doesn't depend on the text answer. Both LLM calls receive the same input (agent results, sources, memory, persona) but produce different outputs — rich markdown vs. concise spoken summary. This enables true parallelism. |
+| **Mid-stream emission** | After each token chunk, the server checks `voice_task.done()`. The moment TTS finishes, the `voice_audio` SSE event is emitted while text is still streaming. The frontend plays audio immediately. |
+| **Fallback await** | If the voice task takes longer than the entire text stream (unlikely), it falls back to `await voice_task` after streaming completes — guaranteeing audio is always delivered. |
+| **Base64 in SSE, not separate HTTP** | Audio is embedded in the SSE stream as a base64-encoded MP3. No extra HTTP round-trip, no race conditions, no CORS issues. |
+| **Persona-aware voice** | The voice summary prompt includes the active persona's description, so the spoken response matches the persona's tone (casual friend vs. formal teacher). |
+
+### Provider Architecture
+
+STT and TTS use a **provider-agnostic pattern** with abstract base classes:
+
+```
+voice/
+├── __init__.py              # get_stt_provider(), get_tts_provider()
+├── stt/
+│   ├── base.py              # BaseSTTProvider (ABC) + STTResult
+│   └── assemblyai.py        # AssemblyAI implementation
+└── tts/
+    ├── base.py              # BaseTTSProvider (ABC) + TTSResult
+    └── aws_polly.py         # AWS Polly Neural implementation
+```
+
+| Layer | Class | Description |
+|-------|-------|-------------|
+| **STT Base** | `BaseSTTProvider` | ABC with `transcribe(audio_bytes, content_type, language) → STTResult` |
+| **STT Provider** | `AssemblyAISTTProvider` | 3-step async flow: upload audio → create transcript → poll until completed |
+| **TTS Base** | `BaseTTSProvider` | ABC with `synthesize(text, voice, language) → TTSResult` |
+| **TTS Provider** | `AWSPollyTTSProvider` | Neural engine via aioboto3, configurable voice ID, returns MP3 |
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `STT_PROVIDER` | `assemblyai` | STT provider (`assemblyai`) |
+| `ASSEMBLYAI_API_KEY` | — | AssemblyAI API key |
+| `TTS_PROVIDER` | `aws_polly` | TTS provider (`aws_polly`) |
+| `AWS_ACCESS_KEY_ID` | — | AWS credentials for Polly |
+| `AWS_SECRET_ACCESS_KEY` | — | AWS credentials for Polly |
+| `AWS_REGION` | `us-east-1` | AWS region |
+| `AWS_POLLY_VOICE_ID` | `Matthew` | Polly voice (e.g., `Matthew`, `Joanna`, `Kajal`) |
+| `VOICE_MAX_AUDIO_SIZE_MB` | `25` | Max upload size for STT |
+| `VOICE_MAX_DURATION_SEC` | `60` | Max recording duration |
+
 ---
 
 ## System Architecture

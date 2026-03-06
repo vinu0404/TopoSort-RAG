@@ -390,6 +390,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-height: 0;
   }
   .sidebar h3 {
     font-size: 0.75rem;
@@ -540,11 +541,14 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
   .messages {
     flex: 1;
     overflow-y: auto;
     padding: 24px;
+    min-height: 0;
   }
   .msg {
     margin-bottom: 16px;
@@ -1526,6 +1530,9 @@ async function switchConversation(conversationId) {
       } else if (m.role === 'assistant') {
         const el = createAssistantMessage();
         appendToAssistant(el, m.content);
+        // Restore sources, citations, and markdown
+        const sources = (m.metadata && m.metadata.sources) ? m.metadata.sources : [];
+        finalizeAssistant(el, sources);
       } else if (m.role === 'system') {
         addSystemMessage(m.content);
       }
@@ -1826,7 +1833,7 @@ async function checkHealth() {
   }
 }
 checkHealth();
-setInterval(checkHealth, 15000);
+setInterval(checkHealth, 60000);
 
 // ── Examples ────────────────────────────────────────────────
 function fillQuery(text) {
@@ -2305,6 +2312,7 @@ async function sendStreaming(query) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let eventType = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -2314,7 +2322,6 @@ async function sendStreaming(query) {
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
-      let eventType = null;
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
@@ -2659,6 +2666,7 @@ async function sendStreamingVoice(query) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let eventType = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -2667,7 +2675,6 @@ async function sendStreamingVoice(query) {
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
-      let eventType = null;
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
@@ -2708,6 +2715,9 @@ async function sendStreamingVoice(query) {
         updatePipelineAgent(data.agent, data.done);
         if (data.sources && Array.isArray(data.sources)) sources.push(...data.sources);
         break;
+      case 'voice_audio':
+        if (data.audio) playVoiceAudio(data.audio, data.content_type || 'audio/mpeg', msgEl);
+        break;
       case 'done':
         typingInd.classList.remove('visible');
         if (msgEl) finalizeAssistant(msgEl, sources);
@@ -2717,10 +2727,6 @@ async function sendStreamingVoice(query) {
           if (currentPersonaId) _convPersonaMap[data.conversation_id] = currentPersonaId;
         }
         loadConversations();
-        // Auto-play voice response
-        if (data.voice_summary) {
-          playVoiceResponse(data.voice_summary, msgEl);
-        }
         break;
       case 'error':
         typingInd.classList.remove('visible');
@@ -2736,36 +2742,28 @@ async function sendStreamingVoice(query) {
   }
 }
 
-async function playVoiceResponse(text, msgEl) {
+function playVoiceAudio(base64Audio, contentType, msgEl) {
   try {
-    const r = await fetch(`${API}/voice/synthesize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ text }),
-    });
-    if (!r.ok) return;
-
-    const audioBlob = await r.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
+    const binaryStr = atob(base64Audio);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const blob = new Blob([bytes], { type: contentType });
+    const audioUrl = URL.createObjectURL(blob);
     const audio = new Audio(audioUrl);
 
-    // Add a play button to the message
     if (msgEl) {
       const playBtn = document.createElement('button');
       playBtn.className = 'voice-play-btn';
       playBtn.textContent = '🔊';
       playBtn.title = 'Play voice response';
-      playBtn.onclick = () => {
-        audio.currentTime = 0;
-        audio.play();
-      };
+      playBtn.onclick = () => { audio.currentTime = 0; audio.play(); };
       msgEl.appendChild(playBtn);
     }
 
     audio.play();
     audio.onended = () => URL.revokeObjectURL(audioUrl);
   } catch (err) {
-    console.error('TTS playback error:', err);
+    console.error('Voice playback error:', err);
   }
 }
 </script>
