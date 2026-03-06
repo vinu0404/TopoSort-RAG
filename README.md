@@ -172,8 +172,21 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | `GET` | `/documents/status` | JWT | List all documents and their processing status for the authenticated user. Returns `{ documents: [...] }`. |
 | `GET` | `/documents/status/stream` | JWT | SSE stream of real-time document processing status updates (Redis Pub/Sub). Events: `doc_status`. |
 | `POST` | `/hitl/respond` | JWT | Approve or deny a HITL (Human-in-the-Loop) request. Body: `{ request_id, decision, instructions? }`. Returns `{ request_id, status }`. |
-| `GET` | `/conversations` | JWT | List all conversations for the authenticated user (newest first). Returns `{ conversations: [...] }`. |
+| `GET` | `/conversations` | JWT | List conversations (newest first) with pagination. Query params: `limit` (default 20), `offset` (default 0). Returns `{ conversations: [...], total, limit, offset, has_more }`. |
 | `GET` | `/conversations/{conversation_id}/messages` | JWT | Load all messages for a specific conversation. Returns `{ conversation_id, messages: [...] }`. |
+
+### Personas — `/api/v1/personas`
+
+Personas let each user define custom AI personalities that shape the Composer Agent's tone and behavior on a per-conversation basis. Three default personas (**Friend**, **Teacher**, **Lover**) are seeded automatically on first access.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/personas` | JWT | List all personas for the authenticated user (seeds defaults on first call). Returns `{ personas: [...] }`. |
+| `POST` | `/personas` | JWT | Create a new persona. Body: `{ name, description }`. Returns `{ persona }`. |
+| `PUT` | `/personas/{persona_id}` | JWT | Update an existing persona. Body: `{ name?, description? }`. Returns `{ persona }`. |
+| `DELETE` | `/personas/{persona_id}` | JWT | Delete a persona. Returns `{ status }`. |
+
+When a persona is selected in the frontend, its `persona_id` is sent with each query. The Composer Agent receives a system-level instruction derived from the persona's description, influencing the tone and style of the final answer.
 
 ### OAuth Connectors — `/api/v1/connectors`
 
@@ -421,7 +434,7 @@ flowchart TD
 
 ## RAG Document Pipeline — How Documents Are Processed
 
-Document processing is **fully asynchronous**. The upload endpoint stores the original file in **S3-compatible cloud storage** (Backblaze B2 / AWS S3 / MinIO), saves the DB record with `storage_key` and `storage_bucket`, then dispatches a **Celery task** via **Redis**. The heavy pipeline (parsing, chunking, embedding) runs in the background. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
+Document processing is **fully asynchronous**. The upload endpoint saves a DB record with `storage_key` and `storage_bucket`, then dispatches a **Celery task** per file via **Redis**. Each Celery worker handles both the **S3 upload** and the heavy pipeline (parsing, chunking, embedding) — so the API response is instant regardless of how many files are uploaded. Multiple workers process files **in parallel**. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
 
 ### Upload & Storage Flow
 
@@ -431,51 +444,59 @@ flowchart TD
 
     Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i>"]
 
-    API --> S3["Upload to S3-compatible storage<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
+    API --> DB["Save DB record per file<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
 
-    S3 --> DB["Save DB record<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
+    DB -->|"Celery .delay() per file<br/>(file bytes hex-encoded)"| Queue["Redis Task Queue<br/><i>broker — one task per file</i>"]
 
-    DB -->|"Celery .delay()"| Queue["Redis Task Queue<br/><i>broker</i>"]
+    API -->|"instant response"| Response["Return { documents: [{doc_id, filename, status}] }<br/><i>No S3 upload blocking the API</i>"]
 
-    Queue --> Worker["Celery Worker<br/><i>process_document_task</i><br/>autoretry ×3, exponential backoff<br/>soft limit 5 min, hard limit 6 min"]
+    Queue --> Worker
 
-    Worker --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
-    Status1 --> Parser["Parser<br/><i>Extract raw text</i>"]
-
-    Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()<br/><i>+ &lt;!-- PAGE N --&gt; markers</i>"]
-    Parser -->|"DOCX"| PythonDocx["python-docx<br/>paragraphs"]
-    Parser -->|"Excel/CSV"| Pandas["pandas<br/>df.to_string()"]
-    Parser -->|"TXT/MD"| RawText["Read bytes<br/>UTF-8 decode"]
-
-    PyMuPDF --> RawContent["Raw text content<br/>+ metadata"]
-    PythonDocx --> RawContent
-    Pandas --> RawContent
-    RawText --> RawContent
-
-    RawContent --> Parallel
-
-    subgraph Parallel["Parallel: description ‖ chunking"]
-        direction LR
-        Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
-        Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships,<br/>page number extraction</i>"]
-    end
-
-    Parallel --> BatchEmbed["Batch Embedding<br/><i>text-embedding-3-small<br/>1536 dims, embed_batch()</i>"]
-
-    BatchEmbed --> Store
-
-    subgraph Store["Store in Qdrant"]
+    subgraph Worker["Celery Workerk<br/><i>autoretry ×3 · exponential backoff · soft 5 min / hard 6 min<br/>multiple files processed in parallel across workers</i>"]
         direction TB
-        Collection["Create / get collection<br/><i>user_{id}_documents</i>"]
-        Collection --> DocPoint["Upsert document-level point<br/><i>UUID, description embedding,<br/>filename, doc_type, total_chunks</i>"]
-        DocPoint --> ChunkPoints["Upsert chunk points<br/><i>UUID, chunk embedding,<br/>text, metadata (page, section),<br/>doc_id at payload level</i>"]
-        ChunkPoints --> PayloadIdx["Create payload indexes<br/><i>doc_type, date, section_title</i>"]
-    end
 
-    Store --> Status2["DB → status = ready<br/>Redis Pub/Sub → SSE<br/><i>or status = failed on error</i>"]
+        S3["Upload to S3<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
+
+        S3 --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
+        Status1 --> Parser["Parser<br/><i>Extract raw text</i>"]
+
+        Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()<br/><i>+ &lt;!-- PAGE N --&gt; markers</i>"]
+        Parser -->|"DOCX"| PythonDocx["python-docx<br/>paragraphs"]
+        Parser -->|"Excel/CSV"| Pandas["pandas<br/>df.to_string()"]
+        Parser -->|"TXT/MD"| RawText["Read bytes<br/>UTF-8 decode"]
+
+        PyMuPDF --> RawContent["Raw text content<br/>+ metadata"]
+        PythonDocx --> RawContent
+        Pandas --> RawContent
+        RawText --> RawContent
+
+        RawContent --> Parallel
+
+        subgraph Parallel["Parallel: description ‖ chunking"]
+        
+            direction LR
+            Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
+            Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships,<br/>page number extraction</i>"]
+        end
+
+        Parallel --> BatchEmbed["Batch Embedding<br/><i>text-embedding-3-small<br/>1536 dims, embed_batch()</i>"]
+
+        BatchEmbed --> Store
+
+        subgraph Store["Store in Qdrant"]
+            direction TB
+            Collection["Create / get collection<br/><i>user_{id}_documents</i>"]
+            Collection --> DocPoint["Upsert document-level point<br/><i>UUID, description embedding,<br/>filename, doc_type, total_chunks</i>"]
+            DocPoint --> ChunkPoints["Upsert chunk points<br/><i>UUID, chunk embedding,<br/>text, metadata (page, section),<br/>doc_id at payload level</i>"]
+            ChunkPoints --> PayloadIdx["Create payload indexes<br/><i>doc_type, date, section_title</i>"]
+        end
+
+        Store --> Status2["DB → status = ready<br/>Redis Pub/Sub → SSE<br/><i>or status = failed on error</i>"]
+    end
 
     style Upload fill:#2196F3,color:#fff
     style API fill:#2196F3,color:#fff
+    style Response fill:#2196F3,color:#fff
     style S3 fill:#FF9800,color:#fff
     style DB fill:#FF9800,color:#fff
     style Queue fill:#e53935,color:#fff
