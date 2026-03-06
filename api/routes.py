@@ -29,6 +29,7 @@ from database.helpers import (
     ensure_user_exists,
     ensure_session_exists,
     get_conversation_persona,
+    seed_default_personas,
     get_or_create_conversation,
     get_document_for_user,
     get_user_personas,
@@ -50,14 +51,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/agents")
+@router.get("/agents", tags=["agents"])
 async def list_agents():
     """Return all registered agents and their capabilities."""
     registry = AgentRegistry()
     return {"agents": registry.get_agent_capabilities()}
 
 
-@router.post("/query")
+@router.post("/query", tags=["query"])
 async def handle_query(
     request: QueryRequest,
     session: AsyncSession = Depends(db_session),
@@ -65,6 +66,7 @@ async def handle_query(
 ) -> Dict[str, Any]:
     """Non-streaming query endpoint."""
     await ensure_user_exists(session, user_id)
+    await seed_default_personas(session, user_id)
     sess_id = await ensure_session_exists(session, user_id, request.session_id)
     conv_id = await get_or_create_conversation(
         session, user_id, sess_id,
@@ -134,6 +136,7 @@ async def handle_query(
             elif isinstance(s, Source):
                 all_sources.append(s)
 
+    persona_data = await get_conversation_persona(session, conv_id)
     composer_input = ComposerInput(
         query_id=plan.query_id,
         original_query=request.query,
@@ -142,7 +145,7 @@ async def handle_query(
         all_sources=all_sources,
         long_term_memory=long_term,
         conversation_history=memory_mgr._turns.get(conv_id, []),
-        persona=PersonaContext(**persona_data) if (persona_data := await get_conversation_persona(session, conv_id)) else None,
+        persona=PersonaContext(**persona_data) if persona_data else None,
     )
     output = await composer.compose(composer_input)
 
@@ -171,7 +174,7 @@ async def handle_query(
     }
 
 
-@router.post("/documents/upload")
+@router.post("/documents/upload", tags=["documents"])
 async def upload_documents(
     files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(db_session),
@@ -231,7 +234,7 @@ async def upload_documents(
     return {"documents": accepted}
 
 
-@router.get("/documents/status")
+@router.get("/documents/status", tags=["documents"])
 async def document_status(
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
@@ -241,7 +244,7 @@ async def document_status(
     return {"documents": docs}
 
 
-@router.get("/documents/{doc_id}/view")
+@router.get("/documents/{doc_id}/view", tags=["documents"])
 async def document_view(
     doc_id: str,
     session: AsyncSession = Depends(db_session),
@@ -277,7 +280,7 @@ async def document_view(
     }
 
 
-@router.get("/documents/status/stream")
+@router.get("/documents/status/stream", tags=["documents"])
 async def document_status_stream(
     request: Request,
     auth_user_id: str = Depends(get_current_user_id),
@@ -328,7 +331,7 @@ async def document_status_stream(
     )
 
 
-@router.get("/health")
+@router.get("/health", tags=["health"])
 async def health_check() -> Dict[str, str]:
     return {"status": "ok"}
 
@@ -336,7 +339,7 @@ async def health_check() -> Dict[str, str]:
 # ── HITL response endpoint ──────────────────────────────────────────────
 
 
-@router.post("/hitl/respond")
+@router.post("/hitl/respond", tags=["hitl"])
 async def hitl_respond(
     payload: HitlUserResponse,
     _auth_user_id: str = Depends(get_current_user_id),
@@ -371,17 +374,27 @@ async def hitl_respond(
 # ── Conversation list / load endpoints ──────────────────────────────────
 
 
-@router.get("/conversations")
+@router.get("/conversations", tags=["conversations"])
 async def get_conversations(
+    limit: int = 20,
+    offset: int = 0,
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
-    """List all conversations for the authenticated user (newest first)."""
-    convos = await list_user_conversations(session, auth_user_id)
-    return {"conversations": convos}
+    """List conversations for the authenticated user (newest first, paginated)."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    convos, total = await list_user_conversations(session, auth_user_id, limit=limit, offset=offset)
+    return {
+        "conversations": convos,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + limit < total,
+    }
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", tags=["conversations"])
 async def get_conversation_messages(
     conversation_id: str,
     session: AsyncSession = Depends(db_session),
@@ -407,7 +420,7 @@ async def get_conversation_messages(
 # ── Persona CRUD ────────────────────────────────────────────────────────
 
 
-@router.post("/personas")
+@router.post("/personas", tags=["personas"])
 async def create_persona_endpoint(
     body: PersonaCreate,
     session: AsyncSession = Depends(db_session),
@@ -419,17 +432,19 @@ async def create_persona_endpoint(
     return persona
 
 
-@router.get("/personas")
+@router.get("/personas", tags=["personas"])
 async def list_personas(
     session: AsyncSession = Depends(db_session),
     auth_user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
     """List all personas for the authenticated user."""
+    await seed_default_personas(session, auth_user_id)
     personas = await get_user_personas(session, auth_user_id)
+    await session.commit()
     return {"personas": personas}
 
 
-@router.put("/personas/{persona_id}")
+@router.put("/personas/{persona_id}", tags=["personas"])
 async def update_persona_endpoint(
     persona_id: str,
     body: PersonaUpdate,
@@ -447,7 +462,7 @@ async def update_persona_endpoint(
     return updated
 
 
-@router.delete("/personas/{persona_id}")
+@router.delete("/personas/{persona_id}", tags=["personas"])
 async def delete_persona_endpoint(
     persona_id: str,
     session: AsyncSession = Depends(db_session),

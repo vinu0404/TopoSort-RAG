@@ -95,7 +95,7 @@
   }
 
   /* ── Connections ───────────────────────────────────────── */
-  .connections-section { margin-top: 16px; }
+  .connections-section { }
   .connections-section h3 { font-size: 0.85rem; margin-bottom: 8px; }
   .conn-list { display: flex; flex-direction: column; gap: 6px; }
   .conn-item {
@@ -149,32 +149,49 @@
   /* ── Conversation sidebar ───────────────────────────────── */
 
   /* ── Personas ───────────────────────────────────────────── */
-  .personas-section { margin-bottom: 20px; }
+  .personas-section { }
   .personas-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .persona-list {
     display: flex; flex-direction: column; gap: 2px;
-    max-height: 180px; overflow-y: auto;
+    max-height: 160px; overflow-y: auto;
   }
   .persona-item {
-    padding: 7px 10px; border-radius: 6px;
+    padding: 8px 10px; border-radius: 8px;
     cursor: pointer; font-size: 0.8rem;
-    color: #333; transition: background 0.15s;
+    color: #555; transition: all 0.15s;
     white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; line-height: 1.4;
     display: flex; align-items: center; gap: 6px;
+    border: 1.5px solid transparent;
   }
-  .persona-item:hover { background: #f5f5f5; }
-  .persona-item.active { background: #e8e8e8; font-weight: 600; }
+  .persona-item:hover { background: #f0f0f0; color: #222; }
+  .persona-item.active {
+    background: #111; color: #fff; font-weight: 600;
+    border-color: #111;
+  }
+  .persona-item.active .persona-icon { filter: brightness(10); }
+  .persona-item.active .persona-del { color: #888; }
+  .persona-item.active .persona-del:hover { color: #ff6b6b; background: rgba(255,59,48,0.15); }
   .persona-item .persona-icon { font-size: 0.9rem; flex-shrink: 0; }
   .persona-item .persona-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
   .persona-item .persona-del {
     background: none; border: none; cursor: pointer;
-    color: #ccc; font-size: 0.7rem; padding: 2px 4px;
-    border-radius: 4px; flex-shrink: 0; opacity: 0;
-    transition: opacity 0.15s;
+    color: #999; font-size: 0.75rem; padding: 2px 5px;
+    border-radius: 4px; flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
   }
-  .persona-item:hover .persona-del { opacity: 1; }
+  .persona-item .persona-edit {
+    background: none; border: none; cursor: pointer;
+    color: #999; font-size: 0.75rem; padding: 2px 5px;
+    border-radius: 4px; flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+  }
+  .persona-item .persona-edit:hover { color: #007aff; background: #e8f0fe; }
   .persona-item .persona-del:hover { color: #ff3b30; background: #fee; }
+  .persona-item.active .persona-edit,
+  .persona-item.active .persona-del { color: #bbb; }
+  .persona-item.active .persona-edit:hover { color: #5ac8fa; background: rgba(90,200,250,0.15); }
+  .persona-item.active .persona-del:hover { color: #ff6b6b; background: rgba(255,59,48,0.15); }
   .add-persona-btn {
     width: 100%; padding: 7px 10px; margin-top: 4px;
     border: 1px dashed #d0d0d0; border-radius: 6px;
@@ -235,17 +252,19 @@
 
   /* ── Active persona indicator in chat ───────────────────── */
   .persona-indicator {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 0.78rem; color: #666;
-    padding: 5px 12px;
-    background: #f8f8f8; border-radius: 20px;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: #fff;
+    padding: 5px 14px;
+    background: #111; border-radius: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
   }
-  .persona-indicator .pi-name { font-weight: 600; color: #333; }
+  .persona-indicator .pi-name { font-weight: 600; color: #fff; }
   .persona-indicator .pi-clear {
     background: none; border: none; cursor: pointer;
-    color: #bbb; font-size: 0.75rem; padding: 0 2px;
+    color: #999; font-size: 0.75rem; padding: 0 2px;
+    transition: color 0.15s;
   }
-  .persona-indicator .pi-clear:hover { color: #ff3b30; }
+  .persona-indicator .pi-clear:hover { color: #ff6b6b; }
 
   .new-chat-btn {
     width: 100%;
@@ -253,10 +272,10 @@
     background: #000;
     color: #fff;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 0.85rem;
     cursor: pointer;
-    margin-bottom: 16px;
+    margin-bottom: 4px;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -264,13 +283,13 @@
     font-weight: 500;
   }
   .new-chat-btn:hover { opacity: 0.8; }
-  .conversations-section { margin-bottom: 20px; }
+  .conversations-section { }
   .conversations-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .conv-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: 280px;
+    max-height: 220px;
     overflow-y: auto;
   }
   .conv-item {
@@ -299,6 +318,13 @@
     font-weight: 400;
     margin-top: 2px;
   }
+  .conv-load-more {
+    width: 100%; padding: 6px 0; margin-top: 4px;
+    background: none; border: 1px dashed #ccc; border-radius: 6px;
+    font-size: 0.75rem; color: #666; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .conv-load-more:hover { border-color: #000; color: #000; }
 
   /* ── Header ────────────────────────────────────────────── */
   .header {
@@ -357,10 +383,13 @@
 
   /* ── Sidebar ───────────────────────────────────────────── */
   .sidebar {
-    width: 240px;
+    width: 260px;
     border-right: 1px solid #e0e0e0;
-    padding: 24px;
+    padding: 16px 12px;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
   .sidebar h3 {
     font-size: 0.75rem;
@@ -370,13 +399,40 @@
     color: #999;
     margin-bottom: 12px;
   }
+
+  /* ── Collapsible section ───────────────────────────────── */
+  .sb-section { border-bottom: 1px solid #eee; }
+  .sb-section:last-child { border-bottom: none; }
+  .sb-toggle {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; padding: 10px 8px;
+    background: none; border: none; cursor: pointer;
+    font-size: 0.75rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    color: #222; transition: color 0.15s;
+  }
+  .sb-toggle:hover { color: #000; }
+  .sb-toggle .sb-chevron {
+    font-size: 0.55rem; transition: transform 0.2s;
+    color: #555;
+  }
+  .sb-toggle .sb-badge {
+    margin-left: auto;
+    font-size: 0.6rem; font-weight: 600;
+    background: #f0f0f0; color: #888;
+    padding: 1px 6px; border-radius: 8px;
+    min-width: 18px; text-align: center;
+  }
+  .sb-section.collapsed .sb-chevron { transform: rotate(-90deg); }
+  .sb-section.collapsed .sb-body { display: none; }
+  .sb-body { padding: 0 6px 10px; }
   .upload-zone {
     border: 1.5px dashed #d0d0d0;
     border-radius: 8px;
-    padding: 20px;
+    padding: 16px;
     text-align: center;
     cursor: pointer;
-    margin-bottom: 24px;
+    margin-bottom: 6px;
     position: relative;
     transition: all 0.15s;
   }
@@ -419,7 +475,6 @@
 
   /* ── Pipeline ──────────────────────────────────────────── */
   .pipeline-section {
-    margin-top: 24px;
     display: none;
   }
   .pipeline-section.visible {
@@ -466,7 +521,6 @@
 
   /* ── Info section ──────────────────────────────────────── */
   .info-section {
-    margin-top: 24px;
   }
   .info-section p {
     font-size: 0.8rem;
@@ -1017,49 +1071,93 @@
   <aside class="sidebar">
     <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
 
-    <div class="conversations-section">
-      <h3>Conversations</h3>
-      <div class="conv-list" id="convList">
-        <div style="color:#888;font-size:0.8em">No conversations yet</div>
+    <!-- Conversations -->
+    <div class="sb-section" id="sbConversations">
+      <button class="sb-toggle" onclick="toggleSection('sbConversations')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Conversations</span>
+        <span class="sb-badge" id="convBadge">0</span>
+      </button>
+      <div class="sb-body">
+        <div class="conv-list" id="convList">
+          <div style="color:#888;font-size:0.8em">No conversations yet</div>
+        </div>
       </div>
     </div>
 
-    <div class="personas-section">
-      <h3>Personas</h3>
-      <div class="persona-list" id="personaList">
-        <div style="color:#888;font-size:0.8em">No personas yet</div>
+    <!-- Personas -->
+    <div class="sb-section" id="sbPersonas">
+      <button class="sb-toggle" onclick="toggleSection('sbPersonas')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Personas</span>
+        <span class="sb-badge" id="personaBadge">0</span>
+      </button>
+      <div class="sb-body">
+        <div class="persona-list" id="personaList">
+          <div style="color:#888;font-size:0.8em">No personas yet</div>
+        </div>
+        <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
       </div>
-      <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
     </div>
 
-    <h3>Upload</h3>
-    <div class="upload-zone" id="uploadZone">
-      <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
-      <p>Drop files or click</p>
-    </div>
-    <div class="upload-status" id="uploadStatus"></div>
-
-    <div class="pipeline-section" id="pipelineSection">
-      <h3>Agent Pipeline</h3>
-      <div class="pipeline" id="pipeline"></div>
-    </div>
-
-    <div class="info-section">
-      <h3>Info</h3>
-      <p><strong>Agents:</strong> <span id="agentList">Loading…</span></p>
-      <p><strong>Features:</strong></p>
-      <ul>
-        <li>Streaming responses</li>
-        <li>Document upload (RAG)</li>
-        <li>Long-term memory</li>
-        <li>Multi-agent orchestration</li>
-      </ul>
+    <!-- Upload -->
+    <div class="sb-section" id="sbUpload">
+      <button class="sb-toggle" onclick="toggleSection('sbUpload')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Documents</span>
+      </button>
+      <div class="sb-body">
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+          <p>Drop files or click</p>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
     </div>
 
-    <div class="connections-section">
-      <h3>Connections</h3>
-      <div class="conn-list" id="connList">
-        <!-- Populated by JS -->
+    <!-- Pipeline -->
+    <div class="sb-section" id="sbPipeline">
+      <button class="sb-toggle" onclick="toggleSection('sbPipeline')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Pipeline</span>
+      </button>
+      <div class="sb-body">
+        <div class="pipeline-section" id="pipelineSection">
+          <div class="pipeline" id="pipeline"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connections -->
+    <div class="sb-section" id="sbConnections">
+      <button class="sb-toggle" onclick="toggleSection('sbConnections')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Connections</span>
+      </button>
+      <div class="sb-body">
+        <div class="connections-section">
+          <div class="conn-list" id="connList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info -->
+    <div class="sb-section collapsed" id="sbInfo">
+      <button class="sb-toggle" onclick="toggleSection('sbInfo')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Info</span>
+      </button>
+      <div class="sb-body">
+        <div class="info-section">
+          <p><strong>Agents:</strong> <span id="agentList">Loading…</span></p>
+          <p><strong>Features:</strong></p>
+          <ul>
+            <li>Streaming responses</li>
+            <li>Document upload (RAG)</li>
+            <li>Long-term memory</li>
+            <li>Multi-agent orchestration</li>
+          </ul>
+        </div>
       </div>
     </div>
   </aside>
@@ -1100,6 +1198,11 @@
 // ── Config ──────────────────────────────────────────────────
 const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
 const API = `${BASE}/api/v1`;
+
+// ── Sidebar accordion ──────────────────────────────────
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
 
 let currentUser = null;
 let currentSessionId = null;
@@ -1256,19 +1359,28 @@ async function doLogout() {
 }
 
 // ─── Conversation Management ──────────────────────────────
-async function loadConversations() {
+let _convOffset = 0;
+let _convHasMore = false;
+let _convTotal = 0;
+
+async function loadConversations(append = false) {
   const convList = document.getElementById('convList');
   if (!convList || !currentUser) return;
+  if (!append) { _convOffset = 0; }
   try {
-    const res = await fetch(`${API}/conversations`, { headers: authHeaders() });
+    const res = await fetch(`${API}/conversations?limit=20&offset=${_convOffset}`, { headers: authHeaders() });
     if (!res.ok) return;
     const data = await res.json();
     const convos = data.conversations || [];
-    if (!convos.length) {
+    _convHasMore = data.has_more || false;
+    _convTotal = data.total || 0;
+    const badge = document.getElementById('convBadge');
+    if (badge) badge.textContent = _convTotal;
+    if (!convos.length && !append) {
       convList.innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
       return;
     }
-    convList.innerHTML = convos.map(c => {
+    const html = convos.map(c => {
       const isActive = c.conversation_id === currentConversationId;
       const title = c.title || 'Untitled';
       const time = c.updated_at ? new Date(c.updated_at).toLocaleDateString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
@@ -1278,9 +1390,30 @@ async function loadConversations() {
         <span class="conv-time">${time}</span>
       </div>`;
     }).join('');
+
+    // Remove existing load-more button before appending
+    convList.querySelector('.conv-load-more')?.remove();
+
+    if (append) {
+      convList.insertAdjacentHTML('beforeend', html);
+    } else {
+      convList.innerHTML = html;
+    }
+
+    // Add load-more button if there are more
+    if (_convHasMore) {
+      convList.insertAdjacentHTML('beforeend',
+        `<button class="conv-load-more" onclick="loadMoreConversations()">Load more…</button>`);
+    }
+
+    _convOffset += convos.length;
   } catch (err) {
     console.error('loadConversations error:', err);
   }
+}
+
+function loadMoreConversations() {
+  loadConversations(true);
 }
 
 async function switchConversation(conversationId) {
@@ -1366,18 +1499,23 @@ async function loadPersonas() {
     if (!res.ok) return;
     const data = await res.json();
     const personas = data.personas || [];
+    const pBadge = document.getElementById('personaBadge');
+    if (pBadge) pBadge.textContent = personas.length;
     if (!personas.length) {
       personaListEl.innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
       return;
     }
-    personaListEl.innerHTML = personas.map(p => `
-      <div class="persona-item ${currentPersonaId === p.persona_id ? 'active' : ''}"
-           onclick="selectPersona('${p.persona_id}', '${escapeHtml(p.name)}')">
+    personaListEl.innerHTML = personas.map(p => {
+      const eName = escapeHtml(p.name).replace(/'/g, "\\'");
+      const eDesc = escapeHtml(p.description || '').replace(/'/g, "\\'");
+      return `<div class="persona-item ${currentPersonaId === p.persona_id ? 'active' : ''}"
+           onclick="selectPersona('${p.persona_id}', '${eName}')">
         <span class="persona-icon">🎭</span>
         <span class="persona-name">${escapeHtml(p.name)}</span>
+        <button class="persona-edit" onclick="event.stopPropagation(); showPersonaModal('${p.persona_id}', '${eName}', '${eDesc}')" title="Edit">✎</button>
         <button class="persona-del" onclick="event.stopPropagation(); deletePersonaUI('${p.persona_id}')" title="Delete">&times;</button>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   } catch (err) {
     console.error('loadPersonas error:', err);
   }
@@ -1600,7 +1738,9 @@ window.addEventListener('message', (event) => {
     authOverlay.classList.add('hidden');
     userNameEl.textContent = stored.display_name || 'User';
     loadConnections();
+    loadAgents();
     loadConversations();
+    loadPersonas();
   }
 })();
 

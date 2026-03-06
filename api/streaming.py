@@ -47,6 +47,7 @@ from database.helpers import (
     ensure_session_exists,
     get_conversation_persona,
     get_or_create_conversation,
+    seed_default_personas,
     poll_hitl_decision,
 )
 from tools.registry import ToolRegistry
@@ -197,6 +198,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
 
     try:
         await ensure_user_exists(session, user_id)
+        await seed_default_personas(session, user_id)
         sess_id = await ensure_session_exists(session, user_id, request.session_id)
         conv_id = await get_or_create_conversation(
             session, user_id, sess_id,

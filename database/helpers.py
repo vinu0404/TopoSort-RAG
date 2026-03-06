@@ -114,6 +114,10 @@ async def get_or_create_conversation(
         existing = result.scalar_one_or_none()
         if existing:
             existing.updated_at = datetime.now(timezone.utc)
+            # Update persona if caller sent a (different) persona_id
+            new_pid = _to_uuid(persona_id) if persona_id else None
+            if existing.persona_id != new_pid:
+                existing.persona_id = new_pid
             await session.flush()
             return str(existing.conversation_id)
     cid = uuid.uuid4()
@@ -155,16 +159,25 @@ async def close_user_sessions(
 async def list_user_conversations(
     session: AsyncSession,
     user_id: str,
-    limit: int = 50,
-) -> list[dict]:
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
     """Return recent conversations for a user (newest first).
 
+    Returns ``(rows, total_count)`` to support pagination.
     Each dict contains ``conversation_id``, ``title``, ``created_at``,
     ``updated_at``, and ``message_count``.
     """
     from sqlalchemy import func
 
     uid = _to_uuid(user_id)
+
+    # Total count
+    count_stmt = select(func.count(Conversation.conversation_id)).where(
+        Conversation.user_id == uid
+    )
+    total = (await session.execute(count_stmt)).scalar() or 0
+
     msg_count = (
         select(func.count(Message.message_id))
         .where(Message.conversation_id == Conversation.conversation_id)
@@ -183,9 +196,10 @@ async def list_user_conversations(
         .where(Conversation.user_id == uid)
         .order_by(Conversation.updated_at.desc())
         .limit(limit)
+        .offset(offset)
     )
     rows = await session.execute(stmt)
-    return [
+    items = [
         {
             "conversation_id": str(r.conversation_id),
             "title": r.title,
@@ -196,6 +210,7 @@ async def list_user_conversations(
         }
         for r in rows
     ]
+    return items, total
 
 
 async def load_conversation_messages_full(
@@ -647,6 +662,22 @@ async def expire_stale_hitl_requests() -> int:
 
 
 # ── Persona helpers ─────────────────────────────────────────────────
+
+
+async def seed_default_personas(session: AsyncSession, user_id: str) -> None:
+    """Create the default personas for a user if they have none yet."""
+    from config.settings import DEFAULT_PERSONAS
+
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(Persona).where(Persona.user_id == uid).limit(1)
+    )
+    if result.scalar_one_or_none() is not None:
+        return  # user already has personas
+
+    for p in DEFAULT_PERSONAS:
+        session.add(Persona(user_id=uid, name=p["name"], description=p["description"]))
+    await session.flush()
 
 
 async def create_persona(
