@@ -1931,6 +1931,17 @@ Add model config to `config/settings.py`:
     github_temperature: float = 0.2
 ```
 
+Then add the mapping in `get_agent_model_config()` so `config.get_agent_model_config("slack_agent")` returns your configured values instead of the fallback default:
+
+```python
+    # config/settings.py — inside get_agent_model_config()
+    mapping = {
+        # ... existing agents ...
+        "slack_agent": (self.slack_model_provider, self.slack_model, self.slack_temperature),
+        "github_agent": (self.github_model_provider, self.github_model, self.github_temperature),
+    }
+```
+
 ---
 
 ### Step 7 — Wire the Agent Instance

@@ -41,13 +41,21 @@ async def parse_document(file_path: str, file_bytes: bytes | None = None) -> Dic
     }
 
 
+# Sentinel injected between PDF pages so the chunker can track page numbers.
+_PAGE_MARKER = "<!-- PAGE {} -->"
+
+
 def _parse_pdf(path: str, data: bytes | None) -> str:
     try:
         if data:
             doc = pymupdf.open(stream=data, filetype="pdf")
         else:
             doc = pymupdf.open(path)
-        return "\n\n".join(page.get_text() for page in doc)
+        parts: list[str] = []
+        for page_num, page in enumerate(doc, start=1):
+            parts.append(_PAGE_MARKER.format(page_num))
+            parts.append(page.get_text())
+        return "\n\n".join(parts)
     except ImportError:
         logger.warning("pymupdf not installed — returning empty content for PDF")
         return ""

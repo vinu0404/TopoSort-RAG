@@ -431,6 +431,112 @@
     border-bottom-color: #000;
   }
 
+  /* ── Sources button ──────────────────────────────────── */
+  .sources-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+    padding: 5px 12px;
+    font-size: 0.78rem;
+    color: #666;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .sources-btn:hover {
+    color: #000;
+    border-color: #000;
+  }
+  .sources-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* ── Sources popup ──────────────────────────────────── */
+  .sources-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 900;
+  }
+  .sources-popup {
+    background: #fff;
+    border-radius: 8px;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+  }
+  .sources-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid #eee;
+  }
+  .sources-popup-header h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .sources-popup-close {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: #999;
+    padding: 0 4px;
+  }
+  .sources-popup-close:hover { color: #000; }
+  .sources-popup-body {
+    padding: 12px 18px 18px;
+  }
+  .source-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .source-item:last-child { border-bottom: none; }
+  .source-num {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    background: #f0f0f0;
+    color: #333;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .source-info { flex: 1; min-width: 0; }
+  .source-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #000;
+    word-break: break-word;
+  }
+  .source-meta {
+    font-size: 0.75rem;
+    color: #999;
+    margin-top: 2px;
+  }
+  .source-item a.source-name {
+    color: #0066cc;
+    text-decoration: none;
+  }
+  .source-item a.source-name:hover {
+    text-decoration: underline;
+  }
+
   /* ── Welcome ───────────────────────────────────────────── */
   .welcome {
     text-align: center;
@@ -1411,11 +1517,70 @@ function finalizeAssistant(msgEl, sources) {
     if (src && src.url) {
       return `<a class="inline-ref" href="${src.url}" target="_blank" title="${src.source || src.url}">[${num}]</a>`;
     }
+    if (src && src.source) {
+      return `<span class="inline-ref" title="${src.source}">[${num}]</span>`;
+    }
     return `<span class="inline-ref" title="Source ${num}">[${num}]</span>`;
   });
   
   content.innerHTML = withRefs;
+
+  // ── Sources button ────────────────────────────────────
+  const validSources = sources.filter(s => s && s.source);
+  if (validSources.length > 0) {
+    const btn = document.createElement('button');
+    btn.className = 'sources-btn';
+    btn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 7h8M2 11h10"/></svg> ${validSources.length} source${validSources.length > 1 ? 's' : ''}`;
+    btn.addEventListener('click', () => showSourcesPopup(validSources));
+    content.after(btn);
+  }
+
   scrollToBottom();
+}
+
+function showSourcesPopup(sources) {
+  // Remove any existing popup
+  document.querySelector('.sources-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sources-overlay';
+
+  let itemsHtml = '';
+  sources.forEach((s, i) => {
+    const name = s.source || `Source ${i + 1}`;
+    const nameHtml = s.url
+      ? `<a class="source-name" href="${s.url}" target="_blank">${escapeHtml(name)}</a>`
+      : `<div class="source-name">${escapeHtml(name)}</div>`;
+
+    const metaParts = [];
+    if (s.type) metaParts.push(s.type);
+    if (s.page != null) {
+      const pages = Array.isArray(s.page) ? s.page.join(', ') : s.page;
+      metaParts.push(`page ${pages}`);
+    }
+    const metaHtml = metaParts.length
+      ? `<div class="source-meta">${escapeHtml(metaParts.join(' · '))}</div>`
+      : '';
+
+    itemsHtml += `
+      <div class="source-item">
+        <div class="source-num">${i + 1}</div>
+        <div class="source-info">${nameHtml}${metaHtml}</div>
+      </div>`;
+  });
+
+  overlay.innerHTML = `
+    <div class="sources-popup">
+      <div class="sources-popup-header">
+        <h3>Sources</h3>
+        <button class="sources-popup-close">&times;</button>
+      </div>
+      <div class="sources-popup-body">${itemsHtml}</div>
+    </div>`;
+
+  overlay.querySelector('.sources-popup-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 function scrollToBottom() {

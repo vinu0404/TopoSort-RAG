@@ -251,7 +251,7 @@ class Source(BaseModel):
     type: str  # "document" | "web" | "database"
     agent: str  # agent_id
     source: str  # filename or URL
-    page: Optional[int] = None
+    page: Optional[Any] = None  # int, list[int], or None
     url: Optional[str] = None
     excerpt: Optional[str] = None
 

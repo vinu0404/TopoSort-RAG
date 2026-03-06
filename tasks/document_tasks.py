@@ -85,9 +85,6 @@ async def _process_document_async(
     from document_pipeline.document_processor import process_document
 
     file_bytes = bytes.fromhex(file_bytes_hex)
-
-    # Create a fresh engine per task — each asyncio.run() creates a new
-    # event loop so we can't re-use the module-level engine/pool.
     _engine = create_async_engine(
         config.database_url, echo=False, pool_size=2, max_overflow=2,
         pool_recycle=60,

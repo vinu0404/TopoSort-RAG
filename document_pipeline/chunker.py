@@ -4,11 +4,14 @@ Structure-aware document chunker.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Dict, List
 
 import tiktoken
 from utils.chunk_utils import SectionParser
+
+_PAGE_RE = re.compile(r"<!-- PAGE (\d+) -->")
 
 class StructureAwareChunker:
     """Chunks documents while preserving structural boundaries."""
@@ -158,6 +161,16 @@ class StructureAwareChunker:
             parts.append(self.tokenizer.decode(tokens[i : i + self.chunk_size]))
         return parts
 
+    @staticmethod
+    def _extract_page(text: str) -> int | None:
+        """Return the last page marker number found in *text*, or None."""
+        pages = _PAGE_RE.findall(text)
+        return int(pages[-1]) if pages else None
+
+    @staticmethod
+    def _strip_page_markers(text: str) -> str:
+        return _PAGE_RE.sub("", text).strip()
+
     def _create_chunk(
         self,
         text: str,
@@ -171,9 +184,11 @@ class StructureAwareChunker:
         """
         meta = document.get("metadata", {})
         chunk_id = str(uuid.uuid4())
-        
+        page = self._extract_page(text)
+        clean_text = self._strip_page_markers(text)
+
         return {
-            "text": text,
+            "text": clean_text,
             "chunk_id": chunk_id,
             "metadata": {
                 "filename": meta.get("filename", ""),
@@ -182,6 +197,7 @@ class StructureAwareChunker:
                 "section_level": section.get("level", 0),
                 "section_idx": section_idx,
                 "chunk_idx": chunk_idx,
+                "page": page,
                 "is_table": False,
                 "parent_chunk_id": None,
                 "uploaded_at": meta.get("uploaded_at", ""),

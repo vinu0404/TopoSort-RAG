@@ -160,7 +160,6 @@ async def list_user_conversations(
     from sqlalchemy import func
 
     uid = _to_uuid(user_id)
-    # Sub-query for message count
     msg_count = (
         select(func.count(Message.message_id))
         .where(Message.conversation_id == Conversation.conversation_id)

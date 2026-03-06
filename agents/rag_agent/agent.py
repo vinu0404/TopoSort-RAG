@@ -213,20 +213,33 @@ class RAGAgent(BaseAgent):
     @staticmethod
     def _extract_sources(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         sources = []
-        seen = set()
+        seen: dict[str, int] = {}          # filename → index in sources
         for chunk in chunks:
             meta = chunk.get("metadata", {})
-            key = meta.get("filename", "")
-            if key and key not in seen:
-                seen.add(key)
+            fname = meta.get("filename", "")
+            page = meta.get("page")
+            if not fname:
+                continue
+            if fname not in seen:
+                seen[fname] = len(sources)
                 sources.append(
                     {
                         "type": "document",
-                        "source": key,
-                        "page": meta.get("page"),
+                        "source": fname,
+                        "page": [page] if page else [],
                         "section": meta.get("section_title"),
                     }
                 )
+            else:
+                if page and page not in sources[seen[fname]]["page"]:
+                    sources[seen[fname]]["page"].append(page)
+        # Flatten single-page lists and convert empty to None
+        for s in sources:
+            pages = s["page"]
+            if not pages:
+                s["page"] = None
+            elif len(pages) == 1:
+                s["page"] = pages[0]
         return sources
 
 

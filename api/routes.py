@@ -5,7 +5,6 @@ REST API routes (non-streaming).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List
 
@@ -32,7 +31,6 @@ from database.helpers import (
     load_conversation_messages_full,
     resolve_hitl_request,
     save_document_record,
-    update_document_status,
     get_document_statuses,
 )
 from tasks.document_tasks import process_document_task

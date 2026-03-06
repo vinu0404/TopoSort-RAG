@@ -228,7 +228,7 @@ def main():
     print("=" * 60)
     print("MRAG Database Dashboard Server")
     print("=" * 60)
-    print(f"Starting server on http://localhost:{port}")
+    print(f"Starting server on http://localhost:8000")
     print(f"\nOpen dashboard.html in your browser, or visit:")
     print(f"  http://localhost:{port}/dashboard.html")
     print("\nAPI Endpoints:")

@@ -70,12 +70,12 @@ class Settings(BaseSettings):
     default_max_retries: int = 2
     default_backoff_multiplier: float = 2.0
     
-    conversation_summary_interval: int = 3
-    max_conversation_history: int = 8
+    conversation_summary_interval: int = 5
+    max_conversation_history: int = 10
 
     # ── HITL (Human-in-the-Loop) ─────────────────────────────────────────────────
     hitl_timeout_seconds: int = 120   # how long to wait for user approval
-    hitl_poll_interval: float = 5   # seconds between DB polls
+    hitl_poll_interval: float = 6   # seconds between DB polls
     hitl_classifier_provider: str = "openai"   # model for classify enhance vs override
     hitl_classifier_model: str = "gpt-4o-mini"
 
