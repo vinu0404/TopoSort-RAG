@@ -36,7 +36,7 @@ for _noisy in ("httpcore", "httpx", "openai", "urllib3", "hpack"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-
+logging.getLogger("botocore").setLevel(logging.WARNING)
 def create_app() -> FastAPI:
 
     @asynccontextmanager

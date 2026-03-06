@@ -1548,9 +1548,14 @@ function showSourcesPopup(sources) {
   let itemsHtml = '';
   sources.forEach((s, i) => {
     const name = s.source || `Source ${i + 1}`;
-    const nameHtml = s.url
-      ? `<a class="source-name" href="${s.url}" target="_blank">${escapeHtml(name)}</a>`
-      : `<div class="source-name">${escapeHtml(name)}</div>`;
+    let nameHtml;
+    if (s.url) {
+      nameHtml = `<a class="source-name" href="${escapeHtml(s.url)}" target="_blank">${escapeHtml(name)}</a>`;
+    } else if (s.doc_id) {
+      nameHtml = `<a class="source-name source-viewable" href="#" data-doc-id="${escapeHtml(s.doc_id)}">${escapeHtml(name)}</a>`;
+    } else {
+      nameHtml = `<div class="source-name">${escapeHtml(name)}</div>`;
+    }
 
     const metaParts = [];
     if (s.type) metaParts.push(s.type);
@@ -1577,6 +1582,27 @@ function showSourcesPopup(sources) {
       </div>
       <div class="sources-popup-body">${itemsHtml}</div>
     </div>`;
+
+  // Viewable document links → fetch presigned URL and open
+  overlay.querySelectorAll('.source-viewable').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const docId = link.dataset.docId;
+      link.style.opacity = '0.5';
+      link.textContent = 'Opening…';
+      try {
+        const resp = await fetch(`/api/v1/documents/${encodeURIComponent(docId)}/view`, { headers: authHeaders() });
+        if (!resp.ok) throw new Error(`${resp.status}`);
+        const data = await resp.json();
+        window.open(data.url, '_blank');
+      } catch (err) {
+        console.error('Failed to open document:', err);
+        link.textContent = 'Failed to open';
+      } finally {
+        setTimeout(() => { link.textContent = link.title || sources.find(s => s.doc_id === docId)?.source || 'Document'; link.style.opacity = '1'; }, 1500);
+      }
+    });
+  });
 
   overlay.querySelector('.sources-popup-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });

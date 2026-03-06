@@ -331,6 +331,10 @@ async def save_document_record(
     total_chunks: int | None = None,
     qdrant_collection: str | None = None,
     processing_status: str = "pending",
+    storage_key: str | None = None,
+    storage_bucket: str | None = None,
+    file_size_bytes: int | None = None,
+    content_type: str | None = None,
 ) -> None:
     """Persist document metadata to the ``documents`` table."""
     uid = _to_uuid(user_id)
@@ -346,9 +350,32 @@ async def save_document_record(
             total_chunks=total_chunks,
             qdrant_collection=qdrant_collection,
             processing_status=processing_status,
+            storage_key=storage_key,
+            storage_bucket=storage_bucket,
+            file_size_bytes=file_size_bytes,
+            content_type=content_type,
         )
     )
     await session.flush()
+
+
+async def get_document_for_user(
+    session: AsyncSession,
+    doc_id: str,
+    user_id: str,
+) -> Document | None:
+    """
+    Fetch a document only if it belongs to the given user.
+
+    Returns ``None`` when the doc doesn't exist or belongs to
+    another user — callers should treat that as 403/404.
+    """
+    did = _to_uuid(doc_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(Document).where(Document.doc_id == did, Document.user_id == uid)
+    )
+    return result.scalar_one_or_none()
 
 
 async def update_document_status(

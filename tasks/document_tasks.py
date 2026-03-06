@@ -103,6 +103,7 @@ async def _process_document_async(
                 user_id=user_id,
                 file_path=filename,
                 file_bytes=file_bytes,
+                doc_id=doc_id,
             )
             await update_document_status(
                 session,

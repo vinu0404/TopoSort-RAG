@@ -27,6 +27,7 @@ from database.helpers import (
     ensure_user_exists,
     ensure_session_exists,
     get_or_create_conversation,
+    get_document_for_user,
     list_user_conversations,
     load_conversation_messages_full,
     resolve_hitl_request,
@@ -172,10 +173,11 @@ async def upload_documents(
 ) -> Dict[str, Any]:
     """
     Accept one or more files.  Creates a DB record for each with
-    status='pending', enqueues a Celery task per file, and returns
-    immediately so the client is not blocked.
+    status='pending', uploads the file to S3, enqueues a Celery task
+    per file, and returns immediately so the client is not blocked.
     """
     import uuid as _uuid
+    from storage.s3 import build_storage_key, upload_file
 
     await ensure_user_exists(session, user_id)
 
@@ -186,6 +188,11 @@ async def upload_documents(
             continue
         doc_id = str(_uuid.uuid4())
         file_bytes = await f.read()
+        ct = f.content_type or "application/octet-stream"
+        s_key = build_storage_key(user_id, doc_id, f.filename)
+
+        # Upload to S3-compatible storage (Backblaze B2 / AWS / MinIO)
+        upload_file(file_bytes, s_key, content_type=ct)
 
         # Persist a 'pending' record in the DB
         await save_document_record(
@@ -195,6 +202,10 @@ async def upload_documents(
             filename=f.filename,
             qdrant_collection=f"user_{user_id}_documents",
             processing_status="pending",
+            storage_key=s_key,
+            storage_bucket=config.s3_bucket,
+            file_size_bytes=len(file_bytes),
+            content_type=ct,
         )
         await session.commit()
 
@@ -222,6 +233,42 @@ async def document_status(
     """Return processing status for all of this user's documents."""
     docs = await get_document_statuses(session, auth_user_id)
     return {"documents": docs}
+
+
+@router.get("/documents/{doc_id}/view")
+async def document_view(
+    doc_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Generate a short-lived pre-signed URL for viewing a document.
+
+    Security:
+      1. JWT verified → user_id
+      2. DB ownership check: ``WHERE doc_id = ? AND user_id = ?``
+      3. S3 path scoped to ``uploads/{user_id}/...``
+      4. URL expires in ``s3_presign_expiry`` seconds (default 5 min)
+    """
+    from storage.s3 import generate_presigned_url
+
+    doc = await get_document_for_user(session, doc_id, auth_user_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.storage_key:
+        raise HTTPException(status_code=404, detail="File not available in cloud storage")
+
+    url = generate_presigned_url(
+        storage_key=doc.storage_key,
+        bucket=doc.storage_bucket,
+    )
+
+    return {
+        "url": url,
+        "filename": doc.filename,
+        "content_type": doc.content_type,
+        "expires_in": config.s3_presign_expiry,
+    }
 
 
 @router.get("/documents/status/stream")

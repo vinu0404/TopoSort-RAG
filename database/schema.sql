@@ -78,6 +78,10 @@ CREATE TABLE IF NOT EXISTS documents (
     processing_status VARCHAR(16) NOT NULL DEFAULT 'pending',
                       -- pending | processing | ready | failed
     error_message   TEXT,
+    storage_key     VARCHAR(1024),           -- S3 object key: uploads/{user_id}/{doc_id}/{filename}
+    storage_bucket  VARCHAR(128),            -- bucket name
+    file_size_bytes BIGINT,                  -- original file size
+    content_type    VARCHAR(128),            -- MIME type (application/pdf, ...)
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

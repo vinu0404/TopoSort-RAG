@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
+    # ── S3-compatible Cloud Storage (Backblaze B2 / AWS / MinIO) ─────────────────
+    s3_endpoint: str = ""                       # e.g. https://s3.us-east-005.backblazeb2.com
+    s3_region: str = "us-east-005"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_bucket: str = ""                         # e.g. linkdrop
+    s3_presign_expiry: int = 300                # pre-signed URL TTL in seconds (5 min)
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

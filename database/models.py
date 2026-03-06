@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -110,6 +111,10 @@ class Document(Base):
     qdrant_collection = Column(String(128))
     processing_status = Column(String(16), nullable=False, default="pending")
     error_message = Column(Text)
+    storage_key = Column(String(1024))
+    storage_bucket = Column(String(128))
+    file_size_bytes = Column(BigInteger)
+    content_type = Column(String(128))
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="documents")

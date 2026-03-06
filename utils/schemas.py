@@ -252,6 +252,7 @@ class Source(BaseModel):
     agent: str  # agent_id
     source: str  # filename or URL
     page: Optional[Any] = None  # int, list[int], or None
+    doc_id: Optional[str] = None
     url: Optional[str] = None
     excerpt: Optional[str] = None
 

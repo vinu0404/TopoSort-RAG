@@ -278,9 +278,17 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             results = {}
 
         for agent_id, output in results.items():
+            agent_sources = []
+            if hasattr(output, "metadata") and isinstance(output.metadata, dict):
+                for s in output.metadata.get("sources", []):
+                    if isinstance(s, dict):
+                        agent_sources.append(s)
+                    elif isinstance(s, Source):
+                        agent_sources.append(s.model_dump())
             yield _sse_event("agent_result", {
                 "agent": agent_id,
                 "done": getattr(output, "task_done", False),
+                "sources": agent_sources,
             })
 
         yield _sse_event("status", {"phase": "composing"})
