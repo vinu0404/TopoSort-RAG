@@ -390,6 +390,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-height: 0;
   }
   .sidebar h3 {
     font-size: 0.75rem;
@@ -540,11 +541,14 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
   .messages {
     flex: 1;
     overflow-y: auto;
     padding: 24px;
+    min-height: 0;
   }
   .msg {
     margin-bottom: 16px;
@@ -862,6 +866,59 @@
   }
   .btn-send:hover { opacity: 0.8; }
   .btn-send:disabled { opacity: 0.3; }
+
+  /* ── Mic / Voice ───────────────────────────────────────── */
+  .btn-mic {
+    background: none;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .btn-mic:hover { border-color: #000; }
+  .btn-mic.recording {
+    background: #ff3b30;
+    border-color: #ff3b30;
+    animation: pulse-mic 1.2s infinite;
+  }
+  @keyframes pulse-mic {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(255,59,48,0); }
+  }
+  .recording-indicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #ff3b30;
+    margin-bottom: 4px;
+    padding: 0 24px;
+  }
+  .recording-indicator.visible { display: flex; }
+  .recording-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ff3b30;
+    animation: blink 1s infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .voice-play-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 4px;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+  .voice-play-btn:hover { opacity: 1; }
 
   .typing {
     display: none;
@@ -1187,8 +1244,15 @@
       <span></span><span></span><span></span>
     </div>
 
+    <div class="recording-indicator" id="recordingIndicator">
+      <span class="recording-dot"></span>
+      <span id="recordingTimer">0:00</span>
+      <span>Recording…</span>
+    </div>
+
     <div class="input-area">
       <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
+      <button class="btn-mic" id="micBtn" onclick="toggleRecording()" title="Voice input">🎤</button>
       <button class="btn-send" id="sendBtn" onclick="sendQuery()">Send</button>
     </div>
   </main>
@@ -1225,6 +1289,9 @@ const uploadStatus = document.getElementById('uploadStatus');
 const pipelineSection = document.getElementById('pipelineSection');
 const pipelineEl = document.getElementById('pipeline');
 const typingInd = document.getElementById('typingIndicator');
+const micBtn = document.getElementById('micBtn');
+const recordingIndicator = document.getElementById('recordingIndicator');
+const recordingTimerEl = document.getElementById('recordingTimer');
 
 // ── Auth ────────────────────────────────────────────────────
 function getStoredAuth() {
@@ -1463,6 +1530,9 @@ async function switchConversation(conversationId) {
       } else if (m.role === 'assistant') {
         const el = createAssistantMessage();
         appendToAssistant(el, m.content);
+        // Restore sources, citations, and markdown
+        const sources = (m.metadata && m.metadata.sources) ? m.metadata.sources : [];
+        finalizeAssistant(el, sources);
       } else if (m.role === 'system') {
         addSystemMessage(m.content);
       }
@@ -1763,7 +1833,7 @@ async function checkHealth() {
   }
 }
 checkHealth();
-setInterval(checkHealth, 15000);
+setInterval(checkHealth, 60000);
 
 // ── Examples ────────────────────────────────────────────────
 function fillQuery(text) {
@@ -2242,6 +2312,7 @@ async function sendStreaming(query) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let eventType = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -2251,7 +2322,6 @@ async function sendStreaming(query) {
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
-      let eventType = null;
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
@@ -2449,6 +2519,251 @@ async function respondHitl(requestId, decision) {
   } catch (err) {
     addSystemMessage(`HITL error: ${err.message}`);
     dismissHitlDialog();
+  }
+}
+
+// ── Voice Recording ─────────────────────────────────────────
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingStartTime = null;
+let recordingTimerInterval = null;
+const MAX_RECORDING_SEC = 60;
+
+async function toggleRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    stopRecording();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: getSupportedMimeType() });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(recordingTimerInterval);
+      recordingIndicator.classList.remove('visible');
+      micBtn.classList.remove('recording');
+
+      if (audioChunks.length === 0) return;
+
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+      await transcribeAndSend(blob);
+    };
+
+    mediaRecorder.start();
+    micBtn.classList.add('recording');
+    recordingStartTime = Date.now();
+    recordingIndicator.classList.add('visible');
+    updateRecordingTimer();
+    recordingTimerInterval = setInterval(updateRecordingTimer, 1000);
+
+    // Auto-stop at max duration
+    setTimeout(() => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+    }, MAX_RECORDING_SEC * 1000);
+
+  } catch (err) {
+    addSystemMessage('Microphone access denied or unavailable.');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+}
+
+function updateRecordingTimer() {
+  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  recordingTimerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function getSupportedMimeType() {
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (const t of types) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return '';
+}
+
+async function transcribeAndSend(audioBlob) {
+  if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
+  if (isProcessing) return;
+
+  addSystemMessage('Transcribing voice...');
+
+  try {
+    const form = new FormData();
+    form.append('file', audioBlob, 'recording.webm');
+
+    const r = await fetch(`${API}/voice/transcribe`, {
+      method: 'POST',
+      headers: { ...authHeaders() },
+      body: form,
+    });
+
+    if (!r.ok) {
+      const err = await r.json();
+      addSystemMessage(`Transcription error: ${err.detail || r.statusText}`);
+      return;
+    }
+
+    const result = await r.json();
+    const text = (result.text || '').trim();
+    if (!text) {
+      addSystemMessage('Could not transcribe audio. Please try again.');
+      return;
+    }
+
+    // Send transcribed text as a voice query
+    isProcessing = true;
+    sendBtn.disabled = true;
+    addUserMessage(text);
+    clearPipeline();
+    await sendStreamingVoice(text);
+    isProcessing = false;
+    sendBtn.disabled = false;
+    queryInput.focus();
+
+  } catch (err) {
+    addSystemMessage(`Voice error: ${err.message}`);
+  }
+}
+
+async function sendStreamingVoice(query) {
+  typingInd.classList.add('visible');
+  let msgEl = null;
+  let sources = [];
+
+  try {
+    const response = await fetch(`${API}/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        query,
+        session_id: currentSessionId,
+        conversation_id: currentConversationId,
+        persona_id: currentPersonaId,
+        source: 'voice',
+      }),
+    });
+
+    if (!response.ok) {
+      typingInd.classList.remove('visible');
+      if (response.status === 401) { doLogout(); return; }
+      const err = await response.json();
+      addSystemMessage(`Error: ${err.detail || response.statusText}`);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventType = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          handleVoiceSSE(eventType, line.slice(6), msgEl, sources, (el) => { msgEl = el; });
+          eventType = null;
+        }
+      }
+    }
+    typingInd.classList.remove('visible');
+  } catch (err) {
+    typingInd.classList.remove('visible');
+    addSystemMessage(`Error: ${err.message}`);
+  }
+
+  function handleVoiceSSE(event, rawData, _msgEl, _sources, setMsgEl) {
+    let data;
+    try { data = JSON.parse(rawData); } catch { data = rawData; }
+
+    switch (event) {
+      case 'status':
+        if (data.phase === 'planning') addSystemMessage('Planning...');
+        else if (data.phase === 'executing') addSystemMessage('Running agents...');
+        else if (data.phase === 'composing') {
+          typingInd.classList.remove('visible');
+          if (!msgEl) { msgEl = createAssistantMessage(); setMsgEl(msgEl); }
+        }
+        break;
+      case 'plan':
+        if (data.agents) showPipeline(data.agents);
+        if (data.intent) addSystemMessage(`Intent: ${data.intent}`);
+        break;
+      case 'token':
+        if (!msgEl) { typingInd.classList.remove('visible'); msgEl = createAssistantMessage(); setMsgEl(msgEl); }
+        appendToAssistant(msgEl, data.text || '');
+        break;
+      case 'agent_result':
+        updatePipelineAgent(data.agent, data.done);
+        if (data.sources && Array.isArray(data.sources)) sources.push(...data.sources);
+        break;
+      case 'voice_audio':
+        if (data.audio) playVoiceAudio(data.audio, data.content_type || 'audio/mpeg', msgEl);
+        break;
+      case 'done':
+        typingInd.classList.remove('visible');
+        if (msgEl) finalizeAssistant(msgEl, sources);
+        if (data.session_id) currentSessionId = data.session_id;
+        if (data.conversation_id) {
+          currentConversationId = data.conversation_id;
+          if (currentPersonaId) _convPersonaMap[data.conversation_id] = currentPersonaId;
+        }
+        loadConversations();
+        break;
+      case 'error':
+        typingInd.classList.remove('visible');
+        addSystemMessage(`Error: ${data.message || data}`);
+        break;
+      case 'hitl_required': showHitlDialog(data); break;
+      case 'hitl_approved': dismissHitlDialog(); updatePipelineAgent(data.agent_id, false);
+        addSystemMessage(data.instructions ? `Approved with instruction: "${data.instructions}" — ${data.agent_id} is running...` : `Approved — ${data.agent_id} is running...`);
+        break;
+      case 'hitl_denied': dismissHitlDialog(); updatePipelineAgent(data.agent_id, false); addSystemMessage(`Denied — ${data.agent_id} was skipped.`); break;
+      case 'hitl_timeout': dismissHitlDialog(); updatePipelineAgent(data.agent_id, false); addSystemMessage(`Approval timed out — ${data.agent_id} was skipped.`); break;
+    }
+  }
+}
+
+function playVoiceAudio(base64Audio, contentType, msgEl) {
+  try {
+    const binaryStr = atob(base64Audio);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const blob = new Blob([bytes], { type: contentType });
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+
+    if (msgEl) {
+      const playBtn = document.createElement('button');
+      playBtn.className = 'voice-play-btn';
+      playBtn.textContent = '🔊';
+      playBtn.title = 'Play voice response';
+      playBtn.onclick = () => { audio.currentTime = 0; audio.play(); };
+      msgEl.appendChild(playBtn);
+    }
+
+    audio.play();
+    audio.onended = () => URL.revokeObjectURL(audioUrl);
+  } catch (err) {
+    console.error('Voice playback error:', err);
   }
 }
 </script>

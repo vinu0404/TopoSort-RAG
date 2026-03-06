@@ -243,6 +243,7 @@ async def load_conversation_messages_full(
             "message_id": str(m.message_id),
             "role": m.role,
             "content": m.content,
+            "metadata": m.metadata_ if m.metadata_ else {},
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
         for m in rows.scalars()

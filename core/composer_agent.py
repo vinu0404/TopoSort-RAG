@@ -247,3 +247,59 @@ Answer ENTIRELY from the conversation history and user profile below.
         for idx, s in enumerate(sources, start=1):
             text += f"[{idx}] {ComposerAgent._format_source(s)}\n"
         return text
+
+    # ── Voice summary (runs in parallel with text composer) ────────────
+
+    async def generate_voice_summary_from_input(self, ci: ComposerInput) -> str:
+        """
+        Generate a concise spoken summary directly from the raw agent data.
+
+        This receives the same ComposerInput as the text composer so it can
+        run in parallel — it does NOT depend on the finished text answer.
+        """
+        successful = [r for r in ci.agent_results if r.task_done]
+        partial = [r for r in ci.agent_results if not r.task_done and r.partial_data]
+        is_memory_query = not successful and not partial
+
+        # Build data context
+        if is_memory_query:
+            data_block = (
+                f"Conversation History:\n"
+                f"{self._format_conversation_history(ci.conversation_history)}"
+            )
+        else:
+            data_block = self._format_agent_outputs(successful)
+            if partial:
+                data_block += f"\nPartial data:\n{self._format_agent_outputs(partial)}"
+
+        persona_block = ""
+        if ci.persona:
+            persona_block = (
+                f"Persona: {ci.persona.name}\n"
+                f"Speak in this style: {ci.persona.description}\n"
+                f"Keep the persona's tone and personality in the spoken summary.\n\n"
+            )
+
+        prompt = (
+            f"You are a voice assistant. Answer the user's question as a concise "
+            f"spoken response suitable for text-to-speech.\n\n"
+            f"{persona_block}"
+            f"User question: {ci.original_query}\n\n"
+            f"Data from agents:\n{data_block[:3000]}\n\n"
+            f"Rules:\n"
+            f"- Use natural, conversational spoken language.\n"
+            f"- NO markdown, NO bold, NO headers, NO bullet points.\n"
+            f"- NO citation numbers like [1], [2].\n"
+            f"- NO code blocks or raw data tables.\n"
+            f"- Keep the key facts and conclusions.\n"
+            f"- Use short, clear sentences.\n"
+            f"- Maximum 3-4 sentences.\n\n"
+            f"Spoken answer:"
+        )
+
+        result = await self.llm.generate(
+            prompt=prompt,
+            temperature=0.3,
+            model=config.composer_model,
+        )
+        return result.text.strip()

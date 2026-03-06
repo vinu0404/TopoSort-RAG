@@ -474,3 +474,76 @@ async def delete_persona_endpoint(
         raise HTTPException(status_code=404, detail="Persona not found")
     await session.commit()
     return {"deleted": True}
+
+
+# ── Voice endpoints ─────────────────────────────────────────────────────
+
+
+@router.post("/voice/transcribe", tags=["voice"])
+async def voice_transcribe(
+    file: UploadFile = File(...),
+    _auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Transcribe an audio file via the configured STT provider.
+
+    Accepts audio from the browser's MediaRecorder (typically audio/webm).
+    Returns the transcribed text.
+    """
+    max_bytes = config.voice_max_audio_size_mb * 1024 * 1024
+    audio_bytes = await file.read()
+    if len(audio_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file too large (max {config.voice_max_audio_size_mb} MB)",
+        )
+
+    content_type = file.content_type or "audio/webm"
+
+    from voice.stt import get_stt_provider
+
+    stt = get_stt_provider()
+    result = await stt.transcribe(audio_bytes, content_type=content_type)
+
+    return {
+        "text": result.text,
+        "confidence": result.confidence,
+        "language": result.language,
+        "duration_ms": result.duration_ms,
+        "provider": result.provider,
+    }
+
+
+@router.post("/voice/synthesize", tags=["voice"])
+async def voice_synthesize(
+    request: Request,
+    _auth_user_id: str = Depends(get_current_user_id),
+) -> StreamingResponse:
+    """
+    Synthesize text to speech via the configured TTS provider.
+
+    Expects JSON body: { "text": "...", "voice": "Matthew" (optional) }
+    Returns audio/mpeg stream.
+    """
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="'text' field is required")
+
+    if len(text) > 3000:
+        raise HTTPException(status_code=400, detail="Text too long (max 3000 chars)")
+
+    voice = body.get("voice")
+
+    from voice.tts import get_tts_provider
+
+    tts = get_tts_provider()
+    result = await tts.synthesize(text, voice=voice)
+
+    return StreamingResponse(
+        iter([result.audio_bytes]),
+        media_type=result.content_type,
+        headers={
+            "Content-Disposition": "inline; filename=\"speech.mp3\"",
+        },
+    )

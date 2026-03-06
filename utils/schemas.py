@@ -277,6 +277,7 @@ class ComposerInput(BaseModel):
     persona: Optional[PersonaContext] = None
 
     timestamp: str = Field(default_factory=lambda: str(time.time()))
+    source: str = "text"  # "text" | "voice"
 
 
 class ComposerOutput(BaseModel):
@@ -284,6 +285,7 @@ class ComposerOutput(BaseModel):
     answer: str
     sources: List[Source] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    voice_summary: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -314,6 +316,7 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
     persona_id: Optional[str] = None
+    source: str = "text"  # "text" | "voice"
 
 
 class MasterAgentInput(BaseModel):

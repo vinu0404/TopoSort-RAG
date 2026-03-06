@@ -58,6 +58,27 @@ from utils.schemas import ComposerInput, QueryRequest
 
 logger = logging.getLogger(__name__)
 
+
+async def _build_voice_audio(
+    composer: ComposerAgent,
+    composer_input: ComposerInput,
+) -> tuple[str, str]:
+    """
+    Run voice summary LLM + TTS in one shot.
+
+    Returns (base64_audio, voice_summary_text).
+    Designed to run as an asyncio.Task in parallel with text streaming.
+    """
+    import base64
+    from voice.tts import get_tts_provider
+
+    voice_text = await composer.generate_voice_summary_from_input(composer_input)
+    tts = get_tts_provider()
+    tts_result = await tts.synthesize(voice_text)
+    audio_b64 = base64.b64encode(tts_result.audio_bytes).decode("ascii")
+    return audio_b64, voice_text
+
+
 router = APIRouter(tags=["streaming"])
 
 @router.post("/query/stream")
@@ -322,17 +343,55 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             long_term_memory=long_term,
             conversation_history=memory_mgr._turns.get(conv_id, []),
             persona=persona_ctx,
+            source=request.source,
         )
 
+        # Launch voice summary + TTS in parallel with text streaming
+        voice_task = None
+        if request.source == "voice":
+            voice_task = asyncio.create_task(
+                _build_voice_audio(composer, composer_input)
+            )
+
         composer_answer = ""
+        voice_audio_b64 = None
+        voice_summary = None
+        voice_emitted = False
+
         async for chunk in composer.stream(composer_input):
             composer_answer += chunk
             yield _sse_event("token", {"text": chunk})
+
+            # Emit voice audio as soon as it's ready, while text is still streaming
+            if voice_task and not voice_emitted and voice_task.done():
+                try:
+                    voice_audio_b64, voice_summary = voice_task.result()
+                    yield _sse_event("voice_audio", {
+                        "audio": voice_audio_b64,
+                        "content_type": "audio/mpeg",
+                    })
+                except Exception:
+                    logger.exception("Voice audio generation failed")
+                voice_emitted = True
+
+        # If voice task didn't finish during streaming, await it now
+        if voice_task and not voice_emitted:
+            try:
+                voice_audio_b64, voice_summary = await voice_task
+                yield _sse_event("voice_audio", {
+                    "audio": voice_audio_b64,
+                    "content_type": "audio/mpeg",
+                })
+            except Exception:
+                logger.exception("Voice audio generation failed")
+
         await memory_mgr.add_turn(
             user_id, request.query, composer_answer,
             db_session=session, conversation_id=conv_id,
         )
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
+        if voice_summary:
+            metadata["voice_summary"] = voice_summary
         await bg_save_messages(conv_id, request.query, composer_answer, metadata)
         elapsed = time.perf_counter() - start_time
         total_tokens = sum(
