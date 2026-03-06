@@ -37,11 +37,16 @@ class ComposerAgent:
         answer_text = result.text
         answer_text = self._append_source_list(answer_text, composer_input.all_sources)
 
+        voice_summary = None
+        if composer_input.source == "voice":
+            voice_summary = await self._generate_voice_summary(answer_text, composer_input.persona)
+
         logger.info(f"[ComposerAgent] Output: {answer_text[:500]}")
         return ComposerOutput(
             query_id=composer_input.query_id,
             answer=answer_text,
             sources=composer_input.all_sources,
+            voice_summary=voice_summary,
         )
 
 
@@ -247,3 +252,43 @@ Answer ENTIRELY from the conversation history and user profile below.
         for idx, s in enumerate(sources, start=1):
             text += f"[{idx}] {ComposerAgent._format_source(s)}\n"
         return text
+
+    # ── Voice summary ──────────────────────────────────────────────────
+
+    _VOICE_SUMMARY_PROMPT = (
+        "You are a voice assistant. Convert the following written answer "
+        "into a concise, natural spoken summary suitable for text-to-speech.\n\n"
+        "{persona_block}"
+        "Rules:\n"
+        "- Remove ALL markdown formatting (bold, headers, bullets, links).\n"
+        "- Remove citation numbers like [1], [2].\n"
+        "- Remove code blocks and raw data tables.\n"
+        "- Keep the key facts and conclusions.\n"
+        "- Use short, clear sentences.\n"
+        "- Maximum 3-4 sentences.\n"
+        "- Do NOT include a 'Sources' section.\n\n"
+        "Written answer:\n{answer}\n\n"
+        "Spoken summary:"
+    )
+
+    async def _generate_voice_summary(
+        self, answer: str, persona: PersonaContext | None = None,
+    ) -> str:
+        """Distil the rich markdown answer into clean text for TTS."""
+        persona_block = ""
+        if persona:
+            persona_block = (
+                f"Persona: {persona.name}\n"
+                f"Speak in this style: {persona.description}\n"
+                f"Keep the persona's tone and personality in the spoken summary.\n\n"
+            )
+        prompt = self._VOICE_SUMMARY_PROMPT.format(
+            answer=answer[:3000],
+            persona_block=persona_block,
+        )
+        result = await self.llm.generate(
+            prompt=prompt,
+            temperature=0.3,
+            model=config.composer_model,
+        )
+        return result.text.strip()

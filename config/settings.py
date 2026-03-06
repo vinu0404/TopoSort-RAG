@@ -84,6 +84,17 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
+    # ── Voice (STT + TTS) ───────────────────────────────────────────────────────
+    stt_provider: str = "assemblyai"
+    assemblyai_api_key: str = ""
+    tts_provider: str = "aws_polly"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-1"
+    aws_polly_voice_id: str = "Matthew"
+    voice_max_audio_size_mb: int = 25
+    voice_max_duration_sec: int = 60
+
     # ── S3-compatible Cloud Storage (Backblaze B2 / AWS / MinIO) ─────────────────
     s3_endpoint: str = ""                       # e.g. https://s3.us-east-005.backblazeb2.com
     s3_region: str = "us-east-005"

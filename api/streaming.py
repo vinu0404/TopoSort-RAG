@@ -322,17 +322,26 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             long_term_memory=long_term,
             conversation_history=memory_mgr._turns.get(conv_id, []),
             persona=persona_ctx,
+            source=request.source,
         )
 
         composer_answer = ""
         async for chunk in composer.stream(composer_input):
             composer_answer += chunk
             yield _sse_event("token", {"text": chunk})
+
+        # Generate voice summary if this was a voice query
+        voice_summary = None
+        if request.source == "voice":
+            voice_summary = await composer._generate_voice_summary(composer_answer, persona_ctx)
+
         await memory_mgr.add_turn(
             user_id, request.query, composer_answer,
             db_session=session, conversation_id=conv_id,
         )
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
+        if voice_summary:
+            metadata["voice_summary"] = voice_summary
         await bg_save_messages(conv_id, request.query, composer_answer, metadata)
         elapsed = time.perf_counter() - start_time
         total_tokens = sum(
@@ -340,13 +349,16 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             for o in results.values()
             if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
         )
-        yield _sse_event("done", {
+        done_payload = {
             "total_time": round(elapsed, 3),
             "tokens_used": total_tokens,
             "answer_length": len(composer_answer),
             "session_id": sess_id,
             "conversation_id": conv_id,
-        })
+        }
+        if voice_summary:
+            done_payload["voice_summary"] = voice_summary
+        yield _sse_event("done", done_payload)
 
     except Exception as exc:
         logger.exception("Streaming error")
