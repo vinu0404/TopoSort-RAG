@@ -57,13 +57,19 @@ def process_document_task(
     user_id: str,
     doc_id: str,
     filename: str,
-    file_bytes_hex: str,        
+    file_bytes_hex: str,
+    content_type: str = "application/octet-stream",
+    storage_key: str | None = None,
 ) -> Dict[str, Any]:
     """
     Celery task entry point.  Bridges sync → async via asyncio.run().
+    Handles S3 upload + full document processing so the API is non-blocking.
     """
     return asyncio.run(
-        _process_document_async(self, user_id, doc_id, filename, file_bytes_hex)
+        _process_document_async(
+            self, user_id, doc_id, filename, file_bytes_hex,
+            content_type, storage_key,
+        )
     )
 
 
@@ -73,8 +79,10 @@ async def _process_document_async(
     doc_id: str,
     filename: str,
     file_bytes_hex: str,
+    content_type: str = "application/octet-stream",
+    storage_key: str | None = None,
 ) -> Dict[str, Any]:
-    """Async implementation of the document processing pipeline."""
+    """Async implementation: S3 upload → parse → chunk → embed → store."""
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
         async_sessionmaker,
@@ -83,8 +91,16 @@ async def _process_document_async(
 
     from database.helpers import update_document_status
     from document_pipeline.document_processor import process_document
+    from storage.s3 import upload_file, build_storage_key
 
     file_bytes = bytes.fromhex(file_bytes_hex)
+
+    # ── S3 upload (offloaded from API) ───────────────────────────
+    s_key = storage_key or build_storage_key(user_id, doc_id, filename)
+    upload_file(file_bytes, s_key, content_type=content_type)
+    logger.info("S3 upload done for doc %s (%s)", doc_id, filename)
+
+    # ── Document processing pipeline ─────────────────────────────
     _engine = create_async_engine(
         config.database_url, echo=False, pool_size=2, max_overflow=2,
         pool_recycle=60,

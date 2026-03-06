@@ -182,11 +182,12 @@ async def upload_documents(
 ) -> Dict[str, Any]:
     """
     Accept one or more files.  Creates a DB record for each with
-    status='pending', uploads the file to S3, enqueues a Celery task
-    per file, and returns immediately so the client is not blocked.
+    status='pending' and enqueues a Celery task per file.  The Celery
+    worker handles S3 upload + document processing — so the API
+    response is instant regardless of how many files are uploaded.
     """
     import uuid as _uuid
-    from storage.s3 import build_storage_key, upload_file
+    from storage.s3 import build_storage_key
 
     await ensure_user_exists(session, user_id)
 
@@ -200,10 +201,7 @@ async def upload_documents(
         ct = f.content_type or "application/octet-stream"
         s_key = build_storage_key(user_id, doc_id, f.filename)
 
-        # Upload to S3-compatible storage (Backblaze B2 / AWS / MinIO)
-        upload_file(file_bytes, s_key, content_type=ct)
-
-        # Persist a 'pending' record in the DB
+        # Persist a 'pending' record in the DB (no S3 upload here)
         await save_document_record(
             session,
             user_id=user_id,
@@ -218,12 +216,14 @@ async def upload_documents(
         )
         await session.commit()
 
-        # Enqueue Celery task to process the document asynchronously
+        # Enqueue Celery task — worker does S3 upload + processing
         process_document_task.delay(
             user_id=user_id,
             doc_id=doc_id,
             filename=f.filename,
             file_bytes_hex=file_bytes.hex(),
+            content_type=ct,
+            storage_key=s_key,
         )
 
         accepted.append({"doc_id": doc_id, "filename": f.filename, "status": "pending"})
