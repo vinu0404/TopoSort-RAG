@@ -153,7 +153,6 @@
   .personas-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .persona-list {
     display: flex; flex-direction: column; gap: 2px;
-    max-height: 160px; overflow-y: auto;
   }
   .persona-item {
     padding: 8px 10px; border-radius: 8px;
@@ -289,8 +288,6 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: 220px;
-    overflow-y: auto;
   }
   .conv-item {
     padding: 8px 10px;
@@ -473,6 +470,109 @@
   .dot-ready       { background: #5cb85c; }
   .dot-failed      { background: #d9534f; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Files section ─────────────────────────────────────── */
+  .files-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .files-header span {
+    font-size: 0.75rem;
+    color: #999;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .btn-refresh {
+    background: none; border: none;
+    cursor: pointer; font-size: 0.85rem;
+    padding: 2px 6px; border-radius: 4px;
+    color: #666;
+  }
+  .btn-refresh:hover { background: #f0f0f0; }
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+  }
+  .file-item:hover { background: #f5f5f5; }
+  .file-item .file-icon { flex-shrink: 0; font-size: 0.9rem; }
+  .file-item .file-info {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+  }
+  .file-item .file-name {
+    white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; font-weight: 500;
+    color: #333;
+  }
+  .file-item .file-meta {
+    font-size: 0.68rem; color: #999;
+  }
+  .file-item .file-actions {
+    display: flex; gap: 4px; flex-shrink: 0;
+  }
+  .file-item .file-actions button {
+    background: none; border: none;
+    cursor: pointer; padding: 4px 5px; border-radius: 4px;
+    display: flex; align-items: center;
+  }
+  .file-item .file-actions button svg {
+    width: 14px; height: 14px;
+    stroke: #888; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .file-item .file-actions button:hover { background: #e8e8e8; }
+  .file-item .file-actions button:hover svg { stroke: #333; }
+  .file-item .file-actions .btn-file-del:hover { background: #fee; }
+  .file-item .file-actions .btn-file-del:hover svg { stroke: #d00; }
+  .file-empty {
+    font-size: 0.78rem; color: #999;
+    text-align: center; padding: 12px 0;
+  }
+
+  /* ── Delete confirm overlay ──────────────────────────── */
+  .confirm-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 950;
+  }
+  .confirm-box {
+    background: #fff; border-radius: 10px;
+    padding: 20px 24px; width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  }
+  .confirm-box h3 { font-size: 0.95rem; margin-bottom: 8px; }
+  .confirm-box p { font-size: 0.82rem; color: #555; margin-bottom: 16px; line-height: 1.5; }
+  .confirm-box .confirm-actions {
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .confirm-box .confirm-actions button {
+    padding: 6px 16px; border-radius: 6px;
+    border: none; cursor: pointer; font-size: 0.82rem; font-weight: 500;
+  }
+  .confirm-box .btn-cancel {
+    background: #f0f0f0; color: #333;
+  }
+  .confirm-box .btn-cancel:hover { background: #e0e0e0; }
+  .confirm-box .btn-danger {
+    background: #d9534f; color: #fff;
+  }
+  .confirm-box .btn-danger:hover { background: #c9302c; }
 
   /* ── Pipeline ──────────────────────────────────────────── */
   .pipeline-section {
@@ -1161,7 +1261,7 @@
     <div class="sb-section" id="sbUpload">
       <button class="sb-toggle" onclick="toggleSection('sbUpload')">
         <span class="sb-chevron">&#9660;</span>
-        <span>Documents</span>
+        <span>Upload</span>
       </button>
       <div class="sb-body">
         <div class="upload-zone" id="uploadZone">
@@ -1169,6 +1269,24 @@
           <p>Drop files or click</p>
         </div>
         <div class="upload-status" id="uploadStatus"></div>
+      </div>
+    </div>
+
+    <!-- Files -->
+    <div class="sb-section" id="sbFiles">
+      <button class="sb-toggle" onclick="toggleSection('sbFiles')">
+        <span class="sb-chevron">&#9660;</span>
+        <span>Files</span>
+        <span class="sb-badge" id="filesBadge">0</span>
+      </button>
+      <div class="sb-body">
+        <div class="files-header">
+          <span>Your documents</span>
+          <button class="btn-refresh" onclick="loadUserFiles()" title="Refresh">&#x21bb;</button>
+        </div>
+        <div class="file-list" id="fileList">
+          <div class="file-empty">No files uploaded</div>
+        </div>
       </div>
     </div>
 
@@ -1398,6 +1516,7 @@ function onLoginSuccess(data) {
   loadAgents();
   loadConversations();
   loadPersonas();
+  loadUserFiles();
 }
 
 async function doLogout() {
@@ -1811,6 +1930,7 @@ window.addEventListener('message', (event) => {
     loadAgents();
     loadConversations();
     loadPersonas();
+    loadUserFiles();
   }
 })();
 
@@ -1990,6 +2110,7 @@ function startDocStatusSSE() {
               if (!_pendingDocIds.length) {
                 ctrl.abort();
                 _docStatusSource = null;
+                loadUserFiles();  // refresh file list after processing
                 return;
               }
             }
@@ -2000,6 +2121,114 @@ function startDocStatusSSE() {
       if (e.name !== 'AbortError') console.error('SSE doc status error:', e);
     }
   })();
+}
+
+// ── Files section ───────────────────────────────────────────
+const fileList = document.getElementById('fileList');
+const filesBadge = document.getElementById('filesBadge');
+
+const _FILE_ICONS = {
+  'application/pdf': '📄',
+  'text/plain': '📃',
+  'text/markdown': '📝',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📘',
+  'text/csv': '📊',
+  'application/json': '🔧',
+};
+
+function _fileIcon(contentType) {
+  return _FILE_ICONS[contentType] || '📁';
+}
+
+function _formatSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function _statusDot(status) {
+  const colors = { ready: '#5cb85c', processing: '#5bc0de', pending: '#f0ad4e', failed: '#d9534f' };
+  return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${colors[status] || '#ccc'};margin-right:4px;vertical-align:middle;" title="${status}"></span>`;
+}
+
+async function loadUserFiles() {
+  if (!currentUser) return;
+  try {
+    const r = await fetch(`${API}/documents/status`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) return;
+    const data = await r.json();
+    const docs = data.documents || [];
+    filesBadge.textContent = docs.length;
+    if (!docs.length) {
+      fileList.innerHTML = '<div class="file-empty">No files uploaded</div>';
+      return;
+    }
+    fileList.innerHTML = docs.map(d => {
+      const date = d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '';
+      return `<div class="file-item" data-docid="${d.doc_id}">` +
+        `<span class="file-icon">${_fileIcon(d.content_type)}</span>` +
+        `<div class="file-info">` +
+          `<span class="file-name" title="${d.filename}">${d.filename}</span>` +
+          `<span class="file-meta">${_statusDot(d.processing_status)}${_formatSize(d.file_size_bytes)} · ${date}${d.total_chunks ? ' · ' + d.total_chunks + ' chunks' : ''}</span>` +
+        `</div>` +
+        `<div class="file-actions">` +
+          `<button onclick="viewFile('${d.doc_id}')" title="View"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>` +
+          `<button class="btn-file-del" onclick="confirmDeleteFile('${d.doc_id}', \`${d.filename.replace(/`/g, '')}\`)" title="Delete"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>` +
+        `</div>` +
+      `</div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to load files:', err);
+  }
+}
+
+async function viewFile(docId) {
+  try {
+    const r = await fetch(`${API}/documents/${docId}/view`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) { const e = await r.json(); addSystemMessage(`View error: ${e.detail || 'Failed'}`); return; }
+    const data = await r.json();
+    if (data.url) window.open(data.url, '_blank');
+  } catch (err) {
+    addSystemMessage(`View error: ${err.message}`);
+  }
+}
+
+function confirmDeleteFile(docId, filename) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-box">
+      <h3>Delete file?</h3>
+      <p>This will permanently delete <strong>${filename}</strong> from storage, remove its vectors from the search index, and delete the database record. This cannot be undone.</p>
+      <div class="confirm-actions">
+        <button class="btn-cancel" onclick="this.closest('.confirm-overlay').remove()">Cancel</button>
+        <button class="btn-danger" id="confirmDelBtn">Delete</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('confirmDelBtn').onclick = async () => {
+    const btn = document.getElementById('confirmDelBtn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    try {
+      const r = await fetch(`${API}/documents/${docId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      });
+      if (r.status === 401) { doLogout(); return; }
+      if (!r.ok) { const e = await r.json(); addSystemMessage(`Delete error: ${e.detail || 'Failed'}`); }
+      else { addSystemMessage(`${filename} deleted`); }
+    } catch (err) {
+      addSystemMessage(`Delete error: ${err.message}`);
+    }
+    overlay.remove();
+    loadUserFiles();
+  };
 }
 
 // ── Messages ────────────────────────────────────────────────

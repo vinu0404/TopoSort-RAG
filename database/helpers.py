@@ -455,9 +455,29 @@ async def get_document_statuses(
             "description": r.description,
             "total_chunks": r.total_chunks,
             "error_message": r.error_message,
+            "file_size_bytes": r.file_size_bytes,
+            "content_type": r.content_type,
+            "uploaded_at": r.uploaded_at.isoformat() if r.uploaded_at else None,
         }
         for r in rows
     ]
+
+
+async def delete_document_record(
+    session: AsyncSession,
+    doc_id: str,
+    user_id: str,
+) -> bool:
+    """Delete a document record. Returns True if a row was deleted."""
+    from sqlalchemy import delete as sa_delete
+
+    did = _to_uuid(doc_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        sa_delete(Document).where(Document.doc_id == did, Document.user_id == uid)
+    )
+    await session.flush()
+    return result.rowcount > 0
 
 
 async def load_conversation_messages(

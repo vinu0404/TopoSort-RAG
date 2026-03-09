@@ -126,3 +126,21 @@ def generate_presigned_url(
         raise
 
     return url
+
+
+# ── Delete ───────────────────────────────────────────────────────────────────
+
+def delete_file(
+    storage_key: str,
+    bucket: str | None = None,
+) -> None:
+    """Delete an object from S3. Silently succeeds if the key doesn't exist."""
+    bucket = bucket or config.s3_bucket
+    client = _get_client()
+
+    try:
+        client.delete_object(Bucket=bucket, Key=storage_key)
+        logger.info("Deleted s3://%s/%s", bucket, storage_key)
+    except ClientError:
+        logger.exception("Failed to delete S3 object %s", storage_key)
+        raise
