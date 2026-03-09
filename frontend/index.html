@@ -95,7 +95,7 @@
   }
 
   /* ── Connections ───────────────────────────────────────── */
-  .connections-section { }
+  /* .connections-section — no styles */
   .connections-section h3 { font-size: 0.85rem; margin-bottom: 8px; }
   .conn-list { display: flex; flex-direction: column; gap: 6px; }
   .conn-item {
@@ -149,7 +149,6 @@
   /* ── Conversation sidebar ───────────────────────────────── */
 
   /* ── Personas ───────────────────────────────────────────── */
-  .personas-section { }
   .personas-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .persona-list {
     display: flex; flex-direction: column; gap: 2px;
@@ -276,7 +275,6 @@
     font-weight: 500;
   }
   .new-chat-btn:hover { opacity: 0.8; }
-  .conversations-section { }
   .conversations-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .conv-list {
     display: flex;
@@ -444,46 +442,58 @@
   .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
   .panel-view { display: none; }
   .panel-view.active { display: block; }
-  .upload-zone {
-    border: 1.5px dashed #d0d0d0;
-    border-radius: 8px;
-    padding: 16px;
-    text-align: center;
+  /* ── Attach button ──────────────────────────────────── */
+  .btn-attach {
+    background: none;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 10px 14px;
     cursor: pointer;
-    margin-bottom: 6px;
-    position: relative;
-    transition: all 0.15s;
-  }
-  .upload-zone:hover {
-    border-color: #000;
-    background: #fafafa;
-  }
-  .upload-zone input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
-  }
-  .upload-zone p {
-    font-size: 0.85rem;
-    color: #666;
-  }
-  .upload-status {
-    font-size: 0.8rem;
-    color: #666;
-    margin-top: 8px;
-    min-height: 18px;
-  }
-  .upload-status .doc-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-  }
-  .upload-status .doc-status .dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
+    transition: all 0.2s;
+    line-height: 1;
     flex-shrink: 0;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn-attach:hover { border-color: #000; }
+  .btn-attach svg {
+    width: 20px; height: 20px;
+    stroke: #555; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .btn-attach:hover svg { stroke: #000; }
+  .btn-attach input {
+    position: absolute; inset: 0;
+    opacity: 0; cursor: pointer;
+  }
+
+  /* ── Upload bar (above input) ───────────────────────── */
+  .upload-bar {
+    padding: 6px 24px;
+    border-top: 1px solid #eee;
+    background: #fafafa;
+    display: none;
+  }
+  .upload-bar.visible { display: block; }
+  .upload-bar .doc-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: #555;
+    margin-bottom: 2px;
+  }
+  .upload-bar .doc-status .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ── Chat drop overlay ─────────────────────────────── */
+  .chat.drag-over::after {
+    content: 'Drop files to upload';
+    position: absolute; inset: 0;
+    background: rgba(255,255,255,0.9);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; color: #333; font-weight: 500;
+    border: 2px dashed #000; border-radius: 8px;
+    z-index: 10; pointer-events: none;
   }
   .dot-pending     { background: #f0ad4e; }
   .dot-processing  { background: #5bc0de; animation: pulse 1s infinite; }
@@ -645,8 +655,6 @@
   }
 
   /* ── Info section ──────────────────────────────────────── */
-  .info-section {
-  }
   .info-section p {
     font-size: 0.8rem;
     color: #666;
@@ -667,6 +675,7 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
   .messages {
     flex: 1;
@@ -1266,9 +1275,7 @@
       <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       <span class="rail-badge" id="personaBadge" style="display:none">0</span>
     </button>
-    <button class="rail-btn" data-panel="panelUpload" onclick="togglePanel('panelUpload')" title="Upload">
-      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-    </button>
+
     <button class="rail-btn" data-panel="panelFiles" onclick="togglePanel('panelFiles')" title="Files">
       <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
       <span class="rail-badge" id="filesBadge" style="display:none">0</span>
@@ -1301,13 +1308,7 @@
         </div>
         <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
       </div>
-      <div class="panel-view" id="panelUpload">
-        <div class="upload-zone" id="uploadZone">
-          <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
-          <p>Drop files or click</p>
-        </div>
-        <div class="upload-status" id="uploadStatus"></div>
-      </div>
+
       <div class="panel-view" id="panelFiles">
         <div class="files-header">
           <span>Your documents</span>
@@ -1369,7 +1370,12 @@
       <span>Recording…</span>
     </div>
 
+    <div class="upload-bar" id="uploadBar"></div>
     <div class="input-area">
+      <button class="btn-attach" title="Attach files">
+        <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+      </button>
       <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
       <button class="btn-mic" id="micBtn" onclick="toggleRecording()" title="Voice input">🎤</button>
       <button class="btn-send" id="sendBtn" onclick="sendQuery()">Send</button>
@@ -1408,7 +1414,6 @@ function togglePanel(panelId) {
   const titles = {
     panelConversations: 'Conversations',
     panelPersonas: 'Personas',
-    panelUpload: 'Upload',
     panelFiles: 'Files',
     panelConnections: 'Connections',
     panelInfo: 'Info'
@@ -1439,9 +1444,8 @@ const queryInput = document.getElementById('queryInput');
 const sendBtn = document.getElementById('sendBtn');
 const userNameEl = document.getElementById('userName');
 const healthDot = document.getElementById('healthDot');
-const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
-const uploadStatus = document.getElementById('uploadStatus');
+const uploadBar = document.getElementById('uploadBar');
 const pipelineSection = document.getElementById('pipelineSection');
 const pipelineEl = document.getElementById('pipeline');
 const typingInd = document.getElementById('typingIndicator');
@@ -2042,13 +2046,18 @@ queryInput.addEventListener('keydown', (e) => {
 });
 
 // ── File upload ─────────────────────────────────────────────
-uploadZone.addEventListener('dragover', (e) => e.preventDefault());
-uploadZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
-});
+// Attach button triggers file input
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length) uploadFiles(fileInput.files);
+});
+
+// Drag & drop on the chat area
+const chatMain = document.querySelector('.chat');
+chatMain.addEventListener('dragover', (e) => { e.preventDefault(); chatMain.classList.add('drag-over'); });
+chatMain.addEventListener('dragleave', (e) => { if (e.target === chatMain || !chatMain.contains(e.relatedTarget)) chatMain.classList.remove('drag-over'); });
+chatMain.addEventListener('drop', (e) => {
+  e.preventDefault(); chatMain.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
 });
 
 let _pendingDocIds = [];  // doc_ids being tracked for status
@@ -2059,7 +2068,8 @@ async function uploadFiles(fileList) {
   const form = new FormData();
   for (const f of fileList) form.append('files', f);
 
-  uploadStatus.innerHTML = `<div class="doc-status"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`;
+  uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" id="_uploading_temp"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`);
+  uploadBar.classList.add('visible');
 
   try {
     const r = await fetch(`${API}/documents/upload`, {
@@ -2069,35 +2079,64 @@ async function uploadFiles(fileList) {
     });
     if (r.status === 401) { doLogout(); return; }
     const data = await r.json();
-    if (!r.ok) { uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`; return; }
+    if (!r.ok) {
+      const tempEl2 = document.getElementById('_uploading_temp'); if (tempEl2) tempEl2.remove();
+      uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${data.detail || 'Failed'}</div>`);
+      return;
+    }
 
     // Render initial per-file status rows
     const docs = data.documents || [];
-    _pendingDocIds = docs.map(d => d.doc_id);
-    renderDocStatuses(docs);
+    _pendingDocIds = _pendingDocIds.concat(docs.map(d => d.doc_id));
+    const tempEl = document.getElementById('_uploading_temp');
+    if (tempEl) tempEl.remove();
+    for (const d of docs) {
+      uploadBar.insertAdjacentHTML('beforeend',
+        `<div class="doc-status" data-docid="${d.doc_id}">` +
+        `<span class="dot dot-${d.processing_status || d.status}"></span>` +
+        `<span>${d.filename} — ${d.processing_status || d.status}</span></div>`);
+    }
     addSystemMessage(`${docs.length} file(s) queued for processing`);
 
     // Open SSE stream for real-time status updates
     startDocStatusSSE();
   } catch (err) {
-    uploadStatus.textContent = `Error: ${err.message}`;
+    const tempEl3 = document.getElementById('_uploading_temp'); if (tempEl3) tempEl3.remove();
+    uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${err.message}</div>`);
   }
   fileInput.value = '';
 }
 
-function renderDocStatuses(docs) {
-  uploadStatus.innerHTML = docs.map(d =>
-    `<div class="doc-status" data-docid="${d.doc_id}">` +
-    `<span class="dot dot-${d.processing_status || d.status}"></span>` +
-    `<span>${d.filename} — ${d.processing_status || d.status}</span>` +
-    `</div>`
-  ).join('');
-}
-
 function startDocStatusSSE() {
   // Close any existing connection
-  if (_docStatusSource) { _docStatusSource.close(); _docStatusSource = null; }
+  if (_docStatusSource) { _docStatusSource.abort(); _docStatusSource = null; }
   if (!currentUser || !_pendingDocIds.length) return;
+
+  // Poll current status once to catch docs that finished between SSE connections
+  (async () => {
+    try {
+      const r = await fetch(`${API}/documents/status`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+      if (!r.ok) return;
+      const data = await r.json();
+      for (const d of (data.documents || [])) {
+        if (!_pendingDocIds.includes(d.doc_id)) continue;
+        const row = uploadBar.querySelector(`[data-docid="${d.doc_id}"]`);
+        if (row) {
+          row.querySelector('.dot').className = `dot dot-${d.processing_status}`;
+          row.querySelector('span:last-child').textContent = `${d.filename} — ${d.processing_status}`;
+        }
+        if (d.processing_status === 'ready' || d.processing_status === 'failed') {
+          _pendingDocIds = _pendingDocIds.filter(id => id !== d.doc_id);
+          if (d.processing_status === 'ready') addSystemMessage(`${d.filename} processed (${d.total_chunks || '?'} chunks)`);
+          else addSystemMessage(`${d.filename} failed`);
+        }
+      }
+      if (!_pendingDocIds.length) {
+        loadUserFiles();
+        setTimeout(() => { uploadBar.classList.remove('visible'); uploadBar.innerHTML = ''; }, 3000);
+      }
+    } catch (e) { /* ignore poll errors */ }
+  })();
 
   const token = currentUser.access_token;
   // EventSource doesn't support headers, so we pass token as query param
@@ -2135,7 +2174,7 @@ function startDocStatusSSE() {
             if (!_pendingDocIds.includes(evt.doc_id)) continue;
 
             // Update the specific doc status row in the UI
-            const row = uploadStatus.querySelector(`[data-docid="${evt.doc_id}"]`);
+            const row = uploadBar.querySelector(`[data-docid="${evt.doc_id}"]`);
             if (row) {
               const dot = row.querySelector('.dot');
               dot.className = `dot dot-${evt.processing_status}`;
@@ -2155,6 +2194,7 @@ function startDocStatusSSE() {
                 ctrl.abort();
                 _docStatusSource = null;
                 loadUserFiles();  // refresh file list after processing
+                setTimeout(() => { uploadBar.classList.remove('visible'); uploadBar.innerHTML = ''; }, 3000);
                 return;
               }
             }
