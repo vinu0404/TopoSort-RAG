@@ -266,19 +266,13 @@
   .persona-indicator .pi-clear:hover { color: #ff6b6b; }
 
   .new-chat-btn {
-    width: 100%;
-    padding: 10px 14px;
-    background: #000;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: center;
+    width: 100%; padding: 10px 14px;
+    background: #000; color: #fff;
+    border: none; border-radius: 8px;
+    font-size: 0.85rem; cursor: pointer;
+    margin-bottom: 8px;
+    display: flex; align-items: center;
+    gap: 8px; justify-content: center;
     font-weight: 500;
   }
   .new-chat-btn:hover { opacity: 0.8; }
@@ -378,52 +372,78 @@
     overflow: hidden;
   }
 
-  /* ── Sidebar ───────────────────────────────────────────── */
-  .sidebar {
-    width: 260px;
-    border-right: 1px solid #e0e0e0;
-    padding: 16px 12px;
-    overflow-y: auto;
+  /* ── Icon Rail (VS Code-style activity bar) ────────────── */
+  .icon-rail {
+    width: 48px;
+    background: #1a1a1a;
     display: flex;
     flex-direction: column;
+    align-items: center;
+    padding: 8px 0;
     gap: 2px;
-    min-height: 0;
+    flex-shrink: 0;
   }
-  .sidebar h3 {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #999;
-    margin-bottom: 12px;
+  .rail-btn {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 8px;
+    cursor: pointer; position: relative;
+    color: #777; transition: all 0.15s;
   }
+  .rail-btn:hover { color: #ddd; background: rgba(255,255,255,0.08); }
+  .rail-btn.active { color: #fff; }
+  .rail-btn.active::before {
+    content: ''; position: absolute; left: 0;
+    top: 25%; height: 50%; width: 2px;
+    background: #fff; border-radius: 0 2px 2px 0;
+  }
+  .rail-btn svg {
+    width: 22px; height: 22px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .rail-btn .rail-badge {
+    position: absolute; top: 4px; right: 3px;
+    font-size: 0.5rem; font-weight: 700;
+    background: #007aff; color: #fff;
+    padding: 0 4px; border-radius: 6px;
+    min-width: 14px; text-align: center;
+    line-height: 14px; pointer-events: none;
+  }
+  .rail-divider {
+    width: 24px; height: 1px;
+    background: rgba(255,255,255,0.12);
+    margin: 4px 0;
+  }
+  .rail-spacer { flex: 1; }
 
-  /* ── Collapsible section ───────────────────────────────── */
-  .sb-section { border-bottom: 1px solid #eee; }
-  .sb-section:last-child { border-bottom: none; }
-  .sb-toggle {
-    display: flex; align-items: center; gap: 6px;
-    width: 100%; padding: 10px 8px;
+  /* ── Side Panel ────────────────────────────────────────── */
+  .side-panel {
+    width: 260px;
+    border-right: 1px solid #e0e0e0;
+    display: none; flex-direction: column;
+    background: #fff; overflow: hidden;
+    flex-shrink: 0;
+  }
+  .side-panel.open { display: flex; }
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid #eee;
+    flex-shrink: 0;
+  }
+  .panel-header h3 {
+    font-size: 0.8rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #333;
+  }
+  .panel-close {
     background: none; border: none; cursor: pointer;
-    font-size: 0.75rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.6px;
-    color: #222; transition: color 0.15s;
+    font-size: 1.1rem; color: #999; padding: 0 4px;
+    transition: color 0.15s;
   }
-  .sb-toggle:hover { color: #000; }
-  .sb-toggle .sb-chevron {
-    font-size: 0.55rem; transition: transform 0.2s;
-    color: #555;
-  }
-  .sb-toggle .sb-badge {
-    margin-left: auto;
-    font-size: 0.6rem; font-weight: 600;
-    background: #f0f0f0; color: #888;
-    padding: 1px 6px; border-radius: 8px;
-    min-width: 18px; text-align: center;
-  }
-  .sb-section.collapsed .sb-chevron { transform: rotate(-90deg); }
-  .sb-section.collapsed .sb-body { display: none; }
-  .sb-body { padding: 0 6px 10px; }
+  .panel-close:hover { color: #000; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+  .panel-view { display: none; }
+  .panel-view.active { display: block; }
   .upload-zone {
     border: 1.5px dashed #d0d0d0;
     border-radius: 8px;
@@ -574,26 +594,30 @@
   }
   .confirm-box .btn-danger:hover { background: #c9302c; }
 
-  /* ── Pipeline ──────────────────────────────────────────── */
+  /* ── Pipeline (horizontal bar above chat) ────────────── */
   .pipeline-section {
     display: none;
+    padding: 8px 24px;
+    border-bottom: 1px solid #eee;
+    background: #fafafa;
   }
   .pipeline-section.visible {
     display: block;
   }
   .pipeline {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
+    flex-wrap: wrap;
   }
   .pipeline-agent {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: #f8f8f8;
-    border-radius: 8px;
-    font-size: 0.82rem;
+    gap: 6px;
+    padding: 4px 12px;
+    background: #f0f0f0;
+    border-radius: 16px;
+    font-size: 0.78rem;
     transition: background 0.15s;
   }
   .pipeline-agent .dot {
@@ -1166,7 +1190,10 @@
   }
 
   @media (max-width: 768px) {
-    .sidebar { display: none; }
+    .icon-rail { width: 40px; }
+    .rail-btn { width: 34px; height: 34px; }
+    .rail-btn svg { width: 18px; height: 18px; }
+    .side-panel { position: fixed; left: 40px; top: 0; bottom: 0; z-index: 900; box-shadow: 4px 0 16px rgba(0,0,0,0.1); }
   }
 </style>
 </head>
@@ -1225,61 +1252,63 @@
 
 <!-- ── Main ────────────────────────────────────────────────── -->
 <div class="container">
-  <aside class="sidebar">
-    <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+  <!-- Icon Rail -->
+  <nav class="icon-rail">
+    <button class="rail-btn" onclick="newChat()" title="New Chat">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="rail-divider"></div>
+    <button class="rail-btn active" data-panel="panelConversations" onclick="togglePanel('panelConversations')" title="Conversations">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="rail-badge" id="convBadge" style="display:none">0</span>
+    </button>
+    <button class="rail-btn" data-panel="panelPersonas" onclick="togglePanel('panelPersonas')" title="Personas">
+      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="rail-badge" id="personaBadge" style="display:none">0</span>
+    </button>
+    <button class="rail-btn" data-panel="panelUpload" onclick="togglePanel('panelUpload')" title="Upload">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </button>
+    <button class="rail-btn" data-panel="panelFiles" onclick="togglePanel('panelFiles')" title="Files">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span class="rail-badge" id="filesBadge" style="display:none">0</span>
+    </button>
+    <button class="rail-btn" data-panel="panelConnections" onclick="togglePanel('panelConnections')" title="Connections">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-panel="panelInfo" onclick="togglePanel('panelInfo')" title="Info">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </button>
+  </nav>
 
-    <!-- Conversations -->
-    <div class="sb-section" id="sbConversations">
-      <button class="sb-toggle" onclick="toggleSection('sbConversations')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Conversations</span>
-        <span class="sb-badge" id="convBadge">0</span>
-      </button>
-      <div class="sb-body">
+  <!-- Side Panel -->
+  <aside class="side-panel" id="sidePanel">
+    <div class="panel-header">
+      <h3 id="panelTitle">Conversations</h3>
+      <button class="panel-close" onclick="closePanel()">&times;</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-view active" id="panelConversations">
+        <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
         <div class="conv-list" id="convList">
           <div style="color:#888;font-size:0.8em">No conversations yet</div>
         </div>
       </div>
-    </div>
-
-    <!-- Personas -->
-    <div class="sb-section" id="sbPersonas">
-      <button class="sb-toggle" onclick="toggleSection('sbPersonas')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Personas</span>
-        <span class="sb-badge" id="personaBadge">0</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelPersonas">
         <div class="persona-list" id="personaList">
           <div style="color:#888;font-size:0.8em">No personas yet</div>
         </div>
         <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
       </div>
-    </div>
-
-    <!-- Upload -->
-    <div class="sb-section" id="sbUpload">
-      <button class="sb-toggle" onclick="toggleSection('sbUpload')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Upload</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelUpload">
         <div class="upload-zone" id="uploadZone">
           <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
           <p>Drop files or click</p>
         </div>
         <div class="upload-status" id="uploadStatus"></div>
       </div>
-    </div>
-
-    <!-- Files -->
-    <div class="sb-section" id="sbFiles">
-      <button class="sb-toggle" onclick="toggleSection('sbFiles')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Files</span>
-        <span class="sb-badge" id="filesBadge">0</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelFiles">
         <div class="files-header">
           <span>Your documents</span>
           <button class="btn-refresh" onclick="loadUserFiles()" title="Refresh">&#x21bb;</button>
@@ -1288,41 +1317,10 @@
           <div class="file-empty">No files uploaded</div>
         </div>
       </div>
-    </div>
-
-    <!-- Pipeline -->
-    <div class="sb-section" id="sbPipeline">
-      <button class="sb-toggle" onclick="toggleSection('sbPipeline')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Pipeline</span>
-      </button>
-      <div class="sb-body">
-        <div class="pipeline-section" id="pipelineSection">
-          <div class="pipeline" id="pipeline"></div>
-        </div>
+      <div class="panel-view" id="panelConnections">
+        <div class="conn-list" id="connList"></div>
       </div>
-    </div>
-
-    <!-- Connections -->
-    <div class="sb-section" id="sbConnections">
-      <button class="sb-toggle" onclick="toggleSection('sbConnections')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Connections</span>
-      </button>
-      <div class="sb-body">
-        <div class="connections-section">
-          <div class="conn-list" id="connList"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Info -->
-    <div class="sb-section collapsed" id="sbInfo">
-      <button class="sb-toggle" onclick="toggleSection('sbInfo')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Info</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelInfo">
         <div class="info-section">
           <p><strong>Agents:</strong> <span id="agentList">Loading…</span></p>
           <p><strong>Features:</strong></p>
@@ -1338,6 +1336,9 @@
   </aside>
 
   <main class="chat">
+    <div class="pipeline-section" id="pipelineSection">
+      <div class="pipeline" id="pipeline"></div>
+    </div>
     <div id="personaBar" style="display:none; padding: 6px 24px; border-bottom: 1px solid #eee;">
       <div class="persona-indicator">
         <span>🎭</span>
@@ -1381,9 +1382,46 @@
 const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
 const API = `${BASE}/api/v1`;
 
-// ── Sidebar accordion ──────────────────────────────────
-function toggleSection(id) {
-  document.getElementById(id).classList.toggle('collapsed');
+// ── Side Panel ──────────────────────────────────────────────
+let _activePanel = 'panelConversations';
+
+function togglePanel(panelId) {
+  const panel = document.getElementById('sidePanel');
+  const views = panel.querySelectorAll('.panel-view');
+  const btns = document.querySelectorAll('.rail-btn[data-panel]');
+
+  if (_activePanel === panelId) {
+    panel.classList.remove('open');
+    btns.forEach(b => b.classList.remove('active'));
+    _activePanel = null;
+    return;
+  }
+
+  views.forEach(v => v.classList.remove('active'));
+  btns.forEach(b => b.classList.remove('active'));
+
+  const target = document.getElementById(panelId);
+  if (target) target.classList.add('active');
+  const btn = document.querySelector(`.rail-btn[data-panel="${panelId}"]`);
+  if (btn) btn.classList.add('active');
+
+  const titles = {
+    panelConversations: 'Conversations',
+    panelPersonas: 'Personas',
+    panelUpload: 'Upload',
+    panelFiles: 'Files',
+    panelConnections: 'Connections',
+    panelInfo: 'Info'
+  };
+  document.getElementById('panelTitle').textContent = titles[panelId] || '';
+  panel.classList.add('open');
+  _activePanel = panelId;
+}
+
+function closePanel() {
+  document.getElementById('sidePanel').classList.remove('open');
+  document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.remove('active'));
+  _activePanel = null;
 }
 
 let currentUser = null;
@@ -1561,7 +1599,10 @@ async function loadConversations(append = false) {
     _convHasMore = data.has_more || false;
     _convTotal = data.total || 0;
     const badge = document.getElementById('convBadge');
-    if (badge) badge.textContent = _convTotal;
+    if (badge) {
+      badge.textContent = _convTotal;
+      badge.style.display = _convTotal > 0 ? '' : 'none';
+    }
     if (!convos.length && !append) {
       convList.innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
       return;
@@ -1689,7 +1730,10 @@ async function loadPersonas() {
     const data = await res.json();
     const personas = data.personas || [];
     const pBadge = document.getElementById('personaBadge');
-    if (pBadge) pBadge.textContent = personas.length;
+    if (pBadge) {
+      pBadge.textContent = personas.length;
+      pBadge.style.display = personas.length > 0 ? '' : 'none';
+    }
     if (!personas.length) {
       personaListEl.innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
       return;
@@ -2161,6 +2205,7 @@ async function loadUserFiles() {
     const data = await r.json();
     const docs = data.documents || [];
     filesBadge.textContent = docs.length;
+    filesBadge.style.display = docs.length > 0 ? '' : 'none';
     if (!docs.length) {
       fileList.innerHTML = '<div class="file-empty">No files uploaded</div>';
       return;
