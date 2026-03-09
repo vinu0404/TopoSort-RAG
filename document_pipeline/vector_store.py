@@ -151,6 +151,32 @@ class VectorStore:
             points=[doc_point, *chunk_points],
         )
 
+    async def delete_document(self, user_id: str, doc_id: str) -> int:
+        """
+        Delete all points (document entry + chunks) for a given doc_id
+        from the user's collection. Returns the number of deleted points.
+        """
+        collection_name = f"user_{user_id}_documents"
+        doc_filter = Filter(
+            must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+        )
+
+        # Scroll to count points before deleting
+        results, _ = await self.client.scroll(
+            collection_name=collection_name,
+            scroll_filter=doc_filter,
+            limit=10000,
+            with_payload=False,
+        )
+        count = len(results)
+
+        await self.client.delete(
+            collection_name=collection_name,
+            points_selector=doc_filter,
+        )
+        logger.info("Deleted %d points for doc_id=%s from %s", count, doc_id, collection_name)
+        return count
+
     async def search(
         self,
         collection: str,

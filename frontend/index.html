@@ -95,7 +95,7 @@
   }
 
   /* ── Connections ───────────────────────────────────────── */
-  .connections-section { }
+  /* .connections-section — no styles */
   .connections-section h3 { font-size: 0.85rem; margin-bottom: 8px; }
   .conn-list { display: flex; flex-direction: column; gap: 6px; }
   .conn-item {
@@ -149,11 +149,9 @@
   /* ── Conversation sidebar ───────────────────────────────── */
 
   /* ── Personas ───────────────────────────────────────────── */
-  .personas-section { }
   .personas-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .persona-list {
     display: flex; flex-direction: column; gap: 2px;
-    max-height: 160px; overflow-y: auto;
   }
   .persona-item {
     padding: 8px 10px; border-radius: 8px;
@@ -267,30 +265,21 @@
   .persona-indicator .pi-clear:hover { color: #ff6b6b; }
 
   .new-chat-btn {
-    width: 100%;
-    padding: 10px 14px;
-    background: #000;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    margin-bottom: 4px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: center;
+    width: 100%; padding: 10px 14px;
+    background: #000; color: #fff;
+    border: none; border-radius: 8px;
+    font-size: 0.85rem; cursor: pointer;
+    margin-bottom: 8px;
+    display: flex; align-items: center;
+    gap: 8px; justify-content: center;
     font-weight: 500;
   }
   .new-chat-btn:hover { opacity: 0.8; }
-  .conversations-section { }
   .conversations-section h3 { font-size: 0.75rem; margin-bottom: 8px; }
   .conv-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    max-height: 220px;
-    overflow-y: auto;
   }
   .conv-item {
     padding: 8px 10px;
@@ -381,92 +370,130 @@
     overflow: hidden;
   }
 
-  /* ── Sidebar ───────────────────────────────────────────── */
-  .sidebar {
-    width: 260px;
-    border-right: 1px solid #e0e0e0;
-    padding: 16px 12px;
-    overflow-y: auto;
+  /* ── Icon Rail (VS Code-style activity bar) ────────────── */
+  .icon-rail {
+    width: 48px;
+    background: #1a1a1a;
     display: flex;
     flex-direction: column;
+    align-items: center;
+    padding: 8px 0;
     gap: 2px;
-    min-height: 0;
+    flex-shrink: 0;
   }
-  .sidebar h3 {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #999;
-    margin-bottom: 12px;
+  .rail-btn {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 8px;
+    cursor: pointer; position: relative;
+    color: #777; transition: all 0.15s;
+  }
+  .rail-btn:hover { color: #ddd; background: rgba(255,255,255,0.08); }
+  .rail-btn.active { color: #fff; }
+  .rail-btn.active::before {
+    content: ''; position: absolute; left: 0;
+    top: 25%; height: 50%; width: 2px;
+    background: #fff; border-radius: 0 2px 2px 0;
+  }
+  .rail-btn svg {
+    width: 22px; height: 22px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .rail-btn .rail-badge {
+    position: absolute; top: 4px; right: 3px;
+    font-size: 0.5rem; font-weight: 700;
+    background: #007aff; color: #fff;
+    padding: 0 4px; border-radius: 6px;
+    min-width: 14px; text-align: center;
+    line-height: 14px; pointer-events: none;
+  }
+  .rail-divider {
+    width: 24px; height: 1px;
+    background: rgba(255,255,255,0.12);
+    margin: 4px 0;
+  }
+  .rail-spacer { flex: 1; }
+
+  /* ── Side Panel ────────────────────────────────────────── */
+  .side-panel {
+    width: 260px;
+    border-right: 1px solid #e0e0e0;
+    display: none; flex-direction: column;
+    background: #fff; overflow: hidden;
+    flex-shrink: 0;
+  }
+  .side-panel.open { display: flex; }
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid #eee;
+    flex-shrink: 0;
+  }
+  .panel-header h3 {
+    font-size: 0.8rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #333;
+  }
+  .panel-close {
+    background: none; border: none; cursor: pointer;
+    font-size: 1.1rem; color: #999; padding: 0 4px;
+    transition: color 0.15s;
+  }
+  .panel-close:hover { color: #000; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+  .panel-view { display: none; }
+  .panel-view.active { display: block; }
+  /* ── Attach button ──────────────────────────────────── */
+  .btn-attach {
+    background: none;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1;
+    flex-shrink: 0;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn-attach:hover { border-color: #000; }
+  .btn-attach svg {
+    width: 20px; height: 20px;
+    stroke: #555; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .btn-attach:hover svg { stroke: #000; }
+  .btn-attach input {
+    position: absolute; inset: 0;
+    opacity: 0; cursor: pointer;
   }
 
-  /* ── Collapsible section ───────────────────────────────── */
-  .sb-section { border-bottom: 1px solid #eee; }
-  .sb-section:last-child { border-bottom: none; }
-  .sb-toggle {
-    display: flex; align-items: center; gap: 6px;
-    width: 100%; padding: 10px 8px;
-    background: none; border: none; cursor: pointer;
-    font-size: 0.75rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.6px;
-    color: #222; transition: color 0.15s;
-  }
-  .sb-toggle:hover { color: #000; }
-  .sb-toggle .sb-chevron {
-    font-size: 0.55rem; transition: transform 0.2s;
-    color: #555;
-  }
-  .sb-toggle .sb-badge {
-    margin-left: auto;
-    font-size: 0.6rem; font-weight: 600;
-    background: #f0f0f0; color: #888;
-    padding: 1px 6px; border-radius: 8px;
-    min-width: 18px; text-align: center;
-  }
-  .sb-section.collapsed .sb-chevron { transform: rotate(-90deg); }
-  .sb-section.collapsed .sb-body { display: none; }
-  .sb-body { padding: 0 6px 10px; }
-  .upload-zone {
-    border: 1.5px dashed #d0d0d0;
-    border-radius: 8px;
-    padding: 16px;
-    text-align: center;
-    cursor: pointer;
-    margin-bottom: 6px;
-    position: relative;
-    transition: all 0.15s;
-  }
-  .upload-zone:hover {
-    border-color: #000;
+  /* ── Upload bar (above input) ───────────────────────── */
+  .upload-bar {
+    padding: 6px 24px;
+    border-top: 1px solid #eee;
     background: #fafafa;
+    display: none;
   }
-  .upload-zone input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
+  .upload-bar.visible { display: block; }
+  .upload-bar .doc-status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; color: #555;
+    margin-bottom: 2px;
   }
-  .upload-zone p {
-    font-size: 0.85rem;
-    color: #666;
-  }
-  .upload-status {
-    font-size: 0.8rem;
-    color: #666;
-    margin-top: 8px;
-    min-height: 18px;
-  }
-  .upload-status .doc-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 4px;
-  }
-  .upload-status .doc-status .dot {
+  .upload-bar .doc-status .dot {
     width: 8px; height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
+    border-radius: 50%; flex-shrink: 0;
+  }
+
+  /* ── Chat drop overlay ─────────────────────────────── */
+  .chat.drag-over::after {
+    content: 'Drop files to upload';
+    position: absolute; inset: 0;
+    background: rgba(255,255,255,0.9);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; color: #333; font-weight: 500;
+    border: 2px dashed #000; border-radius: 8px;
+    z-index: 10; pointer-events: none;
   }
   .dot-pending     { background: #f0ad4e; }
   .dot-processing  { background: #5bc0de; animation: pulse 1s infinite; }
@@ -474,26 +501,133 @@
   .dot-failed      { background: #d9534f; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-  /* ── Pipeline ──────────────────────────────────────────── */
+  /* ── Files section ─────────────────────────────────────── */
+  .files-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .files-header span {
+    font-size: 0.75rem;
+    color: #999;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .btn-refresh {
+    background: none; border: none;
+    cursor: pointer; font-size: 0.85rem;
+    padding: 2px 6px; border-radius: 4px;
+    color: #666;
+  }
+  .btn-refresh:hover { background: #f0f0f0; }
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+  }
+  .file-item:hover { background: #f5f5f5; }
+  .file-item .file-icon { flex-shrink: 0; font-size: 0.9rem; }
+  .file-item .file-info {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+  }
+  .file-item .file-name {
+    white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; font-weight: 500;
+    color: #333;
+  }
+  .file-item .file-meta {
+    font-size: 0.68rem; color: #999;
+  }
+  .file-item .file-actions {
+    display: flex; gap: 4px; flex-shrink: 0;
+  }
+  .file-item .file-actions button {
+    background: none; border: none;
+    cursor: pointer; padding: 4px 5px; border-radius: 4px;
+    display: flex; align-items: center;
+  }
+  .file-item .file-actions button svg {
+    width: 14px; height: 14px;
+    stroke: #888; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .file-item .file-actions button:hover { background: #e8e8e8; }
+  .file-item .file-actions button:hover svg { stroke: #333; }
+  .file-item .file-actions .btn-file-del:hover { background: #fee; }
+  .file-item .file-actions .btn-file-del:hover svg { stroke: #d00; }
+  .file-empty {
+    font-size: 0.78rem; color: #999;
+    text-align: center; padding: 12px 0;
+  }
+
+  /* ── Delete confirm overlay ──────────────────────────── */
+  .confirm-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 950;
+  }
+  .confirm-box {
+    background: #fff; border-radius: 10px;
+    padding: 20px 24px; width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  }
+  .confirm-box h3 { font-size: 0.95rem; margin-bottom: 8px; }
+  .confirm-box p { font-size: 0.82rem; color: #555; margin-bottom: 16px; line-height: 1.5; }
+  .confirm-box .confirm-actions {
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .confirm-box .confirm-actions button {
+    padding: 6px 16px; border-radius: 6px;
+    border: none; cursor: pointer; font-size: 0.82rem; font-weight: 500;
+  }
+  .confirm-box .btn-cancel {
+    background: #f0f0f0; color: #333;
+  }
+  .confirm-box .btn-cancel:hover { background: #e0e0e0; }
+  .confirm-box .btn-danger {
+    background: #d9534f; color: #fff;
+  }
+  .confirm-box .btn-danger:hover { background: #c9302c; }
+
+  /* ── Pipeline (horizontal bar above chat) ────────────── */
   .pipeline-section {
     display: none;
+    padding: 8px 24px;
+    border-bottom: 1px solid #eee;
+    background: #fafafa;
   }
   .pipeline-section.visible {
     display: block;
   }
   .pipeline {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
+    flex-wrap: wrap;
   }
   .pipeline-agent {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: #f8f8f8;
-    border-radius: 8px;
-    font-size: 0.82rem;
+    gap: 6px;
+    padding: 4px 12px;
+    background: #f0f0f0;
+    border-radius: 16px;
+    font-size: 0.78rem;
     transition: background 0.15s;
   }
   .pipeline-agent .dot {
@@ -521,8 +655,6 @@
   }
 
   /* ── Info section ──────────────────────────────────────── */
-  .info-section {
-  }
   .info-section p {
     font-size: 0.8rem;
     color: #666;
@@ -543,6 +675,7 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
   .messages {
     flex: 1;
@@ -1066,7 +1199,10 @@
   }
 
   @media (max-width: 768px) {
-    .sidebar { display: none; }
+    .icon-rail { width: 40px; }
+    .rail-btn { width: 34px; height: 34px; }
+    .rail-btn svg { width: 18px; height: 18px; }
+    .side-panel { position: fixed; left: 40px; top: 0; bottom: 0; z-index: 900; box-shadow: 4px 0 16px rgba(0,0,0,0.1); }
   }
 </style>
 </head>
@@ -1125,86 +1261,67 @@
 
 <!-- ── Main ────────────────────────────────────────────────── -->
 <div class="container">
-  <aside class="sidebar">
-    <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
+  <!-- Icon Rail -->
+  <nav class="icon-rail">
+    <button class="rail-btn" onclick="newChat()" title="New Chat">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="rail-divider"></div>
+    <button class="rail-btn active" data-panel="panelConversations" onclick="togglePanel('panelConversations')" title="Conversations">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="rail-badge" id="convBadge" style="display:none">0</span>
+    </button>
+    <button class="rail-btn" data-panel="panelPersonas" onclick="togglePanel('panelPersonas')" title="Personas">
+      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="rail-badge" id="personaBadge" style="display:none">0</span>
+    </button>
 
-    <!-- Conversations -->
-    <div class="sb-section" id="sbConversations">
-      <button class="sb-toggle" onclick="toggleSection('sbConversations')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Conversations</span>
-        <span class="sb-badge" id="convBadge">0</span>
-      </button>
-      <div class="sb-body">
+    <button class="rail-btn" data-panel="panelFiles" onclick="togglePanel('panelFiles')" title="Files">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span class="rail-badge" id="filesBadge" style="display:none">0</span>
+    </button>
+    <button class="rail-btn" data-panel="panelConnections" onclick="togglePanel('panelConnections')" title="Connections">
+      <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" data-panel="panelInfo" onclick="togglePanel('panelInfo')" title="Info">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </button>
+  </nav>
+
+  <!-- Side Panel -->
+  <aside class="side-panel" id="sidePanel">
+    <div class="panel-header">
+      <h3 id="panelTitle">Conversations</h3>
+      <button class="panel-close" onclick="closePanel()">&times;</button>
+    </div>
+    <div class="panel-body">
+      <div class="panel-view active" id="panelConversations">
+        <button class="new-chat-btn" onclick="newChat()">+ New Chat</button>
         <div class="conv-list" id="convList">
           <div style="color:#888;font-size:0.8em">No conversations yet</div>
         </div>
       </div>
-    </div>
-
-    <!-- Personas -->
-    <div class="sb-section" id="sbPersonas">
-      <button class="sb-toggle" onclick="toggleSection('sbPersonas')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Personas</span>
-        <span class="sb-badge" id="personaBadge">0</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelPersonas">
         <div class="persona-list" id="personaList">
           <div style="color:#888;font-size:0.8em">No personas yet</div>
         </div>
         <button class="add-persona-btn" onclick="showPersonaModal()">+ Add Persona</button>
       </div>
-    </div>
 
-    <!-- Upload -->
-    <div class="sb-section" id="sbUpload">
-      <button class="sb-toggle" onclick="toggleSection('sbUpload')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Documents</span>
-      </button>
-      <div class="sb-body">
-        <div class="upload-zone" id="uploadZone">
-          <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
-          <p>Drop files or click</p>
+      <div class="panel-view" id="panelFiles">
+        <div class="files-header">
+          <span>Your documents</span>
+          <button class="btn-refresh" onclick="loadUserFiles()" title="Refresh">&#x21bb;</button>
         </div>
-        <div class="upload-status" id="uploadStatus"></div>
-      </div>
-    </div>
-
-    <!-- Pipeline -->
-    <div class="sb-section" id="sbPipeline">
-      <button class="sb-toggle" onclick="toggleSection('sbPipeline')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Pipeline</span>
-      </button>
-      <div class="sb-body">
-        <div class="pipeline-section" id="pipelineSection">
-          <div class="pipeline" id="pipeline"></div>
+        <div class="file-list" id="fileList">
+          <div class="file-empty">No files uploaded</div>
         </div>
       </div>
-    </div>
-
-    <!-- Connections -->
-    <div class="sb-section" id="sbConnections">
-      <button class="sb-toggle" onclick="toggleSection('sbConnections')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Connections</span>
-      </button>
-      <div class="sb-body">
-        <div class="connections-section">
-          <div class="conn-list" id="connList"></div>
-        </div>
+      <div class="panel-view" id="panelConnections">
+        <div class="conn-list" id="connList"></div>
       </div>
-    </div>
-
-    <!-- Info -->
-    <div class="sb-section collapsed" id="sbInfo">
-      <button class="sb-toggle" onclick="toggleSection('sbInfo')">
-        <span class="sb-chevron">&#9660;</span>
-        <span>Info</span>
-      </button>
-      <div class="sb-body">
+      <div class="panel-view" id="panelInfo">
         <div class="info-section">
           <p><strong>Agents:</strong> <span id="agentList">Loading…</span></p>
           <p><strong>Features:</strong></p>
@@ -1220,6 +1337,9 @@
   </aside>
 
   <main class="chat">
+    <div class="pipeline-section" id="pipelineSection">
+      <div class="pipeline" id="pipeline"></div>
+    </div>
     <div id="personaBar" style="display:none; padding: 6px 24px; border-bottom: 1px solid #eee;">
       <div class="persona-indicator">
         <span>🎭</span>
@@ -1250,7 +1370,12 @@
       <span>Recording…</span>
     </div>
 
+    <div class="upload-bar" id="uploadBar"></div>
     <div class="input-area">
+      <button class="btn-attach" title="Attach files">
+        <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+      </button>
       <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
       <button class="btn-mic" id="micBtn" onclick="toggleRecording()" title="Voice input">🎤</button>
       <button class="btn-send" id="sendBtn" onclick="sendQuery()">Send</button>
@@ -1263,9 +1388,45 @@
 const BASE = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
 const API = `${BASE}/api/v1`;
 
-// ── Sidebar accordion ──────────────────────────────────
-function toggleSection(id) {
-  document.getElementById(id).classList.toggle('collapsed');
+// ── Side Panel ──────────────────────────────────────────────
+let _activePanel = 'panelConversations';
+
+function togglePanel(panelId) {
+  const panel = document.getElementById('sidePanel');
+  const views = panel.querySelectorAll('.panel-view');
+  const btns = document.querySelectorAll('.rail-btn[data-panel]');
+
+  if (_activePanel === panelId) {
+    panel.classList.remove('open');
+    btns.forEach(b => b.classList.remove('active'));
+    _activePanel = null;
+    return;
+  }
+
+  views.forEach(v => v.classList.remove('active'));
+  btns.forEach(b => b.classList.remove('active'));
+
+  const target = document.getElementById(panelId);
+  if (target) target.classList.add('active');
+  const btn = document.querySelector(`.rail-btn[data-panel="${panelId}"]`);
+  if (btn) btn.classList.add('active');
+
+  const titles = {
+    panelConversations: 'Conversations',
+    panelPersonas: 'Personas',
+    panelFiles: 'Files',
+    panelConnections: 'Connections',
+    panelInfo: 'Info'
+  };
+  document.getElementById('panelTitle').textContent = titles[panelId] || '';
+  panel.classList.add('open');
+  _activePanel = panelId;
+}
+
+function closePanel() {
+  document.getElementById('sidePanel').classList.remove('open');
+  document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.remove('active'));
+  _activePanel = null;
 }
 
 let currentUser = null;
@@ -1283,9 +1444,8 @@ const queryInput = document.getElementById('queryInput');
 const sendBtn = document.getElementById('sendBtn');
 const userNameEl = document.getElementById('userName');
 const healthDot = document.getElementById('healthDot');
-const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
-const uploadStatus = document.getElementById('uploadStatus');
+const uploadBar = document.getElementById('uploadBar');
 const pipelineSection = document.getElementById('pipelineSection');
 const pipelineEl = document.getElementById('pipeline');
 const typingInd = document.getElementById('typingIndicator');
@@ -1398,6 +1558,7 @@ function onLoginSuccess(data) {
   loadAgents();
   loadConversations();
   loadPersonas();
+  loadUserFiles();
 }
 
 async function doLogout() {
@@ -1442,7 +1603,10 @@ async function loadConversations(append = false) {
     _convHasMore = data.has_more || false;
     _convTotal = data.total || 0;
     const badge = document.getElementById('convBadge');
-    if (badge) badge.textContent = _convTotal;
+    if (badge) {
+      badge.textContent = _convTotal;
+      badge.style.display = _convTotal > 0 ? '' : 'none';
+    }
     if (!convos.length && !append) {
       convList.innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
       return;
@@ -1570,7 +1734,10 @@ async function loadPersonas() {
     const data = await res.json();
     const personas = data.personas || [];
     const pBadge = document.getElementById('personaBadge');
-    if (pBadge) pBadge.textContent = personas.length;
+    if (pBadge) {
+      pBadge.textContent = personas.length;
+      pBadge.style.display = personas.length > 0 ? '' : 'none';
+    }
     if (!personas.length) {
       personaListEl.innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
       return;
@@ -1811,6 +1978,7 @@ window.addEventListener('message', (event) => {
     loadAgents();
     loadConversations();
     loadPersonas();
+    loadUserFiles();
   }
 })();
 
@@ -1878,13 +2046,18 @@ queryInput.addEventListener('keydown', (e) => {
 });
 
 // ── File upload ─────────────────────────────────────────────
-uploadZone.addEventListener('dragover', (e) => e.preventDefault());
-uploadZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
-});
+// Attach button triggers file input
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length) uploadFiles(fileInput.files);
+});
+
+// Drag & drop on the chat area
+const chatMain = document.querySelector('.chat');
+chatMain.addEventListener('dragover', (e) => { e.preventDefault(); chatMain.classList.add('drag-over'); });
+chatMain.addEventListener('dragleave', (e) => { if (e.target === chatMain || !chatMain.contains(e.relatedTarget)) chatMain.classList.remove('drag-over'); });
+chatMain.addEventListener('drop', (e) => {
+  e.preventDefault(); chatMain.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
 });
 
 let _pendingDocIds = [];  // doc_ids being tracked for status
@@ -1895,7 +2068,8 @@ async function uploadFiles(fileList) {
   const form = new FormData();
   for (const f of fileList) form.append('files', f);
 
-  uploadStatus.innerHTML = `<div class="doc-status"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`;
+  uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" id="_uploading_temp"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`);
+  uploadBar.classList.add('visible');
 
   try {
     const r = await fetch(`${API}/documents/upload`, {
@@ -1905,35 +2079,64 @@ async function uploadFiles(fileList) {
     });
     if (r.status === 401) { doLogout(); return; }
     const data = await r.json();
-    if (!r.ok) { uploadStatus.textContent = `Error: ${data.detail || 'Failed'}`; return; }
+    if (!r.ok) {
+      const tempEl2 = document.getElementById('_uploading_temp'); if (tempEl2) tempEl2.remove();
+      uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${data.detail || 'Failed'}</div>`);
+      return;
+    }
 
     // Render initial per-file status rows
     const docs = data.documents || [];
-    _pendingDocIds = docs.map(d => d.doc_id);
-    renderDocStatuses(docs);
+    _pendingDocIds = _pendingDocIds.concat(docs.map(d => d.doc_id));
+    const tempEl = document.getElementById('_uploading_temp');
+    if (tempEl) tempEl.remove();
+    for (const d of docs) {
+      uploadBar.insertAdjacentHTML('beforeend',
+        `<div class="doc-status" data-docid="${d.doc_id}">` +
+        `<span class="dot dot-${d.processing_status || d.status}"></span>` +
+        `<span>${d.filename} — ${d.processing_status || d.status}</span></div>`);
+    }
     addSystemMessage(`${docs.length} file(s) queued for processing`);
 
     // Open SSE stream for real-time status updates
     startDocStatusSSE();
   } catch (err) {
-    uploadStatus.textContent = `Error: ${err.message}`;
+    const tempEl3 = document.getElementById('_uploading_temp'); if (tempEl3) tempEl3.remove();
+    uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${err.message}</div>`);
   }
   fileInput.value = '';
 }
 
-function renderDocStatuses(docs) {
-  uploadStatus.innerHTML = docs.map(d =>
-    `<div class="doc-status" data-docid="${d.doc_id}">` +
-    `<span class="dot dot-${d.processing_status || d.status}"></span>` +
-    `<span>${d.filename} — ${d.processing_status || d.status}</span>` +
-    `</div>`
-  ).join('');
-}
-
 function startDocStatusSSE() {
   // Close any existing connection
-  if (_docStatusSource) { _docStatusSource.close(); _docStatusSource = null; }
+  if (_docStatusSource) { _docStatusSource.abort(); _docStatusSource = null; }
   if (!currentUser || !_pendingDocIds.length) return;
+
+  // Poll current status once to catch docs that finished between SSE connections
+  (async () => {
+    try {
+      const r = await fetch(`${API}/documents/status`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+      if (!r.ok) return;
+      const data = await r.json();
+      for (const d of (data.documents || [])) {
+        if (!_pendingDocIds.includes(d.doc_id)) continue;
+        const row = uploadBar.querySelector(`[data-docid="${d.doc_id}"]`);
+        if (row) {
+          row.querySelector('.dot').className = `dot dot-${d.processing_status}`;
+          row.querySelector('span:last-child').textContent = `${d.filename} — ${d.processing_status}`;
+        }
+        if (d.processing_status === 'ready' || d.processing_status === 'failed') {
+          _pendingDocIds = _pendingDocIds.filter(id => id !== d.doc_id);
+          if (d.processing_status === 'ready') addSystemMessage(`${d.filename} processed (${d.total_chunks || '?'} chunks)`);
+          else addSystemMessage(`${d.filename} failed`);
+        }
+      }
+      if (!_pendingDocIds.length) {
+        loadUserFiles();
+        setTimeout(() => { uploadBar.classList.remove('visible'); uploadBar.innerHTML = ''; }, 3000);
+      }
+    } catch (e) { /* ignore poll errors */ }
+  })();
 
   const token = currentUser.access_token;
   // EventSource doesn't support headers, so we pass token as query param
@@ -1971,7 +2174,7 @@ function startDocStatusSSE() {
             if (!_pendingDocIds.includes(evt.doc_id)) continue;
 
             // Update the specific doc status row in the UI
-            const row = uploadStatus.querySelector(`[data-docid="${evt.doc_id}"]`);
+            const row = uploadBar.querySelector(`[data-docid="${evt.doc_id}"]`);
             if (row) {
               const dot = row.querySelector('.dot');
               dot.className = `dot dot-${evt.processing_status}`;
@@ -1990,6 +2193,8 @@ function startDocStatusSSE() {
               if (!_pendingDocIds.length) {
                 ctrl.abort();
                 _docStatusSource = null;
+                loadUserFiles();  // refresh file list after processing
+                setTimeout(() => { uploadBar.classList.remove('visible'); uploadBar.innerHTML = ''; }, 3000);
                 return;
               }
             }
@@ -2000,6 +2205,115 @@ function startDocStatusSSE() {
       if (e.name !== 'AbortError') console.error('SSE doc status error:', e);
     }
   })();
+}
+
+// ── Files section ───────────────────────────────────────────
+const fileList = document.getElementById('fileList');
+const filesBadge = document.getElementById('filesBadge');
+
+const _FILE_ICONS = {
+  'application/pdf': '📄',
+  'text/plain': '📃',
+  'text/markdown': '📝',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📘',
+  'text/csv': '📊',
+  'application/json': '🔧',
+};
+
+function _fileIcon(contentType) {
+  return _FILE_ICONS[contentType] || '📁';
+}
+
+function _formatSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function _statusDot(status) {
+  const colors = { ready: '#5cb85c', processing: '#5bc0de', pending: '#f0ad4e', failed: '#d9534f' };
+  return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${colors[status] || '#ccc'};margin-right:4px;vertical-align:middle;" title="${status}"></span>`;
+}
+
+async function loadUserFiles() {
+  if (!currentUser) return;
+  try {
+    const r = await fetch(`${API}/documents/status`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) return;
+    const data = await r.json();
+    const docs = data.documents || [];
+    filesBadge.textContent = docs.length;
+    filesBadge.style.display = docs.length > 0 ? '' : 'none';
+    if (!docs.length) {
+      fileList.innerHTML = '<div class="file-empty">No files uploaded</div>';
+      return;
+    }
+    fileList.innerHTML = docs.map(d => {
+      const date = d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '';
+      return `<div class="file-item" data-docid="${d.doc_id}">` +
+        `<span class="file-icon">${_fileIcon(d.content_type)}</span>` +
+        `<div class="file-info">` +
+          `<span class="file-name" title="${d.filename}">${d.filename}</span>` +
+          `<span class="file-meta">${_statusDot(d.processing_status)}${_formatSize(d.file_size_bytes)} · ${date}${d.total_chunks ? ' · ' + d.total_chunks + ' chunks' : ''}</span>` +
+        `</div>` +
+        `<div class="file-actions">` +
+          `<button onclick="viewFile('${d.doc_id}')" title="View"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>` +
+          `<button class="btn-file-del" onclick="confirmDeleteFile('${d.doc_id}', \`${d.filename.replace(/`/g, '')}\`)" title="Delete"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>` +
+        `</div>` +
+      `</div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to load files:', err);
+  }
+}
+
+async function viewFile(docId) {
+  try {
+    const r = await fetch(`${API}/documents/${docId}/view`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) { const e = await r.json(); addSystemMessage(`View error: ${e.detail || 'Failed'}`); return; }
+    const data = await r.json();
+    if (data.url) window.open(data.url, '_blank');
+  } catch (err) {
+    addSystemMessage(`View error: ${err.message}`);
+  }
+}
+
+function confirmDeleteFile(docId, filename) {
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.innerHTML = `
+    <div class="confirm-box">
+      <h3>Delete file?</h3>
+      <p>This will permanently delete <strong>${filename}</strong> from storage, remove its vectors from the search index, and delete the database record. This cannot be undone.</p>
+      <div class="confirm-actions">
+        <button class="btn-cancel" onclick="this.closest('.confirm-overlay').remove()">Cancel</button>
+        <button class="btn-danger" id="confirmDelBtn">Delete</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('confirmDelBtn').onclick = async () => {
+    const btn = document.getElementById('confirmDelBtn');
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    try {
+      const r = await fetch(`${API}/documents/${docId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      });
+      if (r.status === 401) { doLogout(); return; }
+      if (!r.ok) { const e = await r.json(); addSystemMessage(`Delete error: ${e.detail || 'Failed'}`); }
+      else { addSystemMessage(`${filename} deleted`); }
+    } catch (err) {
+      addSystemMessage(`Delete error: ${err.message}`);
+    }
+    overlay.remove();
+    loadUserFiles();
+  };
 }
 
 // ── Messages ────────────────────────────────────────────────

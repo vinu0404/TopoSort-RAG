@@ -25,6 +25,7 @@ from database.helpers import (
     bg_save_agent_executions,
     bg_save_messages,
     create_persona,
+    delete_document_record,
     delete_persona,
     ensure_user_exists,
     ensure_session_exists,
@@ -278,6 +279,42 @@ async def document_view(
         "content_type": doc.content_type,
         "expires_in": config.s3_presign_expiry,
     }
+
+
+@router.delete("/documents/{doc_id}", tags=["documents"])
+async def delete_document(
+    doc_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Delete a document: S3 object, Qdrant vectors, and DB record.
+    """
+    doc = await get_document_for_user(session, doc_id, auth_user_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # 1. Delete from S3
+    if doc.storage_key:
+        from storage.s3 import delete_file
+        try:
+            delete_file(doc.storage_key, bucket=doc.storage_bucket)
+        except Exception:
+            logger.warning("S3 delete failed for %s — continuing", doc.storage_key)
+
+    # 2. Delete from Qdrant
+    try:
+        from document_pipeline.vector_store import get_vector_store
+        store = get_vector_store()
+        await store.delete_document(auth_user_id, doc_id)
+    except Exception:
+        logger.warning("Qdrant delete failed for doc %s — continuing", doc_id)
+
+    # 3. Delete from DB
+    await delete_document_record(session, doc_id, auth_user_id)
+    await session.commit()
+
+    return {"deleted": True, "doc_id": doc_id}
 
 
 @router.get("/documents/status/stream", tags=["documents"])
