@@ -1,4 +1,4 @@
-"""Document parsing — PDF, DOCX, Excel."""
+"""Document parsing — PDF, DOCX, Excel, Images."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ import docx
 from io import BytesIO
 import pandas as pd
 logger = logging.getLogger(__name__)
+
+# Image extensions handled by the vision LLM
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 
 async def parse_document(file_path: str, file_bytes: bytes | None = None) -> Dict[str, Any]:
@@ -26,6 +29,8 @@ async def parse_document(file_path: str, file_bytes: bytes | None = None) -> Dic
         content = _parse_docx(file_path, file_bytes)
     elif ext in (".xlsx", ".xls", ".csv"):
         content = _parse_spreadsheet(file_path, file_bytes)
+    elif ext in _IMAGE_EXTENSIONS:
+        content = await _parse_image(file_path, file_bytes)
     elif ext in (".txt", ".md"):
         content = _parse_text(file_path, file_bytes)
     else:
@@ -86,3 +91,14 @@ def _parse_text(path: str, data: bytes | None) -> str:
     if data:
         return data.decode(errors="replace")
     return Path(path).read_text(errors="replace")
+
+
+async def _parse_image(path: str, data: bytes | None) -> str:
+    """Send image to the configured vision LLM and return text description."""
+    from document_pipeline.vision import analyze_image
+
+    if not data:
+        data = Path(path).read_bytes()
+    filename = Path(path).name
+    logger.info("Parsing image via vision LLM: %s (%d bytes)", filename, len(data))
+    return await analyze_image(data, filename)

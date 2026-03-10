@@ -390,6 +390,140 @@ graph TB
 
 ---
 
+## Auto-Generated Conversation Titles
+
+New conversations get an LLM-generated title automatically. Instead of showing the raw user query truncated to 120 characters, the system asks the LLM to produce a short, descriptive title (max 7 words) from the first message. Title generation runs **in parallel** with the main pipeline — zero added latency.
+
+### How It Works
+
+```mermaid
+flowchart TD
+    Query["User sends first message<br/><i>conversation_id = null</i>"]
+    Query --> Create["Create new conversation<br/><i>Chat title = query[:120]</i>"]
+    Create --> Fork["asyncio — parallel tasks"]
+
+    Fork --> Pipeline["Main Pipeline<br/><i>Master → Orchestrator →<br/>Agents → Composer</i>"]
+    Fork --> TitleTask["Title Generation Task"]
+
+    subgraph TitleTask["Title Task (asyncio.create_task)"]
+        direction TB
+        Prompt["LLM prompt<br/><i>'Generate a short title<br/>(max 7 words) for this message'</i>"]
+        Prompt --> Generated["Generated title<br/><i>e.g. 'Q3 Revenue Analysis Report'</i>"]
+    end
+
+    Pipeline --> Stream["SSE token events<br/><i>streamed to user</i>"]
+    Stream --> Done{"Streaming<br/>complete?"}
+    Done --> Await["Await title_task"]
+    Await --> Update["UPDATE conversations<br/>SET title = generated_title<br/><i>PostgreSQL</i>"]
+    Update --> Emit["SSE done event<br/><i>includes conversation_title</i>"]
+    Emit --> Frontend["Frontend updates sidebar<br/><i>conv-item title replaced</i>"]
+
+    style Query fill:#2196F3,color:#fff
+    style Prompt fill:#FF9800,color:#fff
+    style Generated fill:#FF9800,color:#fff
+    style Update fill:#4CAF50,color:#fff
+    style Frontend fill:#4CAF50,color:#fff
+```
+
+### Flow Summary
+
+| Step | Streaming Route | Non-Streaming Route |
+|------|----------------|---------------------|
+| **1. Detect new conversation** | `request.conversation_id` is null | Same |
+| **2. Launch title task** | `asyncio.create_task(generate_title(...))` — runs in parallel with agents | Same — background task after response |
+| **3. Await + persist** | Awaited before `done` event → `UPDATE conversations SET title` | Fire-and-forget `asyncio.create_task` |
+| **4. Deliver to frontend** | `done` SSE event includes `conversation_title` field | Next `loadConversations()` call picks it up |
+| **5. Update sidebar** | `updateConvItemTitle()` replaces text in the active conv-item | Sidebar refreshes on next load |
+
+### Configuration
+
+The bot name and title generation use settings from `config/settings.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `BOT_NAME` | `MRAG` | The chatbot's name — used in system prompts so the bot can identify itself |
+
+Title generation uses whichever LLM model is active for the request (user-selected or default), with `temperature=0.3` for focused output. The prompt and generator live in `core/title_generator.py`.
+
+---
+
+## Multi-Modal Image Analysis
+
+Upload images alongside documents — the system uses a **Vision LLM** to generate a comprehensive text description of each image, then pipes that text through the existing chunk → embed → store pipeline. The RAG agent can then answer questions about uploaded images just like any other document.
+
+### Supported Formats
+
+`.png` · `.jpg` / `.jpeg` · `.gif` · `.webp` · `.bmp`
+
+### Architecture
+
+```mermaid
+flowchart TD
+    Upload["User uploads image<br/><i>POST /documents/upload</i>"]
+    Upload --> S3["Store original in S3<br/><i>uploads/{user_id}/{doc_id}/{filename}</i>"]
+    Upload --> Celery["Celery Task<br/><i>process_document_task</i>"]
+
+    Celery --> Parser["parser.parse_document()"]
+
+    Parser --> ExtCheck{"File extension<br/>in _IMAGE_EXTENSIONS?"}
+    ExtCheck -->|No| TextParse["Existing text/PDF/CSV<br/>parsers"]
+    ExtCheck -->|Yes| Vision["_parse_image()"]
+
+    subgraph Vision["Vision LLM Analysis"]
+        direction TB
+        Dispatch{"Config:<br/>vision_model_provider"}
+        Dispatch -->|openai| OpenAI["OpenAI Vision API<br/><i>base64 image_url<br/>detail: high</i>"]
+        Dispatch -->|google| Gemini["Google Gemini API<br/><i>inline_data<br/>mime_type + bytes</i>"]
+        OpenAI --> Description["Text description<br/><i>content overview, extracted text,<br/>data/numbers, visual elements</i>"]
+        Gemini --> Description
+    end
+
+    Description --> Chunk["chunker.chunk_text()<br/><i>split into overlapping chunks</i>"]
+    Chunk --> Embed["embedder.embed_chunks()<br/><i>batch embedding</i>"]
+    Embed --> Store["vector_store.store_chunks()<br/><i>Qdrant collection<br/>user_{id}_documents</i>"]
+
+    TextParse --> Chunk
+
+    style Upload fill:#2196F3,color:#fff
+    style Dispatch fill:#FF9800,color:#fff
+    style Description fill:#FF9800,color:#fff
+    style Store fill:#4CAF50,color:#fff
+```
+
+### How It Works
+
+1. **Upload** — Image file arrives via the existing `/documents/upload` endpoint. The original is stored in S3 (Backblaze B2).
+2. **Parse** — `parser.parse_document()` detects the image extension and calls `_parse_image()`.
+3. **Vision LLM** — `document_pipeline/vision.py` sends the image to the configured vision model. The prompt asks for: content overview, text extraction (OCR), data/numbers, visual elements, and contextual meaning.
+4. **Pipeline continues** — The returned text description flows through **chunker → embedder → vector store**, exactly like any text document.
+5. **Query** — The RAG agent retrieves relevant chunks. Image-derived chunks carry `doc_type: "png"` (or `jpg`, etc.) in metadata for traceability.
+
+### Frontend
+
+- The file picker accepts image formats alongside documents.
+- Uploaded images show a **thumbnail preview** (loaded via presigned S3 URL) in the file list instead of the generic file icon.
+
+### Configuration
+
+All vision settings live in `config/settings.py`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `VISION_MODEL_PROVIDER` | `openai` | Which provider to use — `openai` or `google` |
+| `VISION_MODEL` | `gpt-4o` | The vision-capable model name |
+| `VISION_MAX_TOKENS` | `2048` | Maximum tokens for the vision response |
+
+To switch from OpenAI to Gemini, change **only** the config:
+
+```env
+VISION_MODEL_PROVIDER=google
+VISION_MODEL=gemini-2.0-flash
+```
+
+No code changes required — both providers are handled by `document_pipeline/vision.py`.
+
+---
+
 ## Long term Memory Extraction Pipeline
 
 Every user query passes through a **parallel memory extraction layer** that runs alongside the Master Agent — zero added latency. The extractor uses an LLM to detect personal data (name, company, job title, tone preferences, etc.) and persists any new findings to PostgreSQL for future conversations.

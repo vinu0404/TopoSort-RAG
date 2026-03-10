@@ -4,6 +4,11 @@ Celery application factory.
 Start a worker with:
     celery -A celery_app worker --loglevel=info --pool=solo
 
+OR 
+
+python -m celery -A celery_app worker --pool=threads --concurrency=4
+
+
 Monitor with Flower:
     celery -A celery_app flower --port=5555
 """

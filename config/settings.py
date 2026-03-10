@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     github_temperature: float = 0.2
     tavily_api_key: str = ""
 
+    # ── Vision (image analysis) ──────────────────────────────────────────
+    vision_model_provider: str = "openai"       # "openai" or "google"
+    vision_model: str = "gpt-4o"                # gpt-4o, gemini-2.0-flash, etc.
+    vision_max_tokens: int = 2048
+
     # ── Gmail ────────────────────────────────────────────────────────────
     gmail_sender_email: str = ""  
 

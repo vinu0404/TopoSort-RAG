@@ -603,6 +603,11 @@
   }
   .file-item:hover { background: #f5f5f5; }
   .file-item .file-icon { flex-shrink: 0; font-size: 0.9rem; }
+  .file-thumb {
+    width: 32px; height: 32px; border-radius: 4px;
+    object-fit: cover; flex-shrink: 0;
+    border: 1px solid #e0e0e0;
+  }
   .file-item .file-info {
     flex: 1; min-width: 0;
     display: flex; flex-direction: column;
@@ -1449,7 +1454,7 @@
     <div class="input-area">
       <button class="btn-attach" title="Attach files">
         <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json" multiple>
+        <input type="file" id="fileInput" accept=".pdf,.txt,.md,.docx,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.bmp" multiple>
       </button>
       <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
       <button class="btn-mic" id="micBtn" onclick="toggleRecording()" title="Voice input">🎤</button>
@@ -2410,6 +2415,11 @@ const _FILE_ICONS = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📘',
   'text/csv': '📊',
   'application/json': '🔧',
+  'image/png': '🖼️',
+  'image/jpeg': '🖼️',
+  'image/gif': '🖼️',
+  'image/webp': '🖼️',
+  'image/bmp': '🖼️',
 };
 
 function _fileIcon(contentType) {
@@ -2444,8 +2454,13 @@ async function loadUserFiles() {
     }
     fileList.innerHTML = docs.map(d => {
       const date = d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '';
+      const isImage = (d.content_type || '').startsWith('image/');
+      const iconHtml = isImage
+        ? `<img class="file-thumb" data-docid="${d.doc_id}" src="" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
+          + `<span class="file-icon" style="display:none">🖼️</span>`
+        : `<span class="file-icon">${_fileIcon(d.content_type)}</span>`;
       return `<div class="file-item" data-docid="${d.doc_id}">` +
-        `<span class="file-icon">${_fileIcon(d.content_type)}</span>` +
+        iconHtml +
         `<div class="file-info">` +
           `<span class="file-name" title="${d.filename}">${d.filename}</span>` +
           `<span class="file-meta">${_statusDot(d.processing_status)}${_formatSize(d.file_size_bytes)} · ${date}${d.total_chunks ? ' · ' + d.total_chunks + ' chunks' : ''}</span>` +
@@ -2456,6 +2471,13 @@ async function loadUserFiles() {
         `</div>` +
       `</div>`;
     }).join('');
+    // Load thumbnails for image files
+    fileList.querySelectorAll('.file-thumb').forEach(async img => {
+      try {
+        const r = await fetch(`${API}/documents/${img.dataset.docid}/view`, { headers: authHeaders() });
+        if (r.ok) { const d = await r.json(); if (d.url) img.src = d.url; }
+      } catch {}
+    });
   } catch (err) {
     console.error('Failed to load files:', err);
   }
