@@ -86,6 +86,14 @@ GOOGLE_CLIENT_SECRET=...
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 
+
+S3_ENDPOINT=https://s3.us-east-005.backblazeb2.com
+S3_REGION=us-east-005
+S3_ACCESS_KEY_ID=005241.......
+S3_SECRET_ACCESS_KEY=K005oBJ......
+S3_BUCKET=linkdrop
+
+
 # ── Redis / Celery (defaults work with docker-compose) ──────────
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/0
@@ -176,6 +184,7 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | `POST` | `/documents/upload` | JWT | Upload one or more files (PDF, DOCX, Excel, CSV, TXT, MD). Multipart form: `files`. Returns `{ documents: [{ doc_id, filename, status }] }`. Processing runs async via Celery. |
 | `GET` | `/documents/status` | JWT | List all documents and their processing status for the authenticated user. Returns `{ documents: [...] }`. |
 | `GET` | `/documents/status/stream` | JWT | SSE stream of real-time document processing status updates (Redis Pub/Sub). Events: `doc_status`. |
+| `DELETE` | `/documents/{doc_id}` | JWT | Delete a document (S3 file + Qdrant vectors + DB record). Ownership verified. Returns `{ deleted, doc_id }`. |
 | `POST` | `/hitl/respond` | JWT | Approve or deny a HITL (Human-in-the-Loop) request. Body: `{ request_id, decision, instructions? }`. Returns `{ request_id, status }`. |
 | `GET` | `/conversations` | JWT | List conversations (newest first) with pagination. Query params: `limit` (default 20), `offset` (default 0). Returns `{ conversations: [...], total, limit, offset, has_more }`. |
 | `GET` | `/conversations/{conversation_id}/messages` | JWT | Load all messages for a specific conversation. Returns `{ conversation_id, messages: [...] }`. |
