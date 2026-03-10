@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS messages (
     conversation_id  UUID NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
     role             VARCHAR(16) NOT NULL,       -- 'user' | 'assistant' | 'system'
     content          TEXT NOT NULL,
+    model_used       VARCHAR(128),               -- which LLM model produced this message
     metadata         JSONB DEFAULT '{}',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

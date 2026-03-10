@@ -223,6 +223,100 @@ class AnthropicProvider(BaseLLMProvider):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Google (Gemini)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class GoogleProvider(BaseLLMProvider):
+    def __init__(self, api_key: str, default_model: str = "gemini-2.0-flash"):
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        self._genai = genai
+        self.default_model = default_model
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        output_schema: Optional[Dict[str, Any]] = None,
+    ) -> LLMResult:
+        import asyncio
+
+        model_name = model or self.default_model
+
+        extra = ""
+        if output_schema is not None:
+            extra = (
+                f"\n\nRespond ONLY with valid JSON matching this schema:\n"
+                f"{json.dumps(output_schema, indent=2)}"
+            )
+
+        gen_model = self._genai.GenerativeModel(
+            model_name,
+            generation_config=self._genai.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            ),
+        )
+
+        response = await asyncio.to_thread(
+            gen_model.generate_content, prompt + extra
+        )
+
+        text = response.text or ""
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
+            usage = {
+                "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                "total_tokens": getattr(um, "total_token_count", 0) or 0,
+            }
+
+        parsed_data = None
+        if output_schema is not None:
+            try:
+                parsed_data = json.loads(text)
+            except json.JSONDecodeError:
+                logger.warning("LLM did not return valid JSON; returning raw text")
+                parsed_data = {"raw": text}
+
+        return LLMResult(text=text, data=parsed_data, usage=usage, model=model_name)
+
+    async def stream(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        import asyncio
+
+        model_name = model or self.default_model
+
+        gen_model = self._genai.GenerativeModel(
+            model_name,
+            generation_config=self._genai.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            ),
+        )
+
+        response = await asyncio.to_thread(
+            gen_model.generate_content, prompt, stream=True
+        )
+
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Factory
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -257,6 +351,12 @@ def get_llm_provider(
         instance = AnthropicProvider(
             api_key=key,
             default_model=default_model or "claude-3-5-sonnet-20241022",
+        )
+    elif provider_name == "google":
+        key = api_key or (config.google_api_key or "")
+        instance = GoogleProvider(
+            api_key=key,
+            default_model=default_model or "gemini-2.0-flash",
         )
     else:
         raise ValueError(f"Unsupported LLM provider: {provider_name}")

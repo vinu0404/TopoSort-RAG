@@ -317,6 +317,7 @@ class QueryRequest(BaseModel):
     conversation_id: Optional[str] = None
     persona_id: Optional[str] = None
     source: str = "text"  # "text" | "voice"
+    model: Optional[str] = None  # user-selected model override (e.g. "gpt-4o", "claude-sonnet-4-20250514")
 
 
 class MasterAgentInput(BaseModel):

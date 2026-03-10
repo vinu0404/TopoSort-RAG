@@ -1,6 +1,6 @@
 # Multi-Agentic RAG System
 
-A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, PostgreSQL, and LLM providers (OpenAI / Anthropic). Agents are orchestrated via Kahn's topological sort, enabling parallel execution where dependencies allow and can handle any type of order execution of agents. Dynamic routing of agents according to query need.
+A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, PostgreSQL, and LLM providers (OpenAI / Anthropic / Google Gemini). Agents are orchestrated via Kahn's topological sort, enabling parallel execution where dependencies allow and can handle any type of order execution of agents. Dynamic routing of agents according to query need.
 
 ### Dynamic routing of agents with TopoSort without using any frameworks like LangChain or LangGraph
 
@@ -29,7 +29,7 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 
 - **Python 3.11+**
 - **Docker** (for PostgreSQL, Qdrant, Redis)
-- API keys: **OpenAI** (required), **Anthropic** (optional), **Tavily** (optional, for web search)
+- API keys: **OpenAI** (required), **Anthropic** (optional), **Google Gemini** (optional), **Tavily** (optional, for web search)
 
 ### 1. Start Infrastructure (PostgreSQL + Qdrant + Redis)
 
@@ -71,6 +71,7 @@ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrag
 
 # ── Optional — LLM providers ────────────────────────────────────
 ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_API_KEY=AIza...
 TAVILY_API_KEY=tvly-...
 
 # ── Optional — Security (change in production) ──────────────────
@@ -178,8 +179,9 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/health` | No | Health check. Returns `{ status: "ok" }`. |
+| `GET` | `/models` | No | List available LLM models grouped by provider with real-time availability (API key validated in parallel). Returns `{ models: { provider: { available, models: [...] } } }`. |
 | `GET` | `/agents` | No | List all registered agents and their capabilities. Returns `{ agents: [...] }`. |
-| `POST` | `/query` | JWT | Non-streaming query. Body: `{ query, session_id?, conversation_id? }`. Returns `{ answer, sources, agents_used, session_id, conversation_id }`. |
+| `POST` | `/query` | JWT | Non-streaming query. Body: `{ query, session_id?, conversation_id?, model? }`. Returns `{ answer, sources, agents_used, session_id, conversation_id }`. The optional `model` field overrides the default LLM (e.g. `gpt-4o`, `claude-sonnet-4-20250514`, `gemini-2.0-flash`). |
 | `POST` | `/query/stream` | JWT | Streaming query via SSE. Same body as `/query`. Emits SSE events: `status`, `plan`, `hitl_required`, `token`, `sources`, `done`, `error`. |
 | `POST` | `/documents/upload` | JWT | Upload one or more files (PDF, DOCX, Excel, CSV, TXT, MD). Multipart form: `files`. Returns `{ documents: [{ doc_id, filename, status }] }`. Processing runs async via Celery. |
 | `GET` | `/documents/status` | JWT | List all documents and their processing status for the authenticated user. Returns `{ documents: [...] }`. |

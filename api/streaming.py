@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import db_session, get_current_user_id
 from config.model_list import AgentRegistry
-from config.settings import config
+from config.settings import config, model_provider_for, _VALID_MODELS
 from core.composer_agent import ComposerAgent
 from core.master_agent import MasterAgent
 from core.memory_extractor import MemoryExtractor
@@ -230,7 +230,12 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
         await session.commit()
         yield _sse_event("status", {"phase": "planning"})
 
-        master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
+        # Use user-selected model if valid, otherwise fall back to config defaults
+        if request.model and request.model in _VALID_MODELS:
+            _provider = model_provider_for(request.model)
+            master_llm = get_llm_provider(_provider, default_model=request.model)
+        else:
+            master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
         memory_mgr = MemoryManager(llm_provider=master_llm)
         long_term = await memory_mgr.get_long_term_memory(user_id, db_session=session)
         conversation_history = await memory_mgr.get_conversation_history_for_agents(
@@ -318,7 +323,11 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
 
         yield _sse_event("status", {"phase": "composing"})
 
-        composer_llm = get_llm_provider(config.composer_model_provider, default_model=config.composer_model)
+        if request.model and request.model in _VALID_MODELS:
+            _provider = model_provider_for(request.model)
+            composer_llm = get_llm_provider(_provider, default_model=request.model)
+        else:
+            composer_llm = get_llm_provider(config.composer_model_provider, default_model=config.composer_model)
         composer = ComposerAgent(llm_provider=composer_llm)
 
         agent_outputs = [v for v in results.values() if hasattr(v, "agent_id")]
@@ -392,7 +401,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
         if voice_summary:
             metadata["voice_summary"] = voice_summary
-        await bg_save_messages(conv_id, request.query, composer_answer, metadata)
+        await bg_save_messages(conv_id, request.query, composer_answer, metadata, model_used=request.model)
         elapsed = time.perf_counter() - start_time
         total_tokens = sum(
             getattr(o, "resource_usage", {}).get("tokens_used", 0)

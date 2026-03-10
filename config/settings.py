@@ -6,9 +6,44 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 
+# ── Supported models per provider ─────────────────────────────────────────
+# Frontend reads this via GET /api/v1/models to populate the selector.
+# label = display name, ctx = context window (informational).
+MODEL_CATALOG = {
+    "openai": [
+        {"id": "gpt-4o",          "label": "GPT-4o",          "ctx": 128_000},
+        {"id": "gpt-4o-mini",     "label": "GPT-4o Mini",     "ctx": 128_000},
+        {"id": "gpt-4.1",         "label": "GPT-4.1",         "ctx": 1_000_000},
+        {"id": "gpt-4.1-mini",    "label": "GPT-4.1 Mini",    "ctx": 1_000_000},
+        {"id": "gpt-4.1-nano",    "label": "GPT-4.1 Nano",    "ctx": 1_000_000},
+        {"id": "o3-mini",         "label": "o3 Mini",         "ctx": 200_000},
+    ],
+    "anthropic": [
+        {"id": "claude-sonnet-4-20250514",      "label": "Claude Sonnet 4",  "ctx": 200_000},
+        {"id": "claude-3-5-sonnet-20241022", "label": "Claude 3.5 Sonnet", "ctx": 200_000},
+        {"id": "claude-3-5-haiku-20241022",  "label": "Claude 3.5 Haiku",  "ctx": 200_000},
+    ],
+    "google": [
+        {"id": "gemini-2.0-flash",    "label": "Gemini 2.0 Flash",    "ctx": 1_000_000},
+        {"id": "gemini-2.5-pro-preview-05-06","label": "Gemini 2.5 Pro", "ctx": 1_000_000},
+    ],
+}
+
+# Flat set for quick validation
+_VALID_MODELS: set[str] = {m["id"] for models in MODEL_CATALOG.values() for m in models}
+
+def model_provider_for(model_id: str) -> str | None:
+    """Return the provider name for a model id, or None if unknown."""
+    for provider, models in MODEL_CATALOG.items():
+        if any(m["id"] == model_id for m in models):
+            return provider
+    return None
+
+
 class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
     master_model_provider: str = "openai"
     master_model: str = "gpt-4o"
     master_temperature: float = 0.3

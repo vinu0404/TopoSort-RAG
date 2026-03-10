@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
@@ -14,7 +15,65 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import db_session, get_current_user_id
 from config.model_list import AgentRegistry
-from config.settings import config
+from config.settings import config, model_provider_for, _VALID_MODELS, MODEL_CATALOG
+
+
+_key_pool = ThreadPoolExecutor(max_workers=4)
+
+
+def _get_provider_key(provider: str) -> str | None:
+    """Return the raw API key string for a provider, or None."""
+    key_map = {
+        "openai": config.openai_api_key,
+        "anthropic": config.anthropic_api_key,
+        "google": config.google_api_key,
+    }
+    val = key_map.get(provider)
+    return val if val and val.strip() else None
+
+
+def _validate_openai(key: str) -> bool:
+    """Lightweight OpenAI key check — list-models call."""
+    try:
+        from openai import OpenAI
+        c = OpenAI(api_key=key, timeout=8)
+        c.models.list()  # minimal authenticated call
+        return True
+    except Exception:
+        return False
+
+
+def _validate_anthropic(key: str) -> bool:
+    """Lightweight Anthropic key check — tiny message."""
+    try:
+        from anthropic import Anthropic
+        c = Anthropic(api_key=key, timeout=8)
+        c.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _validate_google(key: str) -> bool:
+    """Lightweight Google key check — list-models call."""
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=key)
+        list(genai.list_models())  # authenticated call
+        return True
+    except Exception:
+        return False
+
+
+_VALIDATORS = {
+    "openai": _validate_openai,
+    "anthropic": _validate_anthropic,
+    "google": _validate_google,
+}
 from core.composer_agent import ComposerAgent
 from core.master_agent import MasterAgent
 from core.memory_extractor import MemoryExtractor
@@ -52,6 +111,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/models", tags=["models"])
+async def list_models():
+    """Return available models grouped by provider, with availability flag.
+
+    API keys are validated in parallel via threads so the endpoint stays
+    responsive even if a provider is slow to respond.
+    """
+    loop = asyncio.get_running_loop()
+
+    # Launch one validation per provider in parallel
+    futures: dict[str, asyncio.Future] = {}
+    for provider in MODEL_CATALOG:
+        key = _get_provider_key(provider)
+        if not key:
+            futures[provider] = loop.create_future()
+            futures[provider].set_result(False)
+        else:
+            validator = _VALIDATORS.get(provider)
+            if validator:
+                futures[provider] = loop.run_in_executor(_key_pool, validator, key)
+            else:
+                futures[provider] = loop.create_future()
+                futures[provider].set_result(bool(key))
+
+    # Await all results together
+    availability = {}
+    for provider, fut in futures.items():
+        try:
+            availability[provider] = await fut
+        except Exception:
+            availability[provider] = False
+
+    result = {}
+    for provider, models in MODEL_CATALOG.items():
+        result[provider] = {
+            "available": availability.get(provider, False),
+            "models": models,
+        }
+    return {"models": result}
+
+
 @router.get("/agents", tags=["agents"])
 async def list_agents():
     """Return all registered agents and their capabilities."""
@@ -76,7 +176,12 @@ async def handle_query(
         persona_id=request.persona_id,
     )
     await session.commit()
-    master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
+    # Use user-selected model if valid, otherwise fall back to config defaults
+    if request.model and request.model in _VALID_MODELS:
+        _provider = model_provider_for(request.model)
+        master_llm = get_llm_provider(_provider, default_model=request.model)
+    else:
+        master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
     memory_mgr = MemoryManager(llm_provider=master_llm)
     long_term = await memory_mgr.get_long_term_memory(user_id, db_session=session)
     conversation_history = await memory_mgr.get_conversation_history_for_agents(
@@ -124,7 +229,11 @@ async def handle_query(
         logger.info("[Query] No agents in plan (intent=%s) — skipping orchestration", plan.analysis.intent)
         results = {}
 
-    composer_llm = get_llm_provider(config.composer_model_provider, default_model=config.composer_model)
+    if request.model and request.model in _VALID_MODELS:
+        _provider = model_provider_for(request.model)
+        composer_llm = get_llm_provider(_provider, default_model=request.model)
+    else:
+        composer_llm = get_llm_provider(config.composer_model_provider, default_model=config.composer_model)
     composer = ComposerAgent(llm_provider=composer_llm)
 
     agent_outputs = [v for v in results.values() if hasattr(v, "agent_id")]
@@ -156,7 +265,7 @@ async def handle_query(
     )
     sources_data = [s.model_dump() for s in output.sources]
     asyncio.create_task(
-        bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}),
+        bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}, model_used=request.model),
     )
 
     total_tokens = sum(
