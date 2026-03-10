@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.middleware import register_middleware
@@ -88,6 +89,28 @@ def create_app() -> FastAPI:
     app.include_router(connector_router, prefix="/api/v1/connectors")
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
+
+    # ── Public shared conversation routes (no auth) ─────────────────
+    @app.get("/api/v1/shared/{share_token}")
+    async def get_shared_conversation(share_token: str):
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from database.helpers import load_shared_conversation
+        from database.session import async_session_factory
+
+        async with async_session_factory() as session:
+            data = await load_shared_conversation(session, share_token)
+        if data is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Shared conversation not found")
+        return data
+
+    @app.get("/shared/{share_token}", response_class=HTMLResponse)
+    async def shared_page(share_token: str):
+        page = pathlib.Path(__file__).resolve().parent / "frontend" / "shared.html"
+        if not page.exists():
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Shared page not found")
+        return HTMLResponse(page.read_text(encoding="utf-8"))
 
     frontend_dir = pathlib.Path(__file__).resolve().parent / "frontend"
     if frontend_dir.is_dir():

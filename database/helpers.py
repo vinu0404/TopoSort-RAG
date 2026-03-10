@@ -189,6 +189,7 @@ async def list_user_conversations(
             Conversation.conversation_id,
             Conversation.title,
             Conversation.persona_id,
+            Conversation.share_token,
             Conversation.created_at,
             Conversation.updated_at,
             msg_count.label("message_count"),
@@ -204,6 +205,7 @@ async def list_user_conversations(
             "conversation_id": str(r.conversation_id),
             "title": r.title,
             "persona_id": str(r.persona_id) if r.persona_id else None,
+            "share_token": str(r.share_token) if r.share_token else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             "message_count": r.message_count or 0,
@@ -703,6 +705,93 @@ async def seed_default_personas(session: AsyncSession, user_id: str) -> None:
     for p in DEFAULT_PERSONAS:
         session.add(Persona(user_id=uid, name=p["name"], description=p["description"]))
     await session.flush()
+
+
+# ── Shared conversations ────────────────────────────────────────────────
+
+
+async def create_share_token(
+    session: AsyncSession,
+    conversation_id: str,
+    user_id: str,
+) -> str:
+    """Generate a share token for a conversation owned by user_id.
+
+    Returns the token string.  If the conversation already has a token,
+    returns the existing one (idempotent).
+    """
+    cid = _to_uuid(conversation_id)
+    uid = _to_uuid(user_id)
+
+    conv = (
+        await session.execute(
+            select(Conversation).where(
+                Conversation.conversation_id == cid,
+                Conversation.user_id == uid,
+            )
+        )
+    ).scalar_one_or_none()
+    if conv is None:
+        raise ValueError("Conversation not found or not owned by user")
+
+    if conv.share_token:
+        return str(conv.share_token)
+
+    token = uuid.uuid4()
+    conv.share_token = token
+    await session.flush()
+    return str(token)
+
+
+async def revoke_share_token(
+    session: AsyncSession,
+    conversation_id: str,
+    user_id: str,
+) -> None:
+    """Remove the share token (revoke the public link)."""
+    cid = _to_uuid(conversation_id)
+    uid = _to_uuid(user_id)
+
+    conv = (
+        await session.execute(
+            select(Conversation).where(
+                Conversation.conversation_id == cid,
+                Conversation.user_id == uid,
+            )
+        )
+    ).scalar_one_or_none()
+    if conv is None:
+        raise ValueError("Conversation not found or not owned by user")
+
+    conv.share_token = None
+    await session.flush()
+
+
+async def load_shared_conversation(
+    session: AsyncSession,
+    share_token: str,
+) -> dict | None:
+    """Load a conversation + messages by share token (no auth required).
+
+    Returns None if the token doesn't match any conversation.
+    """
+    token = _to_uuid(share_token)
+
+    conv = (
+        await session.execute(
+            select(Conversation).where(Conversation.share_token == token)
+        )
+    ).scalar_one_or_none()
+    if conv is None:
+        return None
+
+    messages = await load_conversation_messages_full(session, str(conv.conversation_id))
+    return {
+        "conversation_id": str(conv.conversation_id),
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat() if conv.created_at else None,
+        "messages": messages,
+    }
 
 
 async def create_persona(

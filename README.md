@@ -14,6 +14,9 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 - http://localhost:8080/dashboard.html  
 ![Database Dashboard](images/dashboard.png)
 
+- http://localhost:8000/shared/{id}
+![Share Chat](images/share.png)
+
 
 ### Backend:
 - http://localhost:8000/docs#/
@@ -190,6 +193,9 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | `POST` | `/hitl/respond` | JWT | Approve or deny a HITL (Human-in-the-Loop) request. Body: `{ request_id, decision, instructions? }`. Returns `{ request_id, status }`. |
 | `GET` | `/conversations` | JWT | List conversations (newest first) with pagination. Query params: `limit` (default 20), `offset` (default 0). Returns `{ conversations: [...], total, limit, offset, has_more }`. |
 | `GET` | `/conversations/{conversation_id}/messages` | JWT | Load all messages for a specific conversation. Returns `{ conversation_id, messages: [...] }`. |
+| `POST` | `/conversations/{conversation_id}/share` | JWT | Generate a shareable read-only link for a conversation. Idempotent — returns existing token if already shared. Returns `{ share_token, share_url }`. |
+| `DELETE` | `/conversations/{conversation_id}/share` | JWT | Revoke the share link for a conversation. Returns `{ status: "unshared" }`. |
+| `GET` | `/shared/{share_token}` | No | Public read-only page for a shared conversation. No authentication required. |
 
 ### Personas — `/api/v1/personas`
 

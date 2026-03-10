@@ -76,6 +76,7 @@ class Conversation(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     persona_id = Column(UUID(as_uuid=True), ForeignKey("personas.persona_id", ondelete="SET NULL"), nullable=True)
     title = Column(Text)
+    share_token = Column(UUID(as_uuid=True), unique=True, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     persona_id       UUID REFERENCES personas(persona_id) ON DELETE SET NULL,
     title            TEXT,
+    share_token      UUID UNIQUE,                -- non-null = publicly shared (read-only)
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -84,6 +84,7 @@ from database.helpers import (
     bg_save_agent_executions,
     bg_save_messages,
     create_persona,
+    create_share_token,
     delete_document_record,
     delete_persona,
     ensure_user_exists,
@@ -97,6 +98,7 @@ from database.helpers import (
     list_user_conversations,
     load_conversation_messages_full,
     resolve_hitl_request,
+    revoke_share_token,
     save_document_record,
     get_document_statuses,
 )
@@ -561,6 +563,36 @@ async def get_conversation_messages(
 
     messages = await load_conversation_messages_full(session, conversation_id)
     return {"conversation_id": conversation_id, "messages": messages}
+
+
+@router.post("/conversations/{conversation_id}/share", tags=["conversations"])
+async def share_conversation(
+    conversation_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Generate (or return existing) share link for a conversation."""
+    try:
+        token = await create_share_token(session, conversation_id, auth_user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await session.commit()
+    return {"share_token": token, "share_url": f"/shared/{token}"}
+
+
+@router.delete("/conversations/{conversation_id}/share", tags=["conversations"])
+async def unshare_conversation(
+    conversation_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, str]:
+    """Revoke the share link for a conversation."""
+    try:
+        await revoke_share_token(session, conversation_id, auth_user_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await session.commit()
+    return {"status": "unshared"}
 
 
 # ── Persona CRUD ────────────────────────────────────────────────────────
