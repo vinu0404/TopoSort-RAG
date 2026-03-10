@@ -49,12 +49,14 @@ from database.helpers import (
     get_or_create_conversation,
     seed_default_personas,
     poll_hitl_decision,
+    update_conversation_title,
 )
 from tools.registry import ToolRegistry
 from utils.schemas import HitlResolvedDecision, PersonaContext, Source
 
 from utils.llm_providers import get_llm_provider
 from utils.schemas import ComposerInput, QueryRequest
+from core.title_generator import generate_title
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +229,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             conversation_id=request.conversation_id,
             persona_id=request.persona_id,
         )
+        is_new_conversation = not request.conversation_id
         await session.commit()
         yield _sse_event("status", {"phase": "planning"})
 
@@ -236,6 +239,14 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             master_llm = get_llm_provider(_provider, default_model=request.model)
         else:
             master_llm = get_llm_provider(config.master_model_provider, default_model=config.master_model)
+
+        # Launch title generation in background for new conversations
+        title_task = None
+        if is_new_conversation:
+            title_task = asyncio.create_task(
+                generate_title(master_llm, request.query, model=request.model or config.master_model)
+            )
+
         memory_mgr = MemoryManager(llm_provider=master_llm)
         long_term = await memory_mgr.get_long_term_memory(user_id, db_session=session)
         conversation_history = await memory_mgr.get_conversation_history_for_agents(
@@ -402,19 +413,33 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
         if voice_summary:
             metadata["voice_summary"] = voice_summary
         await bg_save_messages(conv_id, request.query, composer_answer, metadata, model_used=request.model)
+
+        # Resolve auto-generated title for new conversations
+        generated_title = None
+        if title_task:
+            try:
+                generated_title = await title_task
+                await update_conversation_title(session, conv_id, generated_title)
+                await session.commit()
+            except Exception:
+                logger.warning("Title generation task failed", exc_info=True)
+
         elapsed = time.perf_counter() - start_time
         total_tokens = sum(
             getattr(o, "resource_usage", {}).get("tokens_used", 0)
             for o in results.values()
             if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
         )
-        yield _sse_event("done", {
+        done_payload = {
             "total_time": round(elapsed, 3),
             "tokens_used": total_tokens,
             "answer_length": len(composer_answer),
             "session_id": sess_id,
             "conversation_id": conv_id,
-        })
+        }
+        if generated_title:
+            done_payload["conversation_title"] = generated_title
+        yield _sse_event("done", done_payload)
 
     except Exception as exc:
         logger.exception("Streaming error")

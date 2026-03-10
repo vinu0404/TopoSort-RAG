@@ -135,6 +135,22 @@ async def get_or_create_conversation(
     return str(cid)
 
 
+async def update_conversation_title(
+    session: AsyncSession,
+    conversation_id: str,
+    title: str,
+) -> None:
+    """Update the title of an existing conversation."""
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(Conversation).where(Conversation.conversation_id == cid)
+    )
+    conv = result.scalar_one_or_none()
+    if conv:
+        conv.title = title
+        await session.flush()
+
+
 async def close_user_sessions(
     session: AsyncSession,
     user_id: str,

@@ -101,12 +101,14 @@ from database.helpers import (
     revoke_share_token,
     save_document_record,
     get_document_statuses,
+    update_conversation_title,
 )
 from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
 from utils.llm_providers import get_llm_provider
 from utils.schemas import ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest
+from core.title_generator import generate_title
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,7 @@ async def handle_query(
         conversation_id=request.conversation_id,
         persona_id=request.persona_id,
     )
+    is_new_conversation = not request.conversation_id
     await session.commit()
     # Use user-selected model if valid, otherwise fall back to config defaults
     if request.model and request.model in _VALID_MODELS:
@@ -269,6 +272,19 @@ async def handle_query(
     asyncio.create_task(
         bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}, model_used=request.model),
     )
+
+    # Auto-generate title for new conversations
+    if is_new_conversation:
+        async def _bg_title():
+            try:
+                title = await generate_title(composer_llm, request.query, model=request.model or config.composer_model)
+                from database.session import async_session_factory
+                async with async_session_factory() as s:
+                    await update_conversation_title(s, conv_id, title)
+                    await s.commit()
+            except Exception:
+                logger.warning("Background title generation failed", exc_info=True)
+        asyncio.create_task(_bg_title())
 
     total_tokens = sum(
         getattr(o, "resource_usage", {}).get("tokens_used", 0)

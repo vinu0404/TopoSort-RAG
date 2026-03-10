@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # ── Gmail ────────────────────────────────────────────────────────────
     gmail_sender_email: str = ""  
 
+    # ── Bot Identity ─────────────────────────────────────────────────────
+    bot_name: str = "MRAG"
+
     # ── Security Secrets ──────────────────────────────────────────────────
     jwt_secret: str = "change-me-jwt-secret-key"      
     jwt_expiry_seconds: int = 604800                   

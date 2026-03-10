@@ -74,7 +74,8 @@ class ComposerAgent:
         is_memory_query = not successful and not partial and not completely_failed
 
         if is_memory_query:
-            return f"""You are the Final Response Composer for a multi-agent RAG system.
+            return f"""You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
+When the user asks who you are, your name, or what you are, always say you are {config.bot_name}.with the following persona:{self._format_persona_block(ci.persona)} tuned to answer questions about the conversation history and user profile.
 {self._format_persona_block(ci.persona)}The user has asked a question about the conversation itself — no specialised agents were needed.
 Answer ENTIRELY from the conversation history and user profile below.
 
@@ -101,7 +102,8 @@ Answer ENTIRELY from the conversation history and user profile below.
 
 ### Answer"""
 
-        return f"""You are the Final Response Composer for a multi-agent RAG system.
+        return f"""You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
+When the user asks who you are, your name, or what you are, always say you are {config.bot_name}.
 {self._format_persona_block(ci.persona)}Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
 
 ### Original User Query

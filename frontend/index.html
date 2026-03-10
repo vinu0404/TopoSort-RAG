@@ -1821,6 +1821,18 @@ function updateShareBtn() {
   }
 }
 
+function updateConvItemTitle(conversationId, title) {
+  const el = document.querySelector(`.conv-item[onclick*="${conversationId}"]`);
+  if (!el) return;
+  const truncated = title.length > 30 ? title.slice(0, 30) + '…' : title;
+  // Preserve the time span
+  const timeSpan = el.querySelector('.conv-time');
+  el.textContent = '';
+  el.appendChild(document.createTextNode(truncated));
+  if (timeSpan) el.appendChild(timeSpan);
+  el.title = title;
+}
+
 function showToast(msg) {
   const t = document.getElementById('shareToast');
   t.textContent = msg;
@@ -2882,6 +2894,10 @@ async function sendStreaming(query) {
         // Refresh conversation list in sidebar
         loadConversations();
         updateShareBtn();
+        // Update sidebar title if LLM-generated title arrived
+        if (data.conversation_title && data.conversation_id) {
+          updateConvItemTitle(data.conversation_id, data.conversation_title);
+        }
         break;
 
       case 'error':
@@ -3225,6 +3241,9 @@ async function sendStreamingVoice(query) {
         }
         loadConversations();
         updateShareBtn();
+        if (data.conversation_title && data.conversation_id) {
+          updateConvItemTitle(data.conversation_id, data.conversation_title);
+        }
         break;
       case 'error':
         typingInd.classList.remove('visible');
