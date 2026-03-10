@@ -95,6 +95,8 @@ class Message(Base):
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False)
     model_used = Column(String(128), nullable=True)
+    total_tokens = Column(Integer, default=0)
+    token_details = Column(JSONB, default=dict)
     metadata_ = Column("metadata", JSONB, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

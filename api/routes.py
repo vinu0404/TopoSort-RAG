@@ -269,8 +269,35 @@ async def handle_query(
         db_session=session, conversation_id=conv_id,
     )
     sources_data = [s.model_dump() for s in output.sources]
+
+    # ── Build per-component token breakdown ─────────────────────
+    token_details: dict = {}
+
+    # Master agent tokens
+    if plan.usage:
+        token_details["master_agent"] = plan.usage
+
+    # Per-agent tokens
+    for agent_id, agent_out in results.items():
+        if hasattr(agent_out, "resource_usage") and isinstance(agent_out.resource_usage, dict):
+            agent_tokens = agent_out.resource_usage.get("tokens_used", 0)
+            if agent_tokens:
+                token_details[agent_id] = {"total_tokens": agent_tokens}
+
+    # Composer tokens (from generate)
+    if output.usage:
+        token_details["composer"] = output.usage
+
+    total_tokens = sum(
+        entry.get("total_tokens", 0) for entry in token_details.values()
+    )
+
     asyncio.create_task(
-        bg_save_messages(conv_id, request.query, output.answer, {"sources": sources_data}, model_used=request.model),
+        bg_save_messages(
+            conv_id, request.query, output.answer, {"sources": sources_data},
+            model_used=request.model,
+            total_tokens=total_tokens, token_details=token_details,
+        ),
     )
 
     # Auto-generate title for new conversations
@@ -286,17 +313,12 @@ async def handle_query(
                 logger.warning("Background title generation failed", exc_info=True)
         asyncio.create_task(_bg_title())
 
-    total_tokens = sum(
-        getattr(o, "resource_usage", {}).get("tokens_used", 0)
-        for o in results.values()
-        if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
-    )
-
     return {
         "answer": output.answer,
         "sources": sources_data,
         "agents_used": list(results.keys()),
         "tokens_used": total_tokens,
+        "token_details": token_details,
         "session_id": sess_id,
         "conversation_id": conv_id,
     }

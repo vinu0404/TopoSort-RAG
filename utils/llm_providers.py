@@ -37,6 +37,28 @@ class LLMResult:
     model: str = ""
 
 
+class StreamResult:
+    """Wraps a streaming response so callers can read token usage after iteration.
+
+    Usage::
+
+        sr = await provider.stream_with_usage(prompt)
+        async for chunk in sr:
+            print(chunk, end="")
+        print(sr.usage)   # {"prompt_tokens": ..., "completion_tokens": ..., "total_tokens": ...}
+    """
+
+    def __init__(self, aiter: AsyncIterator[str]):
+        self._aiter = aiter
+        self.usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> str:
+        return await self._aiter.__anext__()
+
+
 class BaseLLMProvider(ABC):
     """Common interface that every concrete provider implements."""
 
@@ -62,6 +84,33 @@ class BaseLLMProvider(ABC):
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
         ...
+
+    async def stream_with_usage(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> StreamResult:
+        """Return a StreamResult whose .usage is populated after iteration.
+
+        Subclasses override _stream_with_usage_impl to provide
+        provider-specific usage extraction.  The default falls back to
+        stream() with zeroed usage.
+        """
+        return await self._stream_with_usage_impl(prompt, temperature=temperature, model=model, max_tokens=max_tokens)
+
+    async def _stream_with_usage_impl(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> StreamResult:
+        """Default: just wrap stream() — no usage data."""
+        return StreamResult(self.stream(prompt, temperature=temperature, model=model, max_tokens=max_tokens))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -145,6 +194,42 @@ class OpenAIProvider(BaseLLMProvider):
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
+    async def _stream_with_usage_impl(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> "StreamResult":
+        model = model or self.default_model
+
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        async def _gen(sr: "StreamResult"):
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+                # OpenAI final chunk has usage when stream_options include_usage=True
+                if hasattr(chunk, "usage") and chunk.usage:
+                    sr.usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                        "completion_tokens": chunk.usage.completion_tokens or 0,
+                        "total_tokens": chunk.usage.total_tokens or 0,
+                    }
+
+        sr = StreamResult.__new__(StreamResult)
+        sr.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        sr._aiter = _gen(sr)
+        return sr
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Anthropic
@@ -220,6 +305,41 @@ class AnthropicProvider(BaseLLMProvider):
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+
+    async def _stream_with_usage_impl(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> "StreamResult":
+        model = model or self.default_model
+
+        ctx = self.client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        async def _gen(sr: "StreamResult"):
+            async with ctx as stream:
+                async for text in stream.text_stream:
+                    yield text
+                # After streaming completes, get final message for usage
+                final = await stream.get_final_message()
+                if final.usage:
+                    sr.usage = {
+                        "prompt_tokens": final.usage.input_tokens or 0,
+                        "completion_tokens": final.usage.output_tokens or 0,
+                        "total_tokens": (final.usage.input_tokens or 0) + (final.usage.output_tokens or 0),
+                    }
+
+        sr = StreamResult.__new__(StreamResult)
+        sr.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        sr._aiter = _gen(sr)
+        return sr
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -314,6 +434,55 @@ class GoogleProvider(BaseLLMProvider):
         for chunk in response:
             if chunk.text:
                 yield chunk.text
+
+    async def _stream_with_usage_impl(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.3,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> "StreamResult":
+        import asyncio
+
+        model_name = model or self.default_model
+
+        gen_model = self._genai.GenerativeModel(
+            model_name,
+            generation_config=self._genai.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            ),
+        )
+
+        response = await asyncio.to_thread(
+            gen_model.generate_content, prompt, stream=True
+        )
+
+        async def _gen(sr: "StreamResult"):
+            last_chunk = None
+            for chunk in response:
+                last_chunk = chunk
+                if chunk.text:
+                    yield chunk.text
+            # After iteration, resolve_response aggregates usage_metadata
+            if last_chunk is not None:
+                try:
+                    response.resolve()
+                except Exception:
+                    pass
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
+                um = response.usage_metadata
+                sr.usage = {
+                    "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                    "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                    "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                }
+
+        sr = StreamResult.__new__(StreamResult)
+        sr.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        sr._aiter = _gen(sr)
+        return sr
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

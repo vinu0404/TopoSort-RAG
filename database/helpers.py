@@ -262,6 +262,8 @@ async def load_conversation_messages_full(
             "role": m.role,
             "content": m.content,
             "model_used": m.model_used,
+            "total_tokens": m.total_tokens or 0,
+            "token_details": m.token_details if m.token_details else {},
             "metadata": m.metadata_ if m.metadata_ else {},
             "created_at": m.created_at.isoformat() if m.created_at else None,
         }
@@ -276,6 +278,8 @@ async def save_messages(
     assistant_answer: str,
     metadata: Dict[str, Any] | None = None,
     model_used: str | None = None,
+    total_tokens: int = 0,
+    token_details: Dict[str, Any] | None = None,
 ) -> None:
     """Insert a *user* message and an *assistant* message.
 
@@ -295,6 +299,8 @@ async def save_messages(
             role="assistant",
             content=assistant_answer,
             model_used=model_used,
+            total_tokens=total_tokens,
+            token_details=token_details or {},
             metadata_=metadata or {},
             created_at=now + timedelta(microseconds=1),
         )
@@ -311,11 +317,17 @@ async def bg_save_messages(
     assistant_answer: str,
     metadata: Dict[str, Any] | None = None,
     model_used: str | None = None,
+    total_tokens: int = 0,
+    token_details: Dict[str, Any] | None = None,
 ) -> None:
     """Fire-and-forget: persist messages with an independent DB session."""
     try:
         async with async_session_factory() as session:
-            await save_messages(session, conversation_id, user_query, assistant_answer, metadata, model_used=model_used)
+            await save_messages(
+                session, conversation_id, user_query, assistant_answer,
+                metadata, model_used=model_used,
+                total_tokens=total_tokens, token_details=token_details,
+            )
             await session.commit()
     except Exception:
         logger.exception(

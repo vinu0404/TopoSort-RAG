@@ -116,6 +116,7 @@ class MasterAgent:
                 estimated_time=raw.get("execution_plan", {}).get("estimated_time", 0),
                 estimated_cost=raw.get("execution_plan", {}).get("estimated_cost", 0.0),
             ),
+            usage=result.usage,
         )
         return generate_agent_ids(master_output)
 
@@ -318,4 +319,5 @@ def generate_agent_ids(master_output: MasterAgentOutput) -> ResolvedMasterOutput
             estimated_cost=master_output.execution_plan.estimated_cost,
         ),
         metadata=master_output.metadata,
+        usage=master_output.usage,
     )

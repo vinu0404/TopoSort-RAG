@@ -283,11 +283,12 @@ async function load() {
       div.appendChild(label);
       div.appendChild(content);
 
-      if (msg.model_used || msg.created_at) {
+      if (msg.model_used || msg.created_at || msg.total_tokens) {
         const meta = document.createElement('div');
         meta.className = 'msg-meta';
         const parts = [];
         if (msg.model_used) parts.push(msg.model_used);
+        if (msg.total_tokens) parts.push(`${msg.total_tokens.toLocaleString()} tokens`);
         if (msg.created_at) parts.push(new Date(msg.created_at).toLocaleString());
         meta.textContent = parts.join(' · ');
         div.appendChild(meta);

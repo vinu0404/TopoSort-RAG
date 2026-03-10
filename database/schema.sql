@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS messages (
     role             VARCHAR(16) NOT NULL,       -- 'user' | 'assistant' | 'system'
     content          TEXT NOT NULL,
     model_used       VARCHAR(128),               -- which LLM model produced this message
+    total_tokens     INTEGER DEFAULT 0,           -- total tokens consumed for this response turn
+    token_details    JSONB DEFAULT '{}',          -- per-component breakdown {master_agent: {prompt_tokens, completion_tokens, total_tokens}, ...}
     metadata         JSONB DEFAULT '{}',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

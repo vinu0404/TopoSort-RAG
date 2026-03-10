@@ -524,6 +524,76 @@ No code changes required — both providers are handled by `document_pipeline/vi
 
 ---
 
+## Per-Message Token Tracking
+
+Every assistant message stores **total tokens consumed** and a **per-component breakdown** (JSONB) — using actual token counts from each provider's API response, not estimates.
+
+### What Gets Tracked
+
+| Component | Token Source | Provider Support |
+|-----------|-------------|-----------------|
+| **Master Agent** | `LLMResult.usage` from `plan()` | OpenAI, Anthropic, Gemini |
+| **Each Agent** (RAG, Code, Mail, Web) | `AgentOutput.resource_usage["tokens_used"]` — accumulated across all LLM calls within the agent | OpenAI, Anthropic, Gemini |
+| **Composer** | `LLMResult.usage` (sync) or `StreamResult.usage` (streaming) | OpenAI, Anthropic, Gemini |
+
+### Database Schema
+
+Two columns added to the `messages` table (on the **assistant** row only):
+
+```sql
+total_tokens   INTEGER DEFAULT 0        -- sum of all component tokens
+token_details  JSONB   DEFAULT '{}'     -- per-component breakdown
+```
+
+Example `token_details` value:
+
+```json
+{
+  "master_agent": {"prompt_tokens": 820, "completion_tokens": 145, "total_tokens": 965},
+  "rag_agent_a3f1b2c4": {"total_tokens": 2340},
+  "web_search_agent_e7d9c0a1": {"total_tokens": 1180},
+  "composer": {"prompt_tokens": 1950, "completion_tokens": 680, "total_tokens": 2630}
+}
+```
+
+### Architecture
+
+```mermaid
+flowchart LR
+    MA["Master Agent<br/><i>result.usage</i>"] --> TD["token_details JSONB"]
+    A1["Agent 1<br/><i>resource_usage.tokens_used</i>"] --> TD
+    A2["Agent 2<br/><i>resource_usage.tokens_used</i>"] --> TD
+    CO["Composer<br/><i>StreamResult.usage</i>"] --> TD
+    TD --> SUM["total_tokens = Σ"]
+    SUM --> DB["messages table<br/><i>assistant row</i>"]
+    TD --> DB
+    DB --> SSE["SSE done event<br/><i>token_details + tokens_used</i>"]
+    SSE --> FE["Frontend<br/><i>token badge + popup</i>"]
+
+    style MA fill:#2196F3,color:#fff
+    style CO fill:#FF9800,color:#fff
+    style DB fill:#4CAF50,color:#fff
+    style FE fill:#4CAF50,color:#fff
+```
+
+### Streaming Token Capture
+
+All three providers return real token usage from their streaming APIs:
+
+| Provider | Mechanism |
+|----------|-----------|
+| **OpenAI** | `stream_options={"include_usage": True}` — final chunk contains `chunk.usage` |
+| **Anthropic** | `stream.get_final_message()` after iteration — returns `response.usage` with `input_tokens`, `output_tokens` |
+| **Google Gemini** | `response.resolve()` after iteration — `response.usage_metadata` with `prompt_token_count`, `candidates_token_count` |
+
+### Frontend
+
+- Each assistant message shows a **token badge** (e.g., "2,340 tokens") next to the sources button.
+- Clicking the badge opens a **popup** with per-component breakdown (Master Agent, each agent by ID, Composer).
+- Token data is persisted in the DB and restored when loading past conversations.
+
+---
+
 ## Long term Memory Extraction Pipeline
 
 Every user query passes through a **parallel memory extraction layer** that runs alongside the Master Agent — zero added latency. The extractor uses an LLM to detect personal data (name, company, job title, tone preferences, etc.) and persists any new findings to PostgreSQL for future conversations.

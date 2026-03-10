@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class ComposerAgent:
     def __init__(self, llm_provider: BaseLLMProvider):
         self.llm = llm_provider
+        self.last_stream_usage: dict = {}
 
     async def compose(self, composer_input: ComposerInput) -> ComposerOutput:
         prompt = self._build_prompt(composer_input)
@@ -42,19 +43,24 @@ class ComposerAgent:
             query_id=composer_input.query_id,
             answer=answer_text,
             sources=composer_input.all_sources,
+            usage=result.usage,
         )
 
 
     async def stream(self, composer_input: ComposerInput) -> AsyncIterator[str]:
-        """Yield text chunks for SSE consumption."""
+        """Yield text chunks for SSE consumption.  Token usage is stored
+        in ``self.last_stream_usage`` after iteration completes."""
         prompt = self._build_prompt(composer_input)
+        self.last_stream_usage = {}
 
-        async for chunk in self.llm.stream(
+        sr = await self.llm.stream_with_usage(
             prompt=prompt,
             temperature=config.composer_temperature,
             model=config.composer_model,
-        ):
+        )
+        async for chunk in sr:
             yield chunk
+        self.last_stream_usage = sr.usage
 
         yield "\n\nSources:\n"
         for idx, source in enumerate(composer_input.all_sources, start=1):

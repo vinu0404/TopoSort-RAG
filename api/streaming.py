@@ -412,7 +412,34 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
         metadata = {"sources": [s.model_dump() for s in all_sources]} if all_sources else {}
         if voice_summary:
             metadata["voice_summary"] = voice_summary
-        await bg_save_messages(conv_id, request.query, composer_answer, metadata, model_used=request.model)
+
+        # ── Build per-component token breakdown ─────────────────────
+        token_details: dict = {}
+
+        # Master agent tokens
+        if plan.usage:
+            token_details["master_agent"] = plan.usage
+
+        # Per-agent tokens (from resource_usage populated by each agent)
+        for agent_id, output in results.items():
+            if hasattr(output, "resource_usage") and isinstance(output.resource_usage, dict):
+                agent_tokens = output.resource_usage.get("tokens_used", 0)
+                if agent_tokens:
+                    token_details[agent_id] = {"total_tokens": agent_tokens}
+
+        # Composer tokens (from stream_with_usage)
+        if composer.last_stream_usage:
+            token_details["composer"] = composer.last_stream_usage
+
+        total_tokens = sum(
+            entry.get("total_tokens", 0) for entry in token_details.values()
+        )
+
+        await bg_save_messages(
+            conv_id, request.query, composer_answer, metadata,
+            model_used=request.model,
+            total_tokens=total_tokens, token_details=token_details,
+        )
 
         # Resolve auto-generated title for new conversations
         generated_title = None
@@ -425,14 +452,10 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                 logger.warning("Title generation task failed", exc_info=True)
 
         elapsed = time.perf_counter() - start_time
-        total_tokens = sum(
-            getattr(o, "resource_usage", {}).get("tokens_used", 0)
-            for o in results.values()
-            if hasattr(o, "resource_usage") and isinstance(getattr(o, "resource_usage", None), dict)
-        )
         done_payload = {
             "total_time": round(elapsed, 3),
             "tokens_used": total_tokens,
+            "token_details": token_details,
             "answer_length": len(composer_answer),
             "session_id": sess_id,
             "conversation_id": conv_id,

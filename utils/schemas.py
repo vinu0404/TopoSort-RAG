@@ -91,6 +91,7 @@ class MasterAgentOutput(BaseModel):
     analysis: Analysis
     execution_plan: ExecutionPlan
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    usage: Dict[str, int] = Field(default_factory=dict)
 
 
 class ResolvedMasterOutput(BaseModel):
@@ -102,6 +103,7 @@ class ResolvedMasterOutput(BaseModel):
     analysis: Analysis
     execution_plan: ResolvedExecutionPlan
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    usage: Dict[str, int] = Field(default_factory=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -285,6 +287,7 @@ class ComposerOutput(BaseModel):
     answer: str
     sources: List[Source] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    usage: Dict[str, int] = Field(default_factory=dict)
     voice_summary: Optional[str] = None
 
 

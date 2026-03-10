@@ -908,6 +908,61 @@
     height: 14px;
   }
 
+  /* ── Token badge ────────────────────────────────────── */
+  .token-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+    margin-left: 6px;
+    padding: 5px 12px;
+    font-size: 0.78rem;
+    color: #888;
+    background: #f8f8f8;
+    border: 1px solid #e0e0e0;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .token-badge:hover { color: #333; border-color: #999; }
+  .token-badge svg { width: 13px; height: 13px; }
+  .token-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    min-width: 260px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    padding: 12px 14px;
+    font-size: 0.78rem;
+    z-index: 100;
+    display: none;
+  }
+  .token-popup.visible { display: block; }
+  .token-popup-title { font-weight: 600; margin-bottom: 8px; color: #333; }
+  .token-popup-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    color: #555;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .token-popup-row:last-child { border-bottom: none; }
+  .token-popup-row .tp-label { font-weight: 500; }
+  .token-popup-row .tp-val { font-variant-numeric: tabular-nums; color: #222; }
+  .token-popup-total {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0 0;
+    margin-top: 4px;
+    border-top: 1.5px solid #ddd;
+    font-weight: 600;
+    color: #111;
+  }
+
   /* ── Sources popup ──────────────────────────────────── */
   .sources-overlay {
     position: fixed; inset: 0;
@@ -1778,6 +1833,9 @@ async function switchConversation(conversationId) {
       } else if (m.role === 'assistant') {
         const el = createAssistantMessage();
         appendToAssistant(el, m.content);
+        // Attach token data from DB
+        el._totalTokens = m.total_tokens || 0;
+        el._tokenDetails = m.token_details || {};
         // Restore sources, citations, and markdown
         const sources = (m.metadata && m.metadata.sources) ? m.metadata.sources : [];
         finalizeAssistant(el, sources);
@@ -2574,6 +2632,10 @@ function finalizeAssistant(msgEl, sources) {
   const content = msgEl.querySelector('.msg-content');
   let rawText = content.textContent || '';
 
+  // Attach token data if stored on the element
+  const tokenTotal = msgEl._totalTokens || 0;
+  const tokenDetails = msgEl._tokenDetails || {};
+
   // Parse any trailing "Sources:" block
   const sourcesMatch = rawText.match(/\n\n?Sources:\n([\s\S]*)$/);
   if (sourcesMatch) {
@@ -2623,6 +2685,37 @@ function finalizeAssistant(msgEl, sources) {
     btn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 7h8M2 11h10"/></svg> ${validSources.length} source${validSources.length > 1 ? 's' : ''}`;
     btn.addEventListener('click', () => showSourcesPopup(validSources));
     content.after(btn);
+  }
+
+  // ── Token badge ───────────────────────────────────────
+  if (tokenTotal > 0) {
+    const badge = document.createElement('button');
+    badge.className = 'token-badge';
+    badge.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v6M6 7h4"/></svg> ${tokenTotal.toLocaleString()} tokens`;
+
+    // Build popup rows
+    let rowsHtml = '';
+    for (const [key, val] of Object.entries(tokenDetails)) {
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const t = typeof val === 'object' ? (val.total_tokens || 0) : val;
+      if (t > 0) rowsHtml += `<div class="token-popup-row"><span class="tp-label">${escapeHtml(label)}</span><span class="tp-val">${t.toLocaleString()}</span></div>`;
+    }
+
+    const popup = document.createElement('div');
+    popup.className = 'token-popup';
+    popup.innerHTML = `<div class="token-popup-title">Token Breakdown</div>${rowsHtml}<div class="token-popup-total"><span>Total</span><span>${tokenTotal.toLocaleString()}</span></div>`;
+
+    badge.appendChild(popup);
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      popup.classList.toggle('visible');
+    });
+    document.addEventListener('click', () => popup.classList.remove('visible'), { once: false });
+
+    // Insert after sources btn or after content
+    const lastBtn = msgEl.querySelector('.sources-btn');
+    if (lastBtn) lastBtn.after(badge);
+    else content.after(badge);
   }
 
   scrollToBottom();
@@ -2906,7 +2999,11 @@ async function sendStreaming(query) {
 
       case 'done':
         typingInd.classList.remove('visible');
-        if (msgEl) finalizeAssistant(msgEl, sources);
+        if (msgEl) {
+          msgEl._totalTokens = data.tokens_used || 0;
+          msgEl._tokenDetails = data.token_details || {};
+          finalizeAssistant(msgEl, sources);
+        }
         // Capture session/conversation IDs from backend
         if (data.session_id) currentSessionId = data.session_id;
         if (data.conversation_id) {
@@ -3255,7 +3352,11 @@ async function sendStreamingVoice(query) {
         break;
       case 'done':
         typingInd.classList.remove('visible');
-        if (msgEl) finalizeAssistant(msgEl, sources);
+        if (msgEl) {
+          msgEl._totalTokens = data.tokens_used || 0;
+          msgEl._tokenDetails = data.token_details || {};
+          finalizeAssistant(msgEl, sources);
+        }
         if (data.session_id) currentSessionId = data.session_id;
         if (data.conversation_id) {
           currentConversationId = data.conversation_id;
