@@ -8,7 +8,7 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 - http://127.0.0.1:8000/
 ![Login](images/frontend_login.png)
 ![Register](images/frontend_register.png)
-![Chat](images/frontend-chat.png)
+![Chat](images/frontendchat.png)
 
 
 - http://localhost:8080/dashboard.html  
