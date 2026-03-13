@@ -4,6 +4,17 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 
 ### Dynamic routing of agents with TopoSort without using any frameworks like LangChain or LangGraph
 
+## Live Demo
+
+Deployed on Render and ready to explore:
+
+| Experience | URL |
+|-----------|-----|
+| Chat App | https://toposort-rag-1.onrender.com |
+| Database Dashboard | https://toposort-rag-1.onrender.com/api/dashboard |
+| Swagger Docs | https://toposort-rag-1.onrender.com/docs |
+
+
 ### Frontend:
 - http://127.0.0.1:8000/
 ![Login](images/frontend_login.png)
