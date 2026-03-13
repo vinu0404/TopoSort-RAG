@@ -35,8 +35,7 @@ bcrypt>=4.1.0
 cryptography>=42.0.0
 
 # ── Cloud storage (S3-compatible) ──────────────────────────────────────────
-boto3>=1.34.0
-aioboto3>=12.0.0
+aioboto3==13.2.0
 
 # ── Config / utils ─────────────────────────────────────────────────────────
 pyyaml>=6.0.1
