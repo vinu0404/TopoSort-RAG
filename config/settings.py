@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/agentic_rag"
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: Optional[str] = None
 
     # ── Server ───────────────────────────────────────────────────────────
     port: int = 8000

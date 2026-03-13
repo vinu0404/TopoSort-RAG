@@ -15,7 +15,7 @@ from utils.llm_providers import get_llm_provider
 from document_pipeline.parser import parse_document
 from document_pipeline.chunker import StructureAwareChunker
 from document_pipeline.embedder import get_embedding_model
-from document_pipeline.vector_store import get_vector_store
+from document_pipeline.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -77,24 +77,27 @@ async def process_document(
         len(chunks),
     )
 
-    store = get_vector_store()
-    await store.create_user_collection(user_id)
-    embed_model = get_embedding_model()
+    store = VectorStore()
+    try:
+        await store.create_user_collection(user_id)
+        embed_model = get_embedding_model()
 
-    doc_record = {
-        "doc_id": doc_id or str(uuid.uuid4()),
-        "filename": parsed["metadata"]["filename"],
-        "description": description,
-        "doc_type": parsed["metadata"]["doc_type"],
-        "uploaded_at": parsed["metadata"]["uploaded_at"],
-    }
-    await store.add_document(
-        user_id=user_id,
-        document=doc_record,
-        chunks=chunks,
-        embed_fn=embed_model.embed,
-        embed_batch_fn=embed_model.embed_batch,
-    )
+        doc_record = {
+            "doc_id": doc_id or str(uuid.uuid4()),
+            "filename": parsed["metadata"]["filename"],
+            "description": description,
+            "doc_type": parsed["metadata"]["doc_type"],
+            "uploaded_at": parsed["metadata"]["uploaded_at"],
+        }
+        await store.add_document(
+            user_id=user_id,
+            document=doc_record,
+            chunks=chunks,
+            embed_fn=embed_model.embed,
+            embed_batch_fn=embed_model.embed_batch,
+        )
+    finally:
+        await store.aclose()
 
     return {
         "doc_id": doc_record["doc_id"],
