@@ -1665,9 +1665,15 @@ function switchTab(tab) {
 async function loadDemoCredentials() {
   if (!demoCredBox) return;
   try {
-    const r = await fetch(`${API}/auth/demo-credentials`);
-    if (!r.ok) return;
-    const data = await r.json();
+    let data = null;
+    const paths = [`${API}/auth/demo-credentials`, `${API}/demo-credentials`];
+    for (const url of paths) {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      data = await r.json();
+      break;
+    }
+    if (!data) return;
     if (!data.enabled) {
       demoCredBox.style.display = 'none';
       return;
