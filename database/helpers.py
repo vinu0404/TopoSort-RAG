@@ -52,6 +52,53 @@ async def ensure_user_exists(session: AsyncSession, user_id: str) -> None:
     await session.flush()
 
 
+async def ensure_demo_user(session: AsyncSession) -> dict | None:
+    """Ensure the configured demo user exists (idempotent)."""
+    from auth.password import hash_password
+    from config.settings import config
+
+    if not config.demo_user_enabled:
+        return None
+
+    email = (config.demo_user_email or "").strip().lower()
+    password = config.demo_user_password or ""
+    display_name = (config.demo_user_display_name or "Demo User").strip()
+
+    if not email or not password:
+        logger.warning(
+            "DEMO_USER_ENABLED=true but DEMO_USER_EMAIL or DEMO_USER_PASSWORD is missing; skipping demo user seed."
+        )
+        return None
+
+    existing = (
+        await session.execute(
+            select(User).where(User.email == email).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if existing is None:
+        existing = User(
+            user_id=uuid.uuid4(),
+            email=email,
+            display_name=display_name,
+            password_hash=hash_password(password),
+        )
+        session.add(existing)
+        await session.flush()
+        logger.info("Seeded demo user: %s", email)
+    elif display_name and existing.display_name != display_name:
+        existing.display_name = display_name
+        await session.flush()
+
+    await seed_default_personas(session, str(existing.user_id))
+
+    return {
+        "user_id": str(existing.user_id),
+        "email": existing.email,
+        "display_name": existing.display_name,
+    }
+
+
 async def ensure_session_exists(
     session: AsyncSession,
     user_id: str,

@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # ── Bot Identity ─────────────────────────────────────────────────────
     bot_name: str = "MRAG"
 
+    # ── Demo User (optional for public testing) ──────────────────────────
+    demo_user_enabled: bool = False
+    demo_user_email: str = ""
+    demo_user_password: str = ""
+    demo_user_display_name: str = "Demo User"
+    show_demo_credentials_on_login: bool = True
+
     # ── Security Secrets ──────────────────────────────────────────────────
     jwt_secret: str = "change-me-jwt-secret-key"      
     jwt_expiry_seconds: int = 604800                   

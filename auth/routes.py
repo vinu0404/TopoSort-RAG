@@ -19,6 +19,7 @@ from auth.dependencies import db_session, get_current_user_id
 from auth.jwt import create_token
 from auth.models import User
 from auth.password import hash_password, verify_password
+from config.settings import config
 from database.helpers import close_user_sessions
 
 logger = logging.getLogger(__name__)
@@ -122,3 +123,17 @@ async def logout(
     closed = await close_user_sessions(session, user_id)
     logger.info("Logout: user %s — %d session(s) closed", user_id, closed)
     return {"status": "ok", "sessions_closed": closed}
+
+
+@router.get("/demo-credentials")
+async def demo_credentials() -> Dict[str, Any]:
+    """Expose demo credentials for the login UI when explicitly enabled."""
+    if not config.demo_user_enabled or not config.show_demo_credentials_on_login:
+        return {"enabled": False}
+
+    return {
+        "enabled": True,
+        "email": config.demo_user_email,
+        "password": config.demo_user_password,
+        "display_name": config.demo_user_display_name,
+    }
