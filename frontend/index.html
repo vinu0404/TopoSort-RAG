@@ -93,6 +93,40 @@
     margin-top: 12px;
     min-height: 20px;
   }
+  .demo-cred-box {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid #e6d9b0;
+    border-radius: 8px;
+    background: #fff9e8;
+    font-size: 0.8rem;
+    color: #5a4a1f;
+  }
+  .demo-cred-box .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .demo-cred-box .label { color: #8a7848; }
+  .demo-cred-box .value {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    color: #2f2611;
+    word-break: break-all;
+    text-align: right;
+  }
+  .demo-cred-box .fill-btn {
+    margin-top: 8px;
+    width: 100%;
+    border: 1px solid #d8c78c;
+    background: #fff;
+    color: #5a4a1f;
+    border-radius: 6px;
+    padding: 7px 10px;
+    cursor: pointer;
+    font-size: 0.78rem;
+  }
+  .demo-cred-box .fill-btn:hover { background: #fff5d8; }
 
   /* ── Connections ───────────────────────────────────────── */
   /* .connections-section — no styles */
@@ -1342,6 +1376,12 @@
     </div>
 
     <div id="loginForm">
+      <div class="demo-cred-box" id="demoCredBox" style="display:none;">
+        <strong>Default Test Login</strong>
+        <div class="row"><span class="label">Email</span><span class="value" id="demoCredEmail"></span></div>
+        <div class="row"><span class="label">Password</span><span class="value" id="demoCredPassword"></span></div>
+        <button class="fill-btn" type="button" onclick="fillDemoLogin()">Use These Credentials</button>
+      </div>
       <div class="auth-field">
         <label>Email</label>
         <input type="email" id="loginEmail" placeholder="you@example.com">
@@ -1574,6 +1614,9 @@ let _convShareMap = {};    // conversation_id → share_token | null
 
 const authOverlay = document.getElementById('authOverlay');
 const authError = document.getElementById('authError');
+const demoCredBox = document.getElementById('demoCredBox');
+const demoCredEmail = document.getElementById('demoCredEmail');
+const demoCredPassword = document.getElementById('demoCredPassword');
 const messagesEl = document.getElementById('messages');
 const welcomeEl = document.getElementById('welcome');
 const queryInput = document.getElementById('queryInput');
@@ -1616,6 +1659,33 @@ function switchTab(tab) {
   document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
   document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
   document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+  authError.textContent = '';
+}
+
+async function loadDemoCredentials() {
+  if (!demoCredBox) return;
+  try {
+    const r = await fetch(`${API}/auth/demo-credentials`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.enabled) {
+      demoCredBox.style.display = 'none';
+      return;
+    }
+    demoCredEmail.textContent = data.email || '';
+    demoCredPassword.textContent = data.password || '';
+    demoCredBox.style.display = '';
+  } catch {
+    demoCredBox.style.display = 'none';
+  }
+}
+
+function fillDemoLogin() {
+  const email = (demoCredEmail?.textContent || '').trim();
+  const password = (demoCredPassword?.textContent || '').trim();
+  if (!email || !password) return;
+  document.getElementById('loginEmail').value = email;
+  document.getElementById('loginPassword').value = password;
   authError.textContent = '';
 }
 
@@ -2183,6 +2253,7 @@ window.addEventListener('message', (event) => {
 
 // Init
 (function() {
+  loadDemoCredentials();
   const stored = getStoredAuth();
   if (stored && stored.token) {
     currentUser = stored;

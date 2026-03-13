@@ -27,9 +27,10 @@ from connectors.routes import router as connector_router
 from config.settings import config
 from core.agent_factory import build_agent_instances
 from connectors.registry import ConnectorRegistry
-from database.helpers import expire_stale_hitl_requests
 from tools.registry import ToolRegistry
 from utils.validators import validate_tools_for_agents
+from database.helpers import ensure_demo_user, expire_stale_hitl_requests
+from database.session import async_session_factory
 
 logging.basicConfig(
     level=logging.DEBUG if config.debug else logging.INFO,
@@ -66,9 +67,19 @@ def create_app() -> FastAPI:
         if hitl_tools:
             logger.info("HITL-protected tools: %s", hitl_tools)
 
+        # Seed optional demo login for public testing.
+        if config.demo_user_enabled:
+            try:
+                async with async_session_factory() as session:
+                    demo = await ensure_demo_user(session)
+                    await session.commit()
+                if demo:
+                    logger.info("Demo user ready: %s", demo["email"])
+            except Exception:
+                logger.exception("Failed to seed demo user")
+
         logger.info("Application ready to accept requests.")
         yield
-
     app = FastAPI(
         title="Multi-Agentic RAG System",
         version="3.0.0",

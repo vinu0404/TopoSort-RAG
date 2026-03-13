@@ -763,3 +763,16 @@ async def voice_synthesize(
             "Content-Disposition": "inline; filename=\"speech.mp3\"",
         },
     )
+
+@router.get("/demo-credentials")
+async def demo_credentials() -> Dict[str, Any]:
+    """Expose demo credentials for the login UI when explicitly enabled."""
+    if not config.demo_user_enabled or not config.show_demo_credentials_on_login:
+        return {"enabled": False}
+
+    return {
+        "enabled": True,
+        "email": config.demo_user_email,
+        "password": config.demo_user_password,
+        "display_name": config.demo_user_display_name,
+    }
