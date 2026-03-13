@@ -34,9 +34,10 @@ class VectorStore:
     """Async Qdrant wrapper."""
 
     def __init__(self, url: str | None = None):
-        
-
-        self.client = AsyncQdrantClient(url=url or config.qdrant_url)
+        self.client = AsyncQdrantClient(
+            url=url or config.qdrant_url,
+            api_key=config.qdrant_api_key,
+        )
 
     # ── collection management ───────────────────────────────────────────
 
