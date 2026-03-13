@@ -39,6 +39,10 @@ class VectorStore:
             api_key=config.qdrant_api_key,
         )
 
+    async def aclose(self) -> None:
+        """Close underlying async HTTP resources."""
+        await self.client.close()
+
     # ── collection management ───────────────────────────────────────────
 
     async def create_user_collection(self, user_id: str) -> str:

@@ -559,10 +559,8 @@
 
 <!-- Connect screen -->
 <div class="connect-screen" id="connectScreen">
-  <h2>Connecting to Database…</h2>
-  <p>Fetching data from the MRAG backend automatically.</p>
-  <div class="hint-box">Make sure <strong>dashboard_server.py</strong> is running<br>
-    <code>python dashboard_server.py</code></div>
+  <h2>Loading Dashboard…</h2>
+  <p>Fetching data from the backend API.</p>
 </div>
 
 <!-- Modal -->
@@ -602,7 +600,7 @@ const TABLES = [
   { name: 'personas',                icon: '🎭' },
 ];
 
-const BACKEND = 'http://localhost:8080';
+const BACKEND = window.location.origin;
 const PAGE_SIZE = 50;
 
 // ═════════════════════════════════════════════════════════════════
@@ -653,7 +651,7 @@ function showConnError(msg) {
   document.getElementById('connectScreen').innerHTML = `
     <h2 style="color:var(--red)">Connection Failed</h2>
     <p style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:0.7rem;white-space:pre-wrap;max-width:480px;">${esc(msg)}</p>
-    <div class="hint-box" style="margin-top:8px;">Start the server: <code>python dashboard_server.py</code></div>
+    <div class="hint-box" style="margin-top:8px;">Start FastAPI and open <code>/api/dashboard</code></div>
     <button class="tb-btn" onclick="autoConnect()" style="padding:10px 28px;margin-top:16px;font-size:0.78rem;">↻ Retry</button>
   `;
 }
