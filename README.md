@@ -240,6 +240,19 @@ When a persona is selected in the frontend, its `persona_id` is sent with each q
 
 The `/voice/synthesize` endpoint exists for direct API consumers. In the chat frontend, TTS audio is delivered inline via SSE (`voice_audio` event) — no extra HTTP round-trip needed.
 
+### Analytics — `/api/v1`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/analytics` | JWT | Get per-user agent analytics. Query params: `days` (default 30). Returns `{ agent_usage, token_timeline, response_times, query_patterns, token_breakdown }`. |
+
+The analytics endpoint aggregates data from `agent_executions`, `messages`, and `conversations` tables to provide:
+- **Agent Usage** — Most-used agents with success/failure counts.
+- **Token Timeline** — Daily token consumption over the requested period.
+- **Response Times** — Average, min, and max response times per agent.
+- **Query Patterns** — Total executions, success rate, conversation and message counts.
+- **Token Breakdown** — Per-agent token totals extracted from the `token_details` JSONB column.
+
 ---
 
 ## Voice Input / Output Architecture
@@ -732,6 +745,88 @@ utils/
 frontend/
 ├── index.html              # Web Scrape panel, modal, toggles, SSE handler
 ```
+
+---
+
+## Document Chat Mode — Scoped RAG Search
+
+Document Chat Mode lets users **select specific documents** from the Files panel to scope their RAG queries. Instead of searching across all uploaded documents, the system restricts retrieval to only the selected files — ideal for asking questions about a specific report, contract, or dataset.
+
+### End-to-End Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User (Frontend)
+    participant API as FastAPI Streaming
+    participant Orch as Orchestrator
+    participant RAG as RAG Agent
+    participant Tool as rag_tools.py
+    participant Q as Qdrant
+
+    U->>U: Select docs via checkboxes in Files panel
+    Note over U: Scope bar shows "Scoped to N document(s)"
+    U->>API: POST /query/stream<br/>{ query, selected_doc_ids: [id1, id2] }
+    API->>Orch: context includes selected_doc_ids
+    Orch->>RAG: metadata.selected_doc_ids = [id1, id2]
+    RAG->>Tool: two_level_search(selected_doc_ids=[id1, id2])
+
+    alt selected_doc_ids provided
+        Note over Tool: Skip Stage 1 (document discovery)<br/>Go directly to Stage 2
+        Tool->>Q: Hybrid search (dense + BM25)<br/>filtered to selected doc_ids only
+    else no doc selection
+        Note over Tool: Normal two-stage retrieval
+        Tool->>Q: Stage 1: Discover relevant documents
+        Tool->>Q: Stage 2: Hybrid search across discovered docs
+    end
+
+    Q-->>Tool: Matching chunks
+    Tool-->>RAG: { chunks, matched_documents }
+    RAG-->>API: Agent output with sources
+    API-->>U: SSE stream with answer + sources
+```
+
+### How It Works
+
+1. **Frontend** — Each document in the Files panel has a checkbox. Selecting documents activates a blue scope bar: *"Scoped to N document(s)"* with a clear button.
+2. **Query Payload** — `selected_doc_ids` (array of UUID strings) is sent alongside the query in both streaming and non-streaming endpoints.
+3. **Data Pipeline** — The IDs flow through: `QueryRequest` → `streaming.py` context → `orchestrator` metadata → `rag_agent` → `two_level_search()`.
+4. **Stage-1 Skip** — When `selected_doc_ids` is provided, the expensive Stage 1 document discovery is **entirely skipped**. The system goes directly to Stage 2 hybrid search, filtered to only the user-selected documents.
+5. **Hybrid Search** — Stage 2 runs both dense vector similarity and BM25 keyword matching within the selected documents, then fuses results with Reciprocal Rank Fusion (RRF).
+
+### Architecture — Stage-1 Skip Optimization
+
+```mermaid
+flowchart TD
+    A[User Query + selected_doc_ids] --> B{selected_doc_ids<br/>provided?}
+
+    B -- Yes --> C[Skip Stage 1]
+    C --> D[Stage 2: Hybrid Search<br/>dense + BM25]
+    D --> E[Filter: doc_id IN selected_doc_ids]
+    E --> F[RRF Fusion → Top-K Chunks]
+
+    B -- No --> G[Stage 1: Document Discovery<br/>Find relevant doc_ids]
+    G --> H[Stage 2: Hybrid Search<br/>dense + BM25]
+    H --> I[Filter: discovered doc_ids]
+    I --> F
+
+    F --> J[Return chunks + sources]
+
+    style C fill:#2ecc71,color:#fff
+    style G fill:#3498db,color:#fff
+```
+
+Skipping Stage 1 when the user has already selected documents provides **faster responses** and **more predictable results** — the user knows exactly which documents are being searched.
+
+### Data Flow Through the Pipeline
+
+| Layer | File | What happens |
+|-------|------|-------------|
+| Schema | `utils/schemas.py` | `QueryRequest.selected_doc_ids: List[str]` field |
+| API | `api/streaming.py` | Passes `selected_doc_ids` into context dict |
+| Orchestrator | `core/orchestrator.py` | Forwards `selected_doc_ids` in agent metadata |
+| RAG Agent | `agents/rag_agent/agent.py` | Extracts from metadata, passes to search tool |
+| Search Tool | `tools/rag_tools.py` | Checks `selected_doc_ids` → skips Stage 1 if present |
+| Frontend | `frontend/index.html` | Checkboxes, scope bar, `_selectedDocIds` state |
 
 ---
 
