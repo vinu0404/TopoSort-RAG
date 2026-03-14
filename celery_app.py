@@ -47,5 +47,5 @@ celery.conf.update(
 )
 
 celery.conf.update(
-    include=["tasks.document_tasks"],
+    include=["tasks.document_tasks", "tasks.web_scrape_tasks"],
 )

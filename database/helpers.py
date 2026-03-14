@@ -24,6 +24,8 @@ from database.models import (
     Persona,
     Session,
     User,
+    WebScrapeCollection,
+    WebScrapeUrl,
 )
 from database.session import async_session_factory
 
@@ -977,3 +979,206 @@ def _persona_to_dict(row: Persona) -> dict:
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+# ── Web Scrape Collection helpers ──────────────────────────────────
+
+
+def _web_collection_to_dict(row: WebScrapeCollection, urls: list | None = None) -> dict:
+    d = {
+        "collection_id": str(row.collection_id),
+        "name": row.name,
+        "is_active": row.is_active,
+        "status": row.status,
+        "total_pages": row.total_pages or 0,
+        "total_chunks": row.total_chunks or 0,
+        "error_message": row.error_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+    if urls is not None:
+        d["urls"] = urls
+    return d
+
+
+def _web_url_to_dict(row: WebScrapeUrl) -> dict:
+    return {
+        "url_id": str(row.url_id),
+        "url": row.url,
+        "depth": row.depth,
+        "status": row.status,
+        "pages_scraped": row.pages_scraped or 0,
+        "chunks_created": row.chunks_created or 0,
+        "error_message": row.error_message,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+async def create_web_scrape_collection(
+    session: AsyncSession,
+    user_id: str,
+    name: str,
+    urls_with_depth: List[Dict[str, Any]],
+) -> dict:
+    """Create a web scrape collection with its URL entries.
+
+    ``urls_with_depth`` is a list of ``{"url": str, "depth": int}``.
+    Returns the serialised collection dict including URL rows.
+    """
+    uid = _to_uuid(user_id)
+    collection = WebScrapeCollection(user_id=uid, name=name, status="pending")
+    session.add(collection)
+    await session.flush()  # populate collection_id
+
+    url_rows: list[dict] = []
+    for entry in urls_with_depth:
+        url_row = WebScrapeUrl(
+            collection_id=collection.collection_id,
+            url=entry["url"],
+            depth=entry.get("depth", 1),
+        )
+        session.add(url_row)
+        await session.flush()
+        url_rows.append(_web_url_to_dict(url_row))
+
+    return _web_collection_to_dict(collection, urls=url_rows)
+
+
+async def get_user_web_collections(
+    session: AsyncSession,
+    user_id: str,
+) -> list[dict]:
+    """List all web scrape collections for a user with their URLs."""
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(WebScrapeCollection)
+        .where(WebScrapeCollection.user_id == uid)
+        .order_by(WebScrapeCollection.created_at.desc())
+    )
+    collections = result.scalars().all()
+
+    items = []
+    for c in collections:
+        url_result = await session.execute(
+            select(WebScrapeUrl)
+            .where(WebScrapeUrl.collection_id == c.collection_id)
+            .order_by(WebScrapeUrl.created_at.asc())
+        )
+        urls = [_web_url_to_dict(u) for u in url_result.scalars()]
+        items.append(_web_collection_to_dict(c, urls=urls))
+    return items
+
+
+async def get_web_collection_for_user(
+    session: AsyncSession,
+    collection_id: str,
+    user_id: str,
+) -> WebScrapeCollection | None:
+    """Ownership-checked fetch of a web scrape collection."""
+    cid = _to_uuid(collection_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(WebScrapeCollection).where(
+            WebScrapeCollection.collection_id == cid,
+            WebScrapeCollection.user_id == uid,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_web_collection_status(
+    session: AsyncSession,
+    collection_id: str,
+    status: str,
+    total_pages: int | None = None,
+    total_chunks: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update web scrape collection status and aggregates."""
+    from sqlalchemy import update
+
+    cid = _to_uuid(collection_id)
+    values: dict = {"status": status, "updated_at": datetime.now(timezone.utc)}
+    if total_pages is not None:
+        values["total_pages"] = total_pages
+    if total_chunks is not None:
+        values["total_chunks"] = total_chunks
+    if error_message is not None:
+        values["error_message"] = error_message
+    await session.execute(
+        update(WebScrapeCollection)
+        .where(WebScrapeCollection.collection_id == cid)
+        .values(**values)
+    )
+    await session.flush()
+
+
+async def update_web_url_status(
+    session: AsyncSession,
+    url_id: str,
+    status: str,
+    pages_scraped: int | None = None,
+    chunks_created: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update individual web scrape URL status."""
+    from sqlalchemy import update
+
+    uid = _to_uuid(url_id)
+    values: dict = {"status": status}
+    if pages_scraped is not None:
+        values["pages_scraped"] = pages_scraped
+    if chunks_created is not None:
+        values["chunks_created"] = chunks_created
+    if error_message is not None:
+        values["error_message"] = error_message
+    await session.execute(
+        update(WebScrapeUrl).where(WebScrapeUrl.url_id == uid).values(**values)
+    )
+    await session.flush()
+
+
+async def toggle_web_collection_active(
+    session: AsyncSession,
+    collection_id: str,
+    user_id: str,
+    is_active: bool,
+) -> dict | None:
+    """Toggle is_active flag for a web scrape collection. Returns updated dict or None."""
+    row = await get_web_collection_for_user(session, collection_id, user_id)
+    if row is None:
+        return None
+    row.is_active = is_active
+    row.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+    return _web_collection_to_dict(row)
+
+
+async def delete_web_collection_record(
+    session: AsyncSession,
+    collection_id: str,
+    user_id: str,
+) -> bool:
+    """Delete a web scrape collection (cascades to URLs). Returns True if deleted."""
+    row = await get_web_collection_for_user(session, collection_id, user_id)
+    if row is None:
+        return False
+    await session.delete(row)
+    await session.flush()
+    return True
+
+
+async def get_active_web_collection_ids(
+    session: AsyncSession,
+    user_id: str,
+) -> list[str]:
+    """Return collection_ids of all active (toggled ON) web scrape collections."""
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(WebScrapeCollection.collection_id).where(
+            WebScrapeCollection.user_id == uid,
+            WebScrapeCollection.is_active.is_(True),
+            WebScrapeCollection.status.in_(["ready", "partial"]),
+        )
+    )
+    return [str(r[0]) for r in result]

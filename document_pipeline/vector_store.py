@@ -73,6 +73,8 @@ class VectorStore:
         for field, schema in [
             ("type", "keyword"),
             ("doc_id", "keyword"),
+            ("source_type", "keyword"),
+            ("web_collection_id", "keyword"),
             ("metadata.doc_type", "keyword"),
             ("metadata.date", "keyword"),
             ("metadata.section_title", "text"),
@@ -125,6 +127,7 @@ class VectorStore:
             vector=doc_embedding,
             payload={
                 "type": "document_entry",
+                "source_type": "document",
                 "doc_id": document.get("doc_id", doc_uuid),
                 "filename": document["filename"],
                 "description": document.get("description", ""),
@@ -144,6 +147,7 @@ class VectorStore:
                     vector=embedding,
                     payload={
                         "type": "chunk",
+                        "source_type": "document",
                         "doc_id": doc_id,
                         "text": chunk["text"],
                         "metadata": chunk.get("metadata", {}),
@@ -180,6 +184,107 @@ class VectorStore:
             points_selector=doc_filter,
         )
         logger.info("Deleted %d points for doc_id=%s from %s", count, doc_id, collection_name)
+        return count
+
+    async def add_web_page(
+        self,
+        user_id: str,
+        web_collection_id: str,
+        page: Dict[str, Any],
+        chunks: List[Dict[str, Any]],
+        embed_fn,
+        embed_batch_fn=None,
+    ) -> int:
+        """Store a scraped web page + its chunks into the user's collection.
+
+        Returns the number of chunk points created.
+        """
+        collection_name = f"user_{user_id}_documents"
+        page_uuid = str(uuid.uuid4())
+
+        page_title = page.get("title", "")
+        page_url = page.get("url", "")
+        doc_text = f"{page_title}: {page_url}"
+        chunk_texts = [c["text"] for c in chunks]
+        all_texts = [doc_text, *chunk_texts]
+
+        if embed_batch_fn and len(all_texts) > 1:
+            _BATCH_LIMIT = 100
+            all_embeddings: List[List[float]] = []
+            for i in range(0, len(all_texts), _BATCH_LIMIT):
+                batch_embeddings = await embed_batch_fn(all_texts[i:i + _BATCH_LIMIT])
+                all_embeddings.extend(batch_embeddings)
+        else:
+            all_embeddings = await asyncio.gather(
+                *[embed_fn(t) for t in all_texts]
+            )
+
+        doc_embedding = all_embeddings[0]
+        chunk_embeddings = all_embeddings[1:]
+
+        doc_point = PointStruct(
+            id=page_uuid,
+            vector=doc_embedding,
+            payload={
+                "type": "document_entry",
+                "source_type": "web_scrape",
+                "web_collection_id": web_collection_id,
+                "doc_id": page_uuid,
+                "filename": page_title or page_url,
+                "description": page_title,
+                "url": page_url,
+                "total_chunks": len(chunks),
+            },
+        )
+
+        chunk_points = []
+        for chunk, embedding in zip(chunks, chunk_embeddings):
+            cid = chunk.get("chunk_id", str(uuid.uuid4()))
+            chunk_points.append(
+                PointStruct(
+                    id=cid,
+                    vector=embedding,
+                    payload={
+                        "type": "chunk",
+                        "source_type": "web_scrape",
+                        "web_collection_id": web_collection_id,
+                        "doc_id": page_uuid,
+                        "text": chunk["text"],
+                        "metadata": chunk.get("metadata", {}),
+                    },
+                )
+            )
+
+        await self.client.upsert(
+            collection_name=collection_name,
+            points=[doc_point, *chunk_points],
+        )
+        return len(chunk_points)
+
+    async def delete_web_collection(self, user_id: str, web_collection_id: str) -> int:
+        """Delete all points belonging to a web scrape collection."""
+        collection_name = f"user_{user_id}_documents"
+        wc_filter = Filter(
+            must=[FieldCondition(key="web_collection_id", match=MatchValue(value=web_collection_id))]
+        )
+
+        results, _ = await self.client.scroll(
+            collection_name=collection_name,
+            scroll_filter=wc_filter,
+            limit=10000,
+            with_payload=False,
+        )
+        count = len(results)
+
+        if count > 0:
+            await self.client.delete(
+                collection_name=collection_name,
+                points_selector=wc_filter,
+            )
+        logger.info(
+            "Deleted %d web scrape points for collection_id=%s from %s",
+            count, web_collection_id, collection_name,
+        )
         return count
 
     async def search(
@@ -325,25 +430,45 @@ class VectorStore:
         embedding: List[float],
         filters: Dict[str, Any] | None = None,
         limit: int = 5,
+        active_web_collection_ids: List[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Stage-1 search: find document-level entries by description similarity.
+
+        When *active_web_collection_ids* is provided, the search includes both
+        uploaded documents (source_type=document) AND web scrape entries whose
+        web_collection_id is in the active list.
 
         Returns list of dicts with doc_id, filename, description, score.
         """
         type_condition = FieldCondition(
             key="type", match=MatchValue(value="document_entry")
         )
-        conditions: List[FieldCondition] = [type_condition]
+
+        extra_conditions: List[FieldCondition] = []
         if filters:
             extra = self._build_filter(filters)
             if extra and extra.must:
-                conditions.extend(extra.must)
+                extra_conditions.extend(extra.must)
+
+        if active_web_collection_ids:
+            # Include uploaded docs OR web scrape docs from active collections
+            doc_source = FieldCondition(key="source_type", match=MatchValue(value="document"))
+            web_conditions = [
+                FieldCondition(key="web_collection_id", match=MatchValue(value=wid))
+                for wid in active_web_collection_ids
+            ]
+            query_filter = Filter(
+                must=[type_condition, *extra_conditions],
+                should=[doc_source, *web_conditions],
+            )
+        else:
+            query_filter = Filter(must=[type_condition, *extra_conditions])
 
         response = await self.client.query_points(
             collection_name=collection,
             query=embedding,
-            query_filter=Filter(must=conditions),
+            query_filter=query_filter,
             limit=limit,
             with_payload=True,
         )
@@ -352,6 +477,8 @@ class VectorStore:
                 "doc_id": r.payload.get("doc_id", str(r.id)),
                 "filename": r.payload.get("filename", ""),
                 "description": r.payload.get("description", ""),
+                "url": r.payload.get("url", ""),
+                "source_type": r.payload.get("source_type", "document"),
                 "score": r.score,
             }
             for r in response.points

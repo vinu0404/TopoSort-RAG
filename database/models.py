@@ -39,6 +39,7 @@ class User(Base):
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
     connections = relationship("UserConnection", back_populates="user", cascade="all, delete-orphan")
     personas = relationship("Persona", back_populates="user", cascade="all, delete-orphan")
+    web_scrape_collections = relationship("WebScrapeCollection", back_populates="user", cascade="all, delete-orphan")
 
 
 class Session(Base):
@@ -205,3 +206,37 @@ class UserConnection(Base):
     error_message = Column(Text)
 
     user = relationship("User", back_populates="connections")
+
+
+class WebScrapeCollection(Base):
+    __tablename__ = "web_scrape_collections"
+
+    collection_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(256), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=False)
+    status = Column(String(16), nullable=False, default="pending")
+    total_pages = Column(Integer, default=0)
+    total_chunks = Column(Integer, default=0)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="web_scrape_collections")
+    urls = relationship("WebScrapeUrl", back_populates="collection", cascade="all, delete-orphan")
+
+
+class WebScrapeUrl(Base):
+    __tablename__ = "web_scrape_urls"
+
+    url_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_id = Column(UUID(as_uuid=True), ForeignKey("web_scrape_collections.collection_id", ondelete="CASCADE"), nullable=False)
+    url = Column(Text, nullable=False)
+    depth = Column(Integer, nullable=False, default=1)
+    status = Column(String(16), nullable=False, default="pending")
+    pages_scraped = Column(Integer, default=0)
+    chunks_created = Column(Integer, default=0)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    collection = relationship("WebScrapeCollection", back_populates="urls")

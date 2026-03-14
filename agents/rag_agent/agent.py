@@ -44,9 +44,10 @@ class RAGAgent(BaseAgent):
             entities = task_config.entities
             dependency_outputs = task_config.dependency_outputs
             user_id = task_config.metadata.get("user_id", "default")
+            active_web_ids = task_config.metadata.get("active_web_collection_ids", [])
             enhanced_query, expand_tokens = await self._expand_query(original_query, entities, dependency_outputs)
             tokens_used += expand_tokens
-            
+
             logger.info(f"[RAGAgent] Original query: {original_query}")
             logger.info(f"[RAGAgent] Enhanced query: {enhanced_query}")
             filters = self._build_filters(entities)
@@ -57,6 +58,7 @@ class RAGAgent(BaseAgent):
                 user_id=user_id,
                 filters=filters,
                 top_k=20,
+                active_web_collection_ids=active_web_ids or None,
             )
             chunks = search_result["chunks"]
             matched_documents = search_result.get("matched_documents", [])

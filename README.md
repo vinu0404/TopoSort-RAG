@@ -535,6 +535,206 @@ No code changes required — both providers are handled by `document_pipeline/vi
 
 ---
 
+## Web Scraping Collections
+
+Scrape entire websites (with configurable crawl depth) and make the content searchable by the RAG agent — alongside your uploaded documents. Each user can create multiple **web scrape collections**, each containing up to **5 URLs**. Collections have a toggle: when **ON**, the RAG agent includes that collection's content in its search; when **OFF**, it's ignored.
+
+### End-to-End Flow
+
+```mermaid
+flowchart TD
+    User["User creates collection<br/><i>name + up to 5 URLs<br/>each with depth 1-3</i>"]
+    User -->|"POST /web-scrape/collections"| API["FastAPI API Layer"]
+
+    API --> Validate["Validate<br/><i>max 5 URLs, depth 1-3,<br/>valid URL format</i>"]
+    Validate --> DB1["Insert into PostgreSQL<br/><i>web_scrape_collections (pending)<br/>+ web_scrape_urls (pending)</i>"]
+    DB1 --> Enqueue["Enqueue Celery task<br/><i>scrape_web_collection_task.delay()</i>"]
+    Enqueue --> Return["Return collection<br/><i>status: pending</i>"]
+    Return -->|"SSE stream"| FE["Frontend updates<br/>collection card in real-time"]
+
+    Enqueue --> Worker["Celery Worker picks up task"]
+
+    subgraph CeleryTask["Celery Worker — scrape_web_collection_task"]
+        direction TB
+        Loop["For each URL in collection"]
+        Loop --> Scrape["scrape_url(url, depth)"]
+
+        subgraph Crawler["BFS Web Crawler (httpx + BeautifulSoup)"]
+            direction TB
+            Fetch["Fetch page via httpx<br/><i>follow redirects, timeout 15s</i>"]
+            Fetch --> Parse["Parse HTML<br/><i>strip nav, footer, scripts,<br/>styles, forms</i>"]
+            Parse --> Extract["Extract title + body text"]
+            Extract --> Links{"depth > 1?"}
+            Links -->|"Yes"| Follow["Follow same-domain links<br/><i>BFS queue, max 20 pages</i>"]
+            Follow --> Fetch
+            Links -->|"No"| Pages["Return scraped pages"]
+        end
+
+        Scrape --> Crawler
+        Crawler --> Process["process_scraped_pages()"]
+
+        subgraph Pipeline["Chunk → Embed → Store"]
+            direction TB
+            Chunk["StructureAwareChunker<br/><i>chunk_size=1024</i>"]
+            Chunk --> Embed["OpenAI Embeddings<br/><i>batch embed chunks</i>"]
+            Embed --> Store["Qdrant vector_store.add_web_page()<br/><i>source_type: 'web_scrape'<br/>web_collection_id: UUID</i>"]
+        end
+
+        Process --> Pipeline
+        Pipeline --> Status["Update DB status<br/><i>url → ready / failed</i>"]
+        Status --> Publish["Redis Pub/Sub<br/><i>web_scrape_status:{user_id}</i>"]
+    end
+
+    Publish -->|"SSE push"| FE
+
+    style User fill:#2196F3,color:#fff
+    style Worker fill:#FF9800,color:#fff
+    style Fetch fill:#FF9800,color:#fff
+    style Store fill:#4CAF50,color:#fff
+    style FE fill:#4CAF50,color:#fff
+```
+
+### RAG Integration — Toggle ON/OFF
+
+```mermaid
+flowchart LR
+    Query["User sends query"]
+    Query --> FE2["Frontend collects<br/>active collection IDs<br/><i>toggled ON + status ready</i>"]
+    FE2 -->|"active_web_collection_ids"| Stream["POST /query/stream"]
+    Stream --> Orch["Orchestrator<br/><i>passes IDs in agent metadata</i>"]
+    Orch --> RAG["RAG Agent"]
+
+    RAG --> Search["two_level_search()"]
+
+    subgraph Stage1["Stage 1 — Document Entry Search"]
+        direction TB
+        Filter["Qdrant filter:<br/><i>source_type = 'document'<br/>OR web_collection_id IN [...]</i>"]
+        Filter --> Match["Matched document entries<br/><i>uploaded docs + active web pages</i>"]
+    end
+
+    Search --> Stage1
+    Stage1 --> Stage2["Stage 2 — Hybrid Search<br/><i>dense + BM25 within<br/>matched docs → RRF merge</i>"]
+    Stage2 --> Rerank["LLM Reranking<br/><i>(optional)</i>"]
+    Rerank --> Synthesis["LLM Synthesis<br/><i>answer with citations</i>"]
+    Synthesis --> Answer["Streamed answer<br/><i>includes web sources</i>"]
+
+    style Query fill:#2196F3,color:#fff
+    style Filter fill:#FF9800,color:#fff
+    style Synthesis fill:#9C27B0,color:#fff
+    style Answer fill:#4CAF50,color:#fff
+```
+
+### How It Works
+
+1. **Create Collection** — User provides a name and up to 5 URLs with crawl depth (1-3). The API creates DB records and enqueues a Celery task.
+2. **Scrape** — The Celery worker crawls each URL using BFS (`httpx` + `BeautifulSoup`), following same-domain links up to the specified depth. Max 20 pages per URL.
+3. **Process** — Each scraped page is chunked (`StructureAwareChunker`), embedded (OpenAI), and stored in the **same** Qdrant collection as uploaded documents (`user_{id}_documents`), distinguished by `source_type: "web_scrape"` and `web_collection_id` metadata.
+4. **Real-time Updates** — Status changes are published via Redis Pub/Sub → SSE stream. The frontend updates collection/URL cards live as scraping progresses.
+5. **Toggle** — Each collection has an `is_active` toggle. When ON, the RAG agent's Stage 1 search includes that collection's document entries via Qdrant `should` filter clauses. When OFF, they're excluded.
+6. **Delete** — Deleting a collection removes all Qdrant points (filtered by `web_collection_id`) and cascades the DB delete (collection + URLs).
+
+### Architecture Decision: Same Qdrant Collection
+
+Scraped web content is stored in the **same** `user_{user_id}_documents` Qdrant collection alongside uploaded documents, not in separate per-collection Qdrant collections. This is achieved by adding metadata fields to every point:
+
+| Field | Uploaded Documents | Web Scrape Pages |
+|-------|-------------------|-----------------|
+| `source_type` | `"document"` | `"web_scrape"` |
+| `web_collection_id` | — | `UUID` of the collection |
+
+This avoids managing many tiny Qdrant collections and lets the existing two-level retrieval pipeline work with minimal changes.
+
+### API Endpoints — `/api/v1/web-scrape`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/collections` | JWT | Create a new web scrape collection. Body: `{ name, urls: [{ url, depth }] }`. Max 5 URLs, depth 1-3. Returns collection with pending status. Enqueues Celery scrape task. |
+| `GET` | `/collections` | JWT | List all web scrape collections for the authenticated user (with URL details). |
+| `PUT` | `/collections/{id}/toggle` | JWT | Toggle a collection's active status. Body: `{ is_active: bool }`. Returns `{ collection_id, is_active }`. |
+| `DELETE` | `/collections/{id}` | JWT | Delete a collection (Qdrant vectors + DB records). Ownership verified. |
+| `POST` | `/collections/{id}/rescrape` | JWT | Re-trigger scraping for an existing collection. Resets statuses and enqueues a new Celery task. |
+| `GET` | `/status/stream` | JWT | SSE stream of real-time web scrape status updates via Redis Pub/Sub. |
+
+### Database Schema
+
+```sql
+-- Collections
+CREATE TABLE web_scrape_collections (
+    collection_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name              VARCHAR(256) NOT NULL,
+    is_active         BOOLEAN NOT NULL DEFAULT FALSE,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | scraping | ready | partial | failed
+    total_pages       INT DEFAULT 0,
+    total_chunks      INT DEFAULT 0,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Individual URLs within a collection
+CREATE TABLE web_scrape_urls (
+    url_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    collection_id     UUID NOT NULL REFERENCES web_scrape_collections(collection_id) ON DELETE CASCADE,
+    url               TEXT NOT NULL,
+    depth             INT NOT NULL DEFAULT 1,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | scraping | ready | failed
+    pages_scraped     INT DEFAULT 0,
+    chunks_created    INT DEFAULT 0,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Collection Status Flow
+
+```
+pending → scraping → ready      (all URLs succeeded)
+                   → partial    (some URLs succeeded, some failed)
+                   → failed     (all URLs failed or timed out)
+```
+
+### Scraper Limits
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Max URLs per collection | 5 | Prevent abuse |
+| Max crawl depth | 3 | Limit crawl scope |
+| Max pages per URL | 20 | Prevent runaway crawling |
+| Request timeout | 15s | Per-page HTTP timeout |
+| Celery rate limit | 10/m | Prevent overloading external sites |
+| Celery max retries | 2 | Auto-retry with exponential backoff |
+
+### Files Involved
+
+```
+document_pipeline/
+├── web_scraper.py          # scrape_url() + process_scraped_pages()
+├── vector_store.py         # add_web_page(), delete_web_collection(), updated search filters
+tasks/
+├── web_scrape_tasks.py     # Celery task: scrape_web_collection_task
+database/
+├── schema.sql              # web_scrape_collections + web_scrape_urls tables
+├── models.py               # WebScrapeCollection, WebScrapeUrl ORM models
+├── helpers.py              # CRUD functions for web collections
+api/
+├── routes.py               # 6 new endpoints (CRUD + SSE)
+tools/
+├── rag_tools.py            # two_level_search() accepts active_web_collection_ids
+agents/rag_agent/
+├── agent.py                # Passes active web IDs to search tool
+core/
+├── orchestrator.py         # Forwards active_web_collection_ids through context
+utils/
+├── schemas.py              # WebScrapeUrlInput, WebScrapeCollectionCreate, WebScrapeToggle
+frontend/
+├── index.html              # Web Scrape panel, modal, toggles, SSE handler
+```
+
+---
+
 ## Per-Message Token Tracking
 
 Every assistant message stores **total tokens consumed** and a **per-component breakdown** (JSONB) — using actual token counts from each provider's API response, not estimates.
