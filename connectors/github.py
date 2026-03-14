@@ -141,7 +141,8 @@ class GitHubConnector(BaseConnector):
         """Revoke the token via GitHub's OAuth application API."""
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.delete(
+                resp = await client.request(
+                    "DELETE",
                     f"{_GH_API}/applications/{config.github_client_id}/token",
                     auth=(config.github_client_id, config.github_client_secret),
                     json={"access_token": access_token},
