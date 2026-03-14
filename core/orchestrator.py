@@ -252,6 +252,7 @@ class Orchestrator:
                 "query_id": context.get("query_id", ""),
                 "session_id": context.get("session_id"),
                 "active_web_collection_ids": context.get("active_web_collection_ids", []),
+                "selected_doc_ids": context.get("selected_doc_ids", []),
             },
             hitl_context=hitl_decision,
         )

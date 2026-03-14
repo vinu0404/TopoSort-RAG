@@ -233,6 +233,7 @@ async def handle_query(
             "long_term_memory": long_term.model_dump(),
             "conversation_history": conversation_history,
             "active_web_collection_ids": request.active_web_collection_ids,
+            "selected_doc_ids": request.selected_doc_ids,
         }
         # Non-streaming: no HITL callback → HITL agents are auto-skipped
         results = await orchestrator.execute_plan(
@@ -699,6 +700,39 @@ async def delete_persona_endpoint(
         raise HTTPException(status_code=404, detail="Persona not found")
     await session.commit()
     return {"deleted": True}
+
+
+# ── Analytics ────────────────────────────────────────────────────────────
+
+
+@router.get("/analytics", tags=["analytics"])
+async def get_analytics(
+    days: int = 30,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Per-user analytics: agent usage, tokens, response times, patterns."""
+    from database.helpers import (
+        get_agent_usage_stats,
+        get_token_usage_over_time,
+        get_agent_response_times,
+        get_query_patterns,
+        get_token_breakdown_by_agent,
+    )
+
+    agent_usage = await get_agent_usage_stats(session, auth_user_id, days)
+    token_timeline = await get_token_usage_over_time(session, auth_user_id, days)
+    response_times = await get_agent_response_times(session, auth_user_id, days)
+    patterns = await get_query_patterns(session, auth_user_id, days)
+    token_breakdown = await get_token_breakdown_by_agent(session, auth_user_id, days)
+
+    return {
+        "agent_usage": agent_usage,
+        "token_timeline": token_timeline,
+        "response_times": response_times,
+        "query_patterns": patterns,
+        "token_breakdown": token_breakdown,
+    }
 
 
 # ── Web Scrape Collection CRUD ─────────────────────────────────────────

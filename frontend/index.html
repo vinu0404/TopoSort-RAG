@@ -671,6 +671,20 @@
   .file-item .file-actions button:hover svg { stroke: #333; }
   .file-item .file-actions .btn-file-del:hover { background: #fee; }
   .file-item .file-actions .btn-file-del:hover svg { stroke: #d00; }
+  .file-select-cb {
+    width: 14px; height: 14px; accent-color: #007aff;
+    cursor: pointer; flex-shrink: 0; margin: 0;
+  }
+  .doc-scope-bar {
+    padding: 5px 8px; background: #eef4ff; border-radius: 4px;
+    font-size: 0.72rem; color: #004085; margin-bottom: 6px;
+    display: none; align-items: center; gap: 6px;
+  }
+  .doc-scope-bar.active { display: flex; }
+  .doc-scope-bar button {
+    font-size: 0.68rem; cursor: pointer; background: none;
+    border: none; color: #004085; text-decoration: underline; padding: 0;
+  }
   .file-empty {
     font-size: 0.78rem; color: #999;
     text-align: center; padding: 12px 0;
@@ -785,7 +799,7 @@
     display: flex; gap: 8px; align-items: center; margin-bottom: 8px;
   }
   .wsc-url-row input { flex: 1; margin-bottom: 0; }
-  .wsc-url-row select { width: 70px; flex-shrink: 0; margin-bottom: 0; }
+  .wsc-url-row select { width: 90px; flex-shrink: 0; margin-bottom: 0; font-size: 0.8rem; padding: 6px 4px; }
   .wsc-url-row .btn-remove-url {
     background: none; border: none; cursor: pointer;
     color: #d00; font-size: 1.1rem; padding: 0 4px; flex-shrink: 0;
@@ -809,6 +823,49 @@
   .wsc-modal-save { background: #000; color: #fff; }
   .wsc-modal-save:hover { opacity: 0.85; }
   .wsc-modal-save:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Analytics Panel ────────────────────────────────── */
+  .analytics-controls {
+    display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid #eee;
+    align-items: center;
+  }
+  .analytics-controls select {
+    flex: 1; font-size: 0.75rem; padding: 4px 6px;
+    border: 1px solid #ddd; border-radius: 4px; background: #fff;
+  }
+  .analytics-content { padding: 8px; overflow-y: auto; flex: 1; }
+  .analytics-section { margin-bottom: 14px; }
+  .analytics-section h4 {
+    font-size: 0.72rem; font-weight: 600; margin: 0 0 6px;
+    color: #555; text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;
+  }
+  .stat-card {
+    background: #f8f9fa; border-radius: 6px; padding: 8px 10px; text-align: center;
+  }
+  .stat-card .stat-value { font-size: 1.1rem; font-weight: 700; color: #333; }
+  .stat-card .stat-label { font-size: 0.65rem; color: #888; margin-top: 2px; }
+  .bar-chart { display: flex; flex-direction: column; gap: 4px; }
+  .bar-row { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+  .bar-label {
+    width: 70px; text-align: right; flex-shrink: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555;
+  }
+  .bar-track { flex: 1; height: 14px; background: #f0f0f0; border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; min-width: 2px; }
+  .bar-fill.success { background: #34c759; }
+  .bar-fill.primary { background: #007aff; }
+  .bar-fill.warn { background: #ff9500; }
+  .bar-value { width: 40px; font-size: 0.68rem; color: #888; }
+  .token-timeline { display: flex; align-items: flex-end; gap: 2px; height: 60px; }
+  .timeline-bar {
+    flex: 1; background: #007aff; border-radius: 2px 2px 0 0;
+    min-height: 2px; transition: height 0.3s; position: relative; cursor: default;
+  }
+  .timeline-bar:hover { opacity: 0.8; }
+  .analytics-empty { color: #aaa; font-size: 0.78rem; font-style: italic; padding: 4px 0; }
 
   /* ── Delete confirm overlay ──────────────────────────── */
   .confirm-overlay {
@@ -1590,6 +1647,9 @@
     <button class="rail-btn" data-panel="panelConnections" onclick="togglePanel('panelConnections')" title="Connections">
       <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
     </button>
+    <button class="rail-btn" data-panel="panelAnalytics" onclick="togglePanel('panelAnalytics')" title="Analytics">
+      <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+    </button>
     <div class="rail-spacer"></div>
     <button class="rail-btn" data-panel="panelInfo" onclick="togglePanel('panelInfo')" title="Info">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -1621,6 +1681,10 @@
           <span>Your documents</span>
           <button class="btn-refresh" onclick="loadUserFiles()" title="Refresh">&#x21bb;</button>
         </div>
+        <div class="doc-scope-bar" id="docScopeBar">
+          <span>Scoped to <strong id="docScopeCount">0</strong> document(s)</span>
+          <button onclick="clearDocSelection()">Clear</button>
+        </div>
         <div class="file-list" id="fileList">
           <div class="file-empty">No files uploaded</div>
         </div>
@@ -1648,6 +1712,19 @@
             <li>Long-term memory</li>
             <li>Multi-agent orchestration</li>
           </ul>
+        </div>
+      </div>
+      <div class="panel-view" id="panelAnalytics">
+        <div class="analytics-controls">
+          <select id="analyticsDays" onchange="loadAnalytics()">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="btn-refresh" onclick="loadAnalytics()" title="Refresh">&#x21bb;</button>
+        </div>
+        <div id="analyticsContent" class="analytics-content">
+          <div style="color:#888;font-size:0.8em;padding:12px;">Select to load analytics</div>
         </div>
       </div>
     </div>
@@ -1740,11 +1817,13 @@ function togglePanel(panelId) {
     panelFiles: 'Files',
     panelWebScrape: 'Web Scrape',
     panelConnections: 'Connections',
-    panelInfo: 'Info'
+    panelInfo: 'Info',
+    panelAnalytics: 'Analytics'
   };
   document.getElementById('panelTitle').textContent = titles[panelId] || '';
   panel.classList.add('open');
   _activePanel = panelId;
+  if (panelId === 'panelAnalytics') loadAnalytics();
 }
 
 function closePanel() {
@@ -1761,6 +1840,7 @@ let isProcessing = false;
 let _convPersonaMap = {};  // conversation_id → persona_id
 let _convShareMap = {};    // conversation_id → share_token | null
 let _webCollections = [];
+let _selectedDocIds = [];
 
 const authOverlay = document.getElementById('authOverlay');
 const authError = document.getElementById('authError');
@@ -1943,6 +2023,7 @@ async function doLogout() {
   document.getElementById('personaList').innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
   document.getElementById('wscList').innerHTML = '<div class="file-empty">No web collections yet</div>';
   _webCollections = [];
+  _selectedDocIds = [];
   if (_wscAbortCtrl) { _wscAbortCtrl.abort(); _wscAbortCtrl = null; }
   currentPersonaId = null;
   updatePersonaBar();
@@ -2511,6 +2592,92 @@ function connectWebScrapeSSE() {
   })();
 }
 
+// ─── Analytics Panel ──────────────────────────────────
+async function loadAnalytics() {
+  if (!currentUser) return;
+  const days = document.getElementById('analyticsDays')?.value || 30;
+  const content = document.getElementById('analyticsContent');
+  content.innerHTML = '<div style="color:#888;font-size:0.8em;padding:12px;">Loading...</div>';
+
+  try {
+    const r = await fetch(`${API}/analytics?days=${days}`, { headers: authHeaders() });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) { content.innerHTML = '<div class="analytics-empty">Failed to load analytics</div>'; return; }
+    const data = await r.json();
+    renderAnalytics(data);
+  } catch (err) {
+    console.error('loadAnalytics error:', err);
+    content.innerHTML = '<div class="analytics-empty">Error loading analytics</div>';
+  }
+}
+
+function renderAnalytics(data) {
+  const el = document.getElementById('analyticsContent');
+  const p = data.query_patterns || {};
+
+  // ── Overview stats ──
+  const scopeHtml = _selectedDocIds.length > 0
+    ? `<div class="doc-scope-bar active" style="margin-bottom:8px;">Scoped to <strong>${_selectedDocIds.length}</strong> document(s)</div>`
+    : '';
+
+  const statsHtml = `<div class="analytics-section">
+    <h4>Overview</h4>${scopeHtml}
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-value">${p.total_messages || 0}</div><div class="stat-label">Messages</div></div>
+      <div class="stat-card"><div class="stat-value">${p.total_conversations || 0}</div><div class="stat-label">Conversations</div></div>
+      <div class="stat-card"><div class="stat-value">${p.success_rate || 0}%</div><div class="stat-label">Success Rate</div></div>
+      <div class="stat-card"><div class="stat-value">${p.total_executions || 0}</div><div class="stat-label">Agent Runs</div></div>
+    </div>
+  </div>`;
+
+  // ── Most used agents ──
+  const usageData = data.agent_usage || [];
+  const maxCount = Math.max(...usageData.map(a => a.count), 1);
+  const usageBars = usageData.length ? usageData.map(a => `
+    <div class="bar-row">
+      <span class="bar-label" title="${a.agent_name}">${a.agent_name.replace('_agent', '')}</span>
+      <div class="bar-track"><div class="bar-fill success" style="width:${(a.count / maxCount * 100).toFixed(1)}%"></div></div>
+      <span class="bar-value">${a.count}</span>
+    </div>`).join('') : '<div class="analytics-empty">No agent data yet</div>';
+  const usageHtml = `<div class="analytics-section"><h4>Most Used Agents</h4><div class="bar-chart">${usageBars}</div></div>`;
+
+  // ── Token timeline ──
+  const timeline = data.token_timeline || [];
+  const maxTokens = Math.max(...timeline.map(t => t.total_tokens), 1);
+  const timelineBars = timeline.length ? timeline.map(t => {
+    const h = Math.max(2, (t.total_tokens / maxTokens * 56));
+    const label = t.period ? new Date(t.period).toLocaleDateString('en', {month:'short', day:'numeric'}) : '';
+    return `<div class="timeline-bar" style="height:${h}px" title="${label}: ${(t.total_tokens || 0).toLocaleString()} tokens"></div>`;
+  }).join('') : '';
+  const timelineHtml = timeline.length
+    ? `<div class="analytics-section"><h4>Tokens Over Time</h4><div class="token-timeline">${timelineBars}</div></div>`
+    : '';
+
+  // ── Response times ──
+  const rtData = data.response_times || [];
+  const maxRT = Math.max(...rtData.map(r => r.avg_seconds), 0.1);
+  const rtBars = rtData.length ? rtData.map(r => `
+    <div class="bar-row">
+      <span class="bar-label" title="${r.agent_name}">${r.agent_name.replace('_agent', '')}</span>
+      <div class="bar-track"><div class="bar-fill warn" style="width:${(r.avg_seconds / maxRT * 100).toFixed(1)}%"></div></div>
+      <span class="bar-value">${r.avg_seconds.toFixed(1)}s</span>
+    </div>`).join('') : '<div class="analytics-empty">No data yet</div>';
+  const rtHtml = `<div class="analytics-section"><h4>Avg Response Time</h4><div class="bar-chart">${rtBars}</div></div>`;
+
+  // ── Token breakdown ──
+  const breakdown = data.token_breakdown || [];
+  const maxBd = Math.max(...breakdown.map(b => b.total_tokens), 1);
+  const bdBars = breakdown.length ? breakdown.map(b => `
+    <div class="bar-row">
+      <span class="bar-label" title="${b.agent_name}">${b.agent_name.replace('_agent', '')}</span>
+      <div class="bar-track"><div class="bar-fill primary" style="width:${(b.total_tokens / maxBd * 100).toFixed(1)}%"></div></div>
+      <span class="bar-value">${(b.total_tokens / 1000).toFixed(1)}k</span>
+    </div>`).join('') : '<div class="analytics-empty">No token data yet</div>';
+  const bdHtml = `<div class="analytics-section"><h4>Tokens by Component</h4><div class="bar-chart">${bdBars}</div></div>`;
+
+  el.innerHTML = statsHtml + usageHtml + timelineHtml + rtHtml + bdHtml;
+}
+
 // ─── Connections (OAuth) ──────────────────────────────
 const PROVIDER_ICONS = {
   gmail: '📧', slack: '💬', notion: '📝', github: '🐙',
@@ -2970,11 +3137,17 @@ async function loadUserFiles() {
     fileList.innerHTML = docs.map(d => {
       const date = d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '';
       const isImage = (d.content_type || '').startsWith('image/');
+      const isReady = d.processing_status === 'ready';
+      const isSelected = _selectedDocIds.includes(d.doc_id);
+      const cbHtml = isReady
+        ? `<input type="checkbox" class="file-select-cb" title="${isSelected ? 'Selected for scoped search' : 'Select to scope RAG search'}" ${isSelected ? 'checked' : ''} onchange="toggleDocSelection('${d.doc_id}', this.checked)">`
+        : '';
       const iconHtml = isImage
         ? `<img class="file-thumb" data-docid="${d.doc_id}" src="" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display=''">`
           + `<span class="file-icon" style="display:none">🖼️</span>`
         : `<span class="file-icon">${_fileIcon(d.content_type)}</span>`;
       return `<div class="file-item" data-docid="${d.doc_id}">` +
+        cbHtml +
         iconHtml +
         `<div class="file-info">` +
           `<span class="file-name" title="${d.filename}">${d.filename}</span>` +
@@ -2995,6 +3168,32 @@ async function loadUserFiles() {
     });
   } catch (err) {
     console.error('Failed to load files:', err);
+  }
+}
+
+function toggleDocSelection(docId, isSelected) {
+  if (isSelected) {
+    if (!_selectedDocIds.includes(docId)) _selectedDocIds.push(docId);
+  } else {
+    _selectedDocIds = _selectedDocIds.filter(id => id !== docId);
+  }
+  updateDocScopeBar();
+}
+
+function clearDocSelection() {
+  _selectedDocIds = [];
+  document.querySelectorAll('.file-select-cb').forEach(cb => cb.checked = false);
+  updateDocScopeBar();
+}
+
+function updateDocScopeBar() {
+  const bar = document.getElementById('docScopeBar');
+  const count = document.getElementById('docScopeCount');
+  if (_selectedDocIds.length > 0) {
+    bar.classList.add('active');
+    count.textContent = _selectedDocIds.length;
+  } else {
+    bar.classList.remove('active');
   }
 }
 
@@ -3375,6 +3574,7 @@ async function sendStreaming(query) {
         persona_id: currentPersonaId,
         model: modelSelect.value || undefined,
         active_web_collection_ids: _webCollections.filter(c => c.is_active).map(c => c.collection_id),
+        selected_doc_ids: _selectedDocIds,
       }),
     });
 

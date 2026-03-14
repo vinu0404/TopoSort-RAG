@@ -339,6 +339,7 @@ class QueryRequest(BaseModel):
     source: str = "text"  # "text" | "voice"
     model: Optional[str] = None  # user-selected model override (e.g. "gpt-4o", "claude-sonnet-4-20250514")
     active_web_collection_ids: List[str] = Field(default_factory=list)
+    selected_doc_ids: List[str] = Field(default_factory=list)
 
 
 class MasterAgentInput(BaseModel):
