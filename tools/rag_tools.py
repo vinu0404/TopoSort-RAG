@@ -183,24 +183,51 @@ async def two_level_search(
     embed_model = _embedding_model or get_embedding_model()
     collection_name = f"user_{user_id}_documents"
 
-    # ── User-selected docs: skip Stage 1, go straight to hybrid search ──
+    # ── User-selected docs: skip Stage 1 for documents ──
     if selected_doc_ids:
-        logger.info(
-            "[two_level_search] User-selected %d doc_ids — skipping Stage 1",
-            len(selected_doc_ids),
-        )
+        combined_doc_ids = list(selected_doc_ids)
+        matched_docs = [{"doc_id": d, "source_type": "document"} for d in selected_doc_ids]
+
+        # If web collections are also active, run Stage 1 to discover web docs
+        if active_web_collection_ids:
+            logger.info(
+                "[two_level_search] User-selected %d doc_ids + %d web collections — "
+                "skipping Stage 1 for docs, running Stage 1 for web collections",
+                len(selected_doc_ids), len(active_web_collection_ids),
+            )
+            query_embedding = await embed_model.embed(query)
+            web_doc_results = await store.search_documents(
+                collection=collection_name,
+                embedding=query_embedding,
+                filters=filters,
+                limit=config.rag_description_top_k,
+                active_web_collection_ids=active_web_collection_ids,
+            )
+            web_docs = [d for d in web_doc_results
+                        if d.get("source_type") == "web_scrape"
+                        and d["score"] >= config.rag_description_score_threshold]
+            for wd in web_docs:
+                if wd["doc_id"] not in combined_doc_ids:
+                    combined_doc_ids.append(wd["doc_id"])
+                    matched_docs.append({"doc_id": wd["doc_id"], "source_type": "web_scrape"})
+        else:
+            logger.info(
+                "[two_level_search] User-selected %d doc_ids — skipping Stage 1",
+                len(selected_doc_ids),
+            )
+
         chunks = await hybrid_search(
             query=query,
             user_id=user_id,
             filters=filters,
             top_k=top_k,
-            doc_ids=selected_doc_ids,
+            doc_ids=combined_doc_ids,
             _vector_store=store,
             _embedding_model=embed_model,
         )
         return {
             "chunks": chunks,
-            "matched_documents": [{"doc_id": d, "source_type": "document"} for d in selected_doc_ids],
+            "matched_documents": matched_docs,
         }
 
     # ── Stage 1: description-level search ───────────────────────────────
