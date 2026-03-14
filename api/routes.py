@@ -643,6 +643,22 @@ async def unshare_conversation(
     return {"status": "unshared"}
 
 
+@router.delete("/conversations/{conversation_id}", tags=["conversations"])
+async def delete_conversation(
+    conversation_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Delete a conversation and all its messages, executions, and summaries."""
+    from database.helpers import delete_user_conversation
+
+    deleted = await delete_user_conversation(session, conversation_id, auth_user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await session.commit()
+    return {"deleted": True, "conversation_id": conversation_id}
+
+
 # ── Persona CRUD ────────────────────────────────────────────────────────
 
 
