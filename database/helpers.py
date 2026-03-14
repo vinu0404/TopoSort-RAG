@@ -1371,3 +1371,28 @@ async def get_token_breakdown_by_agent(
         {"agent_name": r.agent_key, "total_tokens": r.total_tokens or 0}
         for r in result
     ]
+
+
+async def get_web_scrape_stats(
+    session: AsyncSession, user_id: str,
+) -> list[dict]:
+    """Return web scrape collection stats for the analytics dashboard."""
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(WebScrapeCollection)
+        .where(WebScrapeCollection.user_id == uid)
+        .order_by(WebScrapeCollection.created_at.desc())
+    )
+    collections = result.scalars().all()
+    stats = []
+    for c in collections:
+        stats.append({
+            "collection_id": str(c.collection_id),
+            "name": c.name,
+            "status": c.status,
+            "is_active": c.is_active,
+            "total_pages": c.total_pages or 0,
+            "total_chunks": c.total_chunks or 0,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        })
+    return stats

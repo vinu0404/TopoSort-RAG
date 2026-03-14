@@ -718,6 +718,7 @@ async def get_analytics(
         get_agent_response_times,
         get_query_patterns,
         get_token_breakdown_by_agent,
+        get_web_scrape_stats,
     )
 
     agent_usage = await get_agent_usage_stats(session, auth_user_id, days)
@@ -725,6 +726,7 @@ async def get_analytics(
     response_times = await get_agent_response_times(session, auth_user_id, days)
     patterns = await get_query_patterns(session, auth_user_id, days)
     token_breakdown = await get_token_breakdown_by_agent(session, auth_user_id, days)
+    web_scrape = await get_web_scrape_stats(session, auth_user_id)
 
     return {
         "agent_usage": agent_usage,
@@ -732,6 +734,7 @@ async def get_analytics(
         "response_times": response_times,
         "query_patterns": patterns,
         "token_breakdown": token_breakdown,
+        "web_scrape_collections": web_scrape,
     }
 
 

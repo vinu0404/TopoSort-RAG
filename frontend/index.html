@@ -866,6 +866,17 @@
   }
   .timeline-bar:hover { opacity: 0.8; }
   .analytics-empty { color: #aaa; font-size: 0.78rem; font-style: italic; padding: 4px 0; }
+  .ws-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+  .ws-table th { text-align: left; color: #888; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #333; }
+  .ws-table td { padding: 4px 6px; border-bottom: 1px solid #222; color: #ccc; }
+  .ws-table tr:hover td { background: #1a1a2e; }
+  .ws-status { display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 0.65rem; font-weight: 600; }
+  .ws-status.ready { background: #0d3320; color: #2ecc71; }
+  .ws-status.pending, .ws-status.scraping { background: #2a2000; color: #f1c40f; }
+  .ws-status.failed { background: #3d0f0f; color: #e74c3c; }
+  .ws-status.partial { background: #2a1a00; color: #ff9500; }
+  .ws-active { color: #2ecc71; }
+  .ws-inactive { color: #666; }
 
   /* ── Delete confirm overlay ──────────────────────────── */
   .confirm-overlay {
@@ -2681,7 +2692,40 @@ function renderAnalytics(data) {
     </div>`).join('') : '<div class="analytics-empty">No token data yet</div>';
   const bdHtml = `<div class="analytics-section"><h4>Tokens by Component</h4><div class="bar-chart">${bdBars}</div></div>`;
 
-  el.innerHTML = statsHtml + usageHtml + timelineHtml + rtHtml + bdHtml;
+  // ── Web Scraping Collections ──
+  const wsCols = data.web_scrape_collections || [];
+  let wsHtml = '';
+  if (wsCols.length) {
+    const totalPages = wsCols.reduce((s, c) => s + c.total_pages, 0);
+    const totalChunks = wsCols.reduce((s, c) => s + c.total_chunks, 0);
+    const activeCount = wsCols.filter(c => c.is_active).length;
+    const wsRows = wsCols.map(c => {
+      const date = c.created_at ? new Date(c.created_at).toLocaleDateString('en', {month:'short', day:'numeric'}) : '';
+      return `<tr>
+        <td title="${c.name}">${c.name.length > 18 ? c.name.slice(0,18)+'…' : c.name}</td>
+        <td><span class="ws-status ${c.status}">${c.status}</span></td>
+        <td class="${c.is_active ? 'ws-active' : 'ws-inactive'}">${c.is_active ? 'ON' : 'OFF'}</td>
+        <td>${c.total_pages}</td>
+        <td>${c.total_chunks}</td>
+        <td>${date}</td>
+      </tr>`;
+    }).join('');
+    wsHtml = `<div class="analytics-section">
+      <h4>Web Scraping Collections</h4>
+      <div class="stat-grid" style="margin-bottom:8px;">
+        <div class="stat-card"><div class="stat-value">${wsCols.length}</div><div class="stat-label">Collections</div></div>
+        <div class="stat-card"><div class="stat-value">${activeCount}</div><div class="stat-label">Active</div></div>
+        <div class="stat-card"><div class="stat-value">${totalPages}</div><div class="stat-label">Pages</div></div>
+        <div class="stat-card"><div class="stat-value">${totalChunks}</div><div class="stat-label">Chunks</div></div>
+      </div>
+      <table class="ws-table">
+        <thead><tr><th>Name</th><th>Status</th><th>Active</th><th>Pages</th><th>Chunks</th><th>Created</th></tr></thead>
+        <tbody>${wsRows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  el.innerHTML = statsHtml + usageHtml + timelineHtml + rtHtml + bdHtml + wsHtml;
 }
 
 // ─── Connections (OAuth) ──────────────────────────────
