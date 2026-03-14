@@ -1180,3 +1180,194 @@ async def get_active_web_collection_ids(
         )
     )
     return [str(r[0]) for r in result]
+
+
+# ═══════════════════════════════════════════════════════════════
+# Analytics helpers
+# ═══════════════════════════════════════════════════════════════
+
+async def get_agent_usage_stats(
+    session: AsyncSession, user_id: str, days: int = 30,
+) -> list[dict]:
+    """Agent execution counts grouped by agent_name, ordered by frequency."""
+    from sqlalchemy import func
+
+    uid = _to_uuid(user_id)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    stmt = (
+        select(
+            AgentExecution.agent_name,
+            func.count(AgentExecution.execution_id).label("count"),
+            func.count(AgentExecution.execution_id).filter(
+                AgentExecution.status == "success"
+            ).label("success_count"),
+            func.count(AgentExecution.execution_id).filter(
+                AgentExecution.status == "failed"
+            ).label("failed_count"),
+        )
+        .join(Conversation, Conversation.conversation_id == AgentExecution.conversation_id)
+        .where(Conversation.user_id == uid, AgentExecution.started_at >= cutoff)
+        .group_by(AgentExecution.agent_name)
+        .order_by(func.count(AgentExecution.execution_id).desc())
+    )
+    rows = await session.execute(stmt)
+    return [
+        {"agent_name": r.agent_name, "count": r.count,
+         "success_count": r.success_count, "failed_count": r.failed_count}
+        for r in rows
+    ]
+
+
+async def get_token_usage_over_time(
+    session: AsyncSession, user_id: str, days: int = 30,
+) -> list[dict]:
+    """Total tokens aggregated by day."""
+    from sqlalchemy import func
+
+    uid = _to_uuid(user_id)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    date_trunc = func.date_trunc("day", Message.created_at)
+
+    stmt = (
+        select(
+            date_trunc.label("period"),
+            func.sum(Message.total_tokens).label("total_tokens"),
+            func.count(Message.message_id).label("message_count"),
+        )
+        .join(Conversation, Conversation.conversation_id == Message.conversation_id)
+        .where(
+            Conversation.user_id == uid,
+            Message.role == "assistant",
+            Message.created_at >= cutoff,
+        )
+        .group_by("period")
+        .order_by("period")
+    )
+    rows = await session.execute(stmt)
+    return [
+        {"period": r.period.isoformat() if r.period else None,
+         "total_tokens": r.total_tokens or 0,
+         "message_count": r.message_count or 0}
+        for r in rows
+    ]
+
+
+async def get_agent_response_times(
+    session: AsyncSession, user_id: str, days: int = 30,
+) -> list[dict]:
+    """Average response time (seconds) per agent."""
+    from sqlalchemy import func, extract
+
+    uid = _to_uuid(user_id)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    duration_expr = extract("epoch", AgentExecution.completed_at - AgentExecution.started_at)
+
+    stmt = (
+        select(
+            AgentExecution.agent_name,
+            func.avg(duration_expr).label("avg_seconds"),
+            func.min(duration_expr).label("min_seconds"),
+            func.max(duration_expr).label("max_seconds"),
+            func.count(AgentExecution.execution_id).label("count"),
+        )
+        .join(Conversation, Conversation.conversation_id == AgentExecution.conversation_id)
+        .where(
+            Conversation.user_id == uid,
+            AgentExecution.started_at >= cutoff,
+            AgentExecution.completed_at.isnot(None),
+        )
+        .group_by(AgentExecution.agent_name)
+        .order_by(func.avg(duration_expr).asc())
+    )
+    rows = await session.execute(stmt)
+    return [
+        {"agent_name": r.agent_name,
+         "avg_seconds": round(float(r.avg_seconds), 2) if r.avg_seconds else 0,
+         "min_seconds": round(float(r.min_seconds), 2) if r.min_seconds else 0,
+         "max_seconds": round(float(r.max_seconds), 2) if r.max_seconds else 0,
+         "count": r.count}
+        for r in rows
+    ]
+
+
+async def get_query_patterns(
+    session: AsyncSession, user_id: str, days: int = 30,
+) -> dict:
+    """Overall query statistics: totals, success rate, conversation/message counts."""
+    from sqlalchemy import func
+
+    uid = _to_uuid(user_id)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Agent execution stats
+    exec_stmt = (
+        select(
+            func.count(AgentExecution.execution_id).label("total"),
+            func.count(AgentExecution.execution_id).filter(
+                AgentExecution.status == "success"
+            ).label("success"),
+            func.count(AgentExecution.execution_id).filter(
+                AgentExecution.status == "failed"
+            ).label("failed"),
+        )
+        .join(Conversation, Conversation.conversation_id == AgentExecution.conversation_id)
+        .where(Conversation.user_id == uid, AgentExecution.started_at >= cutoff)
+    )
+    row = (await session.execute(exec_stmt)).one()
+    total = row.total or 0
+    success = row.success or 0
+
+    # Conversation count
+    conv_stmt = (
+        select(func.count(Conversation.conversation_id))
+        .where(Conversation.user_id == uid, Conversation.created_at >= cutoff)
+    )
+    conv_count = (await session.execute(conv_stmt)).scalar() or 0
+
+    # Message count
+    msg_stmt = (
+        select(func.count(Message.message_id))
+        .join(Conversation, Conversation.conversation_id == Message.conversation_id)
+        .where(Conversation.user_id == uid, Message.created_at >= cutoff)
+    )
+    msg_count = (await session.execute(msg_stmt)).scalar() or 0
+
+    return {
+        "total_executions": total,
+        "success": success,
+        "failed": row.failed or 0,
+        "success_rate": round(success / total * 100, 1) if total else 0,
+        "total_conversations": conv_count,
+        "total_messages": msg_count,
+    }
+
+
+async def get_token_breakdown_by_agent(
+    session: AsyncSession, user_id: str, days: int = 30,
+) -> list[dict]:
+    """Aggregate token_details JSONB to get per-agent token totals."""
+    from sqlalchemy import text
+
+    uid = str(_to_uuid(user_id))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    raw_sql = text("""
+        SELECT agent_key, SUM(CAST(agent_val->>'total_tokens' AS int)) as total_tokens
+        FROM messages m
+        JOIN conversations c ON c.conversation_id = m.conversation_id,
+        LATERAL jsonb_each(m.token_details) AS kv(agent_key, agent_val)
+        WHERE c.user_id = :uid
+          AND m.role = 'assistant'
+          AND m.created_at >= :cutoff
+          AND m.token_details IS NOT NULL
+          AND jsonb_typeof(m.token_details) = 'object'
+          AND m.token_details != '{}'
+        GROUP BY agent_key
+        ORDER BY total_tokens DESC
+    """)
+    result = await session.execute(raw_sql, {"uid": uid, "cutoff": cutoff})
+    return [
+        {"agent_name": r.agent_key, "total_tokens": r.total_tokens or 0}
+        for r in result
+    ]

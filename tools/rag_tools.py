@@ -161,6 +161,7 @@ async def two_level_search(
     top_k: int = 20,
     *,
     active_web_collection_ids: Optional[List[str]] = None,
+    selected_doc_ids: Optional[List[str]] = None,
     _vector_store=None,
     _embedding_model=None,
 ) -> Dict[str, Any]:
@@ -181,6 +182,26 @@ async def two_level_search(
     store = _vector_store or get_vector_store()
     embed_model = _embedding_model or get_embedding_model()
     collection_name = f"user_{user_id}_documents"
+
+    # ── User-selected docs: skip Stage 1, go straight to hybrid search ──
+    if selected_doc_ids:
+        logger.info(
+            "[two_level_search] User-selected %d doc_ids — skipping Stage 1",
+            len(selected_doc_ids),
+        )
+        chunks = await hybrid_search(
+            query=query,
+            user_id=user_id,
+            filters=filters,
+            top_k=top_k,
+            doc_ids=selected_doc_ids,
+            _vector_store=store,
+            _embedding_model=embed_model,
+        )
+        return {
+            "chunks": chunks,
+            "matched_documents": [{"doc_id": d, "source_type": "document"} for d in selected_doc_ids],
+        }
 
     # ── Stage 1: description-level search ───────────────────────────────
     query_embedding = await embed_model.embed(query)

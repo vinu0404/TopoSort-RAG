@@ -291,6 +291,7 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                 "long_term_memory": long_term.model_dump(),
                 "conversation_history": conversation_history,
                 "active_web_collection_ids": request.active_web_collection_ids,
+                "selected_doc_ids": request.selected_doc_ids,
             }
 
             # ── HITL-aware orchestration ────────────────────────────
