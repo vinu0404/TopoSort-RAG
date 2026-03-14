@@ -21,7 +21,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         'users', 'sessions', 'conversations', 'messages',
         'agent_executions', 'documents', 'conversation_summaries',
         'user_long_term_memory', 'hitl_requests', 'user_connections',
-        'personas',
+        'personas', 'web_scrape_collections', 'web_scrape_urls',
     ]
 
     SNAPSHOT_SQL = """
@@ -36,7 +36,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             'user_long_term_memory', (SELECT json_agg(row_to_json(t)) FROM user_long_term_memory t),
             'hitl_requests', (SELECT json_agg(row_to_json(t)) FROM hitl_requests t),
             'user_connections', (SELECT json_agg(row_to_json(t)) FROM user_connections t),
-            'personas', (SELECT json_agg(row_to_json(t)) FROM personas t)
+            'personas', (SELECT json_agg(row_to_json(t)) FROM personas t),
+            'web_scrape_collections', (SELECT json_agg(row_to_json(t)) FROM web_scrape_collections t),
+            'web_scrape_urls', (SELECT json_agg(row_to_json(t)) FROM web_scrape_urls t)
         ) AS data;
     """
     
