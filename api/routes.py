@@ -85,15 +85,20 @@ from database.helpers import (
     bg_save_messages,
     create_persona,
     create_share_token,
+    create_web_scrape_collection,
     delete_document_record,
     delete_persona,
+    delete_web_collection_record,
     ensure_user_exists,
     ensure_session_exists,
     get_conversation_persona,
+    get_user_web_collections,
+    get_web_collection_for_user,
     seed_default_personas,
     get_or_create_conversation,
     get_document_for_user,
     get_user_personas,
+    toggle_web_collection_active,
     update_persona,
     list_user_conversations,
     load_conversation_messages_full,
@@ -107,7 +112,10 @@ from tasks.document_tasks import process_document_task
 from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
 from utils.llm_providers import get_llm_provider
-from utils.schemas import ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest
+from utils.schemas import (
+    ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest,
+    WebScrapeCollectionCreate, WebScrapeToggle,
+)
 from core.title_generator import generate_title
 
 logger = logging.getLogger(__name__)
@@ -224,6 +232,7 @@ async def handle_query(
             "session_id": sess_id,
             "long_term_memory": long_term.model_dump(),
             "conversation_history": conversation_history,
+            "active_web_collection_ids": request.active_web_collection_ids,
         }
         # Non-streaming: no HITL callback → HITL agents are auto-skipped
         results = await orchestrator.execute_plan(
@@ -690,6 +699,177 @@ async def delete_persona_endpoint(
         raise HTTPException(status_code=404, detail="Persona not found")
     await session.commit()
     return {"deleted": True}
+
+
+# ── Web Scrape Collection CRUD ─────────────────────────────────────────
+
+
+@router.post("/web-scrape/collections", tags=["web-scrape"])
+async def create_web_scrape(
+    body: WebScrapeCollectionCreate,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Create a web scrape collection and enqueue the Celery task."""
+    from tasks.web_scrape_tasks import scrape_web_collection_task
+
+    await ensure_user_exists(session, auth_user_id)
+
+    urls_with_depth = [{"url": u.url, "depth": u.depth} for u in body.urls]
+    collection = await create_web_scrape_collection(
+        session, auth_user_id, body.name, urls_with_depth,
+    )
+    await session.commit()
+
+    # Build task payload
+    urls_data = [
+        {"url_id": u["url_id"], "url": u["url"], "depth": u["depth"]}
+        for u in collection["urls"]
+    ]
+    scrape_web_collection_task.delay(
+        user_id=auth_user_id,
+        collection_id=collection["collection_id"],
+        urls_data=urls_data,
+    )
+
+    return collection
+
+
+@router.get("/web-scrape/collections", tags=["web-scrape"])
+async def list_web_scrape_collections(
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """List all web scrape collections for the authenticated user."""
+    collections = await get_user_web_collections(session, auth_user_id)
+    return {"collections": collections}
+
+
+@router.put("/web-scrape/collections/{collection_id}/toggle", tags=["web-scrape"])
+async def toggle_web_scrape_collection(
+    collection_id: str,
+    body: WebScrapeToggle,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Toggle the is_active flag for a web scrape collection."""
+    result = await toggle_web_collection_active(
+        session, collection_id, auth_user_id, body.is_active,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    await session.commit()
+    return result
+
+
+@router.delete("/web-scrape/collections/{collection_id}", tags=["web-scrape"])
+async def delete_web_scrape_collection(
+    collection_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Delete a web scrape collection: Qdrant vectors + DB records."""
+    coll = await get_web_collection_for_user(session, collection_id, auth_user_id)
+    if coll is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # Delete from Qdrant
+    try:
+        from document_pipeline.vector_store import get_vector_store
+        store = get_vector_store()
+        await store.delete_web_collection(auth_user_id, collection_id)
+    except Exception:
+        logger.warning("Qdrant delete failed for web collection %s — continuing", collection_id)
+
+    # Delete from DB (cascades URLs)
+    await delete_web_collection_record(session, collection_id, auth_user_id)
+    await session.commit()
+    return {"deleted": True, "collection_id": collection_id}
+
+
+@router.post("/web-scrape/collections/{collection_id}/rescrape", tags=["web-scrape"])
+async def rescrape_web_collection(
+    collection_id: str,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Re-scrape an existing web scrape collection."""
+    from database.helpers import update_web_collection_status, update_web_url_status
+    from tasks.web_scrape_tasks import scrape_web_collection_task
+
+    coll = await get_web_collection_for_user(session, collection_id, auth_user_id)
+    if coll is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # Delete old Qdrant data
+    try:
+        from document_pipeline.vector_store import get_vector_store
+        store = get_vector_store()
+        await store.delete_web_collection(auth_user_id, collection_id)
+    except Exception:
+        logger.warning("Qdrant delete failed during rescrape for %s", collection_id)
+
+    # Reset statuses
+    await update_web_collection_status(session, collection_id, "pending", total_pages=0, total_chunks=0)
+    from sqlalchemy import select
+    from database.models import WebScrapeUrl
+    url_rows = (await session.execute(
+        select(WebScrapeUrl).where(WebScrapeUrl.collection_id == coll.collection_id)
+    )).scalars().all()
+    urls_data = []
+    for u in url_rows:
+        await update_web_url_status(session, str(u.url_id), "pending", pages_scraped=0, chunks_created=0)
+        urls_data.append({"url_id": str(u.url_id), "url": u.url, "depth": u.depth})
+    await session.commit()
+
+    scrape_web_collection_task.delay(
+        user_id=auth_user_id,
+        collection_id=collection_id,
+        urls_data=urls_data,
+    )
+    return {"collection_id": collection_id, "status": "pending"}
+
+
+@router.get("/web-scrape/status/stream", tags=["web-scrape"])
+async def web_scrape_status_stream(
+    request: Request,
+    auth_user_id: str = Depends(get_current_user_id),
+):
+    """SSE endpoint for real-time web scrape status updates."""
+    import redis.asyncio as aioredis
+
+    channel_name = f"web_scrape_status:{auth_user_id}"
+
+    async def _event_stream():
+        r = aioredis.from_url(config.redis_url, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(channel_name)
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0,
+                )
+                if msg and msg["type"] == "message":
+                    yield f"event: web_scrape_status\ndata: {msg['data']}\n\n"
+                else:
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(2)
+        finally:
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()
+            await r.close()
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Voice endpoints ─────────────────────────────────────────────────────

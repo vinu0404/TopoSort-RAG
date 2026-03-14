@@ -314,6 +314,23 @@ class PersonaResponse(BaseModel):
     updated_at: Optional[str] = None
 
 
+# ── Web Scrape schemas ─────────────────────────────────────────────────────
+
+
+class WebScrapeUrlInput(BaseModel):
+    url: str = Field(..., max_length=2048)
+    depth: int = Field(1, ge=1, le=3)
+
+
+class WebScrapeCollectionCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+    urls: List[WebScrapeUrlInput] = Field(..., min_length=1, max_length=5)
+
+
+class WebScrapeToggle(BaseModel):
+    is_active: bool
+
+
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
@@ -321,6 +338,7 @@ class QueryRequest(BaseModel):
     persona_id: Optional[str] = None
     source: str = "text"  # "text" | "voice"
     model: Optional[str] = None  # user-selected model override (e.g. "gpt-4o", "claude-sonnet-4-20250514")
+    active_web_collection_ids: List[str] = Field(default_factory=list)
 
 
 class MasterAgentInput(BaseModel):

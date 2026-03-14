@@ -160,6 +160,7 @@ async def two_level_search(
     filters: Dict[str, Any],
     top_k: int = 20,
     *,
+    active_web_collection_ids: Optional[List[str]] = None,
     _vector_store=None,
     _embedding_model=None,
 ) -> Dict[str, Any]:
@@ -170,6 +171,9 @@ async def two_level_search(
     Stage 2 — hybrid search (dense ‖ BM25 in parallel) scoped to those doc_ids.
     Fallback — if Stage 1 returns too few documents above the score threshold,
                also run an unscoped chunk search and merge results.
+
+    When *active_web_collection_ids* is provided, Stage 1 also includes
+    web scrape document entries from those collections.
 
     Returns ``{"chunks": [...], "matched_documents": [...]}``.
     """
@@ -189,6 +193,7 @@ async def two_level_search(
         embedding=query_embedding,
         filters=filters,
         limit=description_top_k,
+        active_web_collection_ids=active_web_collection_ids,
     )
 
     # Keep only docs above the dynamic threshold
