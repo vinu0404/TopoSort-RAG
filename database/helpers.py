@@ -278,6 +278,26 @@ async def list_user_conversations(
     return items, total
 
 
+async def delete_user_conversation(
+    session: AsyncSession, conversation_id: str, user_id: str,
+) -> bool:
+    """Delete a conversation owned by user_id. Returns True if deleted."""
+    uid = _to_uuid(user_id)
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == cid,
+            Conversation.user_id == uid,
+        )
+    )
+    conv = result.scalar_one_or_none()
+    if not conv:
+        return False
+    await session.delete(conv)
+    await session.flush()
+    return True
+
+
 async def load_conversation_messages_full(
     session: AsyncSession,
     conversation_id: str,

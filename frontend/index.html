@@ -326,6 +326,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.4;
+    position: relative;
   }
   .conv-item:hover {
     background: #f5f5f5;
@@ -334,6 +335,23 @@
     background: #e8e8e8;
     font-weight: 600;
   }
+  .conv-item .conv-delete {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 2px 5px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .conv-item:hover .conv-delete { display: block; }
+  .conv-item .conv-delete:hover { background: #e74c3c; color: #fff; }
   .conv-item .conv-time {
     display: block;
     font-size: 0.65rem;
@@ -2080,6 +2098,7 @@ async function loadConversations(append = false) {
       return `<div class="conv-item${isActive ? ' active' : ''}" onclick="switchConversation('${c.conversation_id}')" title="${escapeHtml(title)}">
         ${escapeHtml(title.length > 30 ? title.slice(0, 30) + '…' : title)}
         <span class="conv-time">${time}</span>
+        <button class="conv-delete" onclick="event.stopPropagation(); deleteConversation('${c.conversation_id}')" title="Delete conversation">&#x2715;</button>
       </div>`;
     }).join('');
 
@@ -2216,6 +2235,29 @@ function updateConvItemTitle(conversationId, title) {
   el.appendChild(document.createTextNode(truncated));
   if (timeSpan) el.appendChild(timeSpan);
   el.title = title;
+}
+
+async function deleteConversation(conversationId) {
+  if (!confirm('Delete this conversation? This cannot be undone.')) return;
+  try {
+    const r = await fetch(`${API}/conversations/${conversationId}`, {
+      method: 'DELETE', headers: authHeaders(),
+    });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) { showToast('Failed to delete conversation'); return; }
+    // Remove from sidebar
+    const el = document.querySelector(`.conv-item[onclick*="${conversationId}"]`);
+    if (el) el.remove();
+    // If we deleted the active conversation, start a new chat
+    if (conversationId === currentConversationId) {
+      currentConversationId = null;
+      document.getElementById('chatMessages').innerHTML = '';
+      updateShareBtn();
+    }
+  } catch (err) {
+    console.error('deleteConversation error:', err);
+    showToast('Error deleting conversation');
+  }
 }
 
 function showToast(msg) {
