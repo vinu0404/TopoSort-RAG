@@ -936,17 +936,23 @@
   }
   .preview-modal {
     background: #fff; border-radius: 12px;
-    width: 700px; max-width: 90vw; max-height: 85vh;
-    min-width: 320px; min-height: 250px;
+    width: 90vw; max-width: 1100px; max-height: 90vh;
+    min-width: 320px; min-height: 350px;
     display: flex; flex-direction: column;
     box-shadow: 0 16px 48px rgba(0,0,0,0.25);
     resize: both; overflow: hidden;
   }
   .preview-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 18px; border-bottom: 1px solid #eee;
+    padding: 14px 18px; border-bottom: 1px solid #eee; gap: 10px;
   }
   .preview-header h3 { font-size: 0.9rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview-open-link {
+    font-size: 0.78rem; color: #4a90d9; text-decoration: none;
+    white-space: nowrap; display: flex; align-items: center; gap: 4px;
+  }
+  .preview-open-link:hover { text-decoration: underline; }
+  .preview-header-right { display: flex; align-items: center; gap: 8px; }
   .preview-close {
     background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #666; padding: 4px 8px; border-radius: 4px;
   }
@@ -954,7 +960,7 @@
   .preview-body {
     flex: 1; overflow: auto; padding: 18px;
   }
-  .preview-body iframe { width: 100%; height: 100%; min-height: 500px; border: none; }
+  .preview-body iframe { width: 100%; height: 100%; min-height: 800px; border: none; }
   .preview-body img { max-width: 100%; border-radius: 6px; }
   .preview-body pre { white-space: pre-wrap; word-break: break-word; font-size: 0.82rem; line-height: 1.6; }
 
@@ -3489,7 +3495,8 @@ let _compareAbort = null;
 let _activeCompareCard = null;
 
 function showCompareModelPicker(btn, msgEl) {
-  document.querySelector('.cmp-picker')?.remove();
+  const existing = document.querySelector('.cmp-picker');
+  if (existing) { existing.remove(); return; }
   if (isProcessing || _compareAbort) return;
 
   const currentModel = msgEl._modelUsed || '';
@@ -3502,7 +3509,7 @@ function showCompareModelPicker(btn, msgEl) {
     lbl.className = 'cmp-picker-group';
     lbl.textContent = grp.label;
     picker.appendChild(lbl);
-    for (const opt of grp.options) {
+    for (const opt of grp.querySelectorAll('option')) {
       const b = document.createElement('button');
       b.className = 'cmp-picker-opt';
       b.textContent = opt.textContent;
@@ -3513,6 +3520,7 @@ function showCompareModelPicker(btn, msgEl) {
   }
 
   btn.appendChild(picker);
+  picker.addEventListener('click', (e) => e.stopPropagation());
   const close = (e) => { if (!picker.contains(e.target) && e.target !== btn) { picker.remove(); document.removeEventListener('click', close); } };
   setTimeout(() => document.addEventListener('click', close), 0);
 }
@@ -3620,13 +3628,62 @@ async function startComparison(msgEl, newModel, modelLabel) {
             case 'agent_result':
               if (d.sources && Array.isArray(d.sources)) cmpSources.push(...d.sources);
               break;
+            case 'hitl_required':
+              showHitlDialog(d);
+              statusEl.textContent = `Waiting for approval — ${escapeHtml(d.agent_name)}...`;
+              break;
+            case 'hitl_approved':
+              dismissHitlDialog();
+              statusEl.textContent = 'Approved — running agent...';
+              break;
+            case 'hitl_denied':
+              dismissHitlDialog();
+              statusEl.textContent = `Denied — ${escapeHtml(d.agent_id)} skipped.`;
+              break;
+            case 'hitl_timeout':
+              dismissHitlDialog();
+              statusEl.textContent = `Timed out — ${escapeHtml(d.agent_id)} skipped.`;
+              break;
             case 'done':
               statusEl.textContent = `Done in ${d.total_time}s \u2022 ${(d.tokens_used || 0).toLocaleString()} tokens`;
-              // Finalize: strip sources, render markdown
+              // Finalize: parse sources, strip block, render markdown with inline refs
               let clean = rawText;
               const sm = clean.match(/\n\n?Sources:\n([\s\S]*)$/);
-              if (sm) clean = clean.slice(0, sm.index).trimEnd();
-              rightEl.innerHTML = renderMarkdown(clean);
+              if (sm) {
+                const block = sm[1];
+                const sLines = block.trim().split('\n');
+                for (const sLine of sLines) {
+                  const m = sLine.match(/^\[(\d+)\]\s*(.+?)(?:\s*\((.+)\))?\s*$/);
+                  if (m) {
+                    const idx = parseInt(m[1]) - 1;
+                    const rawUrl = m[3] ? m[3].replace(/\)+$/, '').trim() : null;
+                    if (!cmpSources[idx]) {
+                      cmpSources[idx] = { source: m[2].trim(), url: rawUrl };
+                    } else if (!cmpSources[idx].url && rawUrl) {
+                      cmpSources[idx].url = rawUrl;
+                    }
+                  }
+                }
+                clean = clean.slice(0, sm.index).trimEnd();
+              }
+              const cmpRendered = renderMarkdown(clean);
+              const cmpWithRefs = cmpRendered.replace(/\[(\d+)\]/g, (match, num) => {
+                const idx = parseInt(num) - 1;
+                const src = cmpSources[idx];
+                if (src && src.url) return `<a class="inline-ref" href="${src.url}" target="_blank" title="${src.source || src.url}">[${num}]</a>`;
+                if (src && src.source) return `<span class="inline-ref" title="${src.source}">[${num}]</span>`;
+                return `<span class="inline-ref" title="Source ${num}">[${num}]</span>`;
+              });
+              rightEl.innerHTML = cmpWithRefs;
+              // Add sources button below right pane
+              const cmpValidSources = cmpSources.filter(s => s && s.source);
+              if (cmpValidSources.length > 0) {
+                const srcBtn = document.createElement('button');
+                srcBtn.className = 'sources-btn';
+                srcBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 7h8M2 11h10"/></svg> ${cmpValidSources.length} source${cmpValidSources.length > 1 ? 's' : ''}`;
+                srcBtn.addEventListener('click', () => showSourcesPopup(cmpValidSources));
+                rightEl.after(srcBtn);
+              }
               break;
             case 'error':
               statusEl.textContent = `Error: ${d.message || d}`;
@@ -3656,11 +3713,30 @@ async function startComparison(msgEl, newModel, modelLabel) {
     let clean = rawText;
     const sm = clean.match(/\n\n?Sources:\n([\s\S]*)$/);
     if (sm) clean = clean.slice(0, sm.index).trimEnd();
+    // Render markdown with comparison inline refs
     const rendered = renderMarkdown(clean);
-    msgEl.querySelector('.msg-content').innerHTML = rendered;
+    const withRefs = rendered.replace(/\[(\d+)\]/g, (match, num) => {
+      const idx = parseInt(num) - 1;
+      const src = cmpSources[idx];
+      if (src && src.url) return `<a class="inline-ref" href="${src.url}" target="_blank" title="${src.source || src.url}">[${num}]</a>`;
+      if (src && src.source) return `<span class="inline-ref" title="${src.source}">[${num}]</span>`;
+      return `<span class="inline-ref" title="Source ${num}">[${num}]</span>`;
+    });
+    msgEl.querySelector('.msg-content').innerHTML = withRefs;
     msgEl._rawTextForTTS = clean;
     msgEl._ttsAudioBlob = null;  // clear TTS cache
     msgEl._modelUsed = newModel;
+    // Replace sources button with comparison sources
+    const oldSrcBtn = msgEl.querySelector('.sources-btn');
+    if (oldSrcBtn) oldSrcBtn.remove();
+    const cmpValid = cmpSources.filter(s => s && s.source);
+    if (cmpValid.length > 0) {
+      const newSrcBtn = document.createElement('button');
+      newSrcBtn.className = 'sources-btn';
+      newSrcBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 7h8M2 11h10"/></svg> ${cmpValid.length} source${cmpValid.length > 1 ? 's' : ''}`;
+      newSrcBtn.addEventListener('click', () => showSourcesPopup(cmpValid));
+      msgEl.querySelector('.msg-content').after(newSrcBtn);
+    }
     card.remove();
     _activeCompareCard = null;
   });
@@ -3790,7 +3866,10 @@ async function viewFile(docId) {
       <div class="preview-modal">
         <div class="preview-header">
           <h3 title="${safeName}">${safeName}</h3>
-          <button class="preview-close" onclick="this.closest('.preview-overlay').remove()">&#x2715;</button>
+          <div class="preview-header-right">
+            <a class="preview-open-link" href="${escapeHtml(data.url)}" target="_blank" rel="noopener">&#x2197; Open in Browser</a>
+            <button class="preview-close" onclick="this.closest('.preview-overlay').remove()">&#x2715;</button>
+          </div>
         </div>
         <div class="preview-body">${bodyHtml}</div>
       </div>
