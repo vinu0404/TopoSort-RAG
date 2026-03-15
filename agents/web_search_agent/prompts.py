@@ -5,6 +5,7 @@ for Tavily-powered search strategy and synthesis.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from utils.prompt_utils import format_user_profile
@@ -31,6 +32,9 @@ class WebSearchPrompts:
         conversation_history_str = f"\n\n### Conversation History\n{conversation_history}\n" if conversation_history else ""
 
         return f"""You are the Web Search Strategist for a multi-agent RAG system.
+
+### Current Date
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
 
 ### Your Task
 Decide the best search strategy and generate an optimised search query for the task below.Use the context from other agents, user profile, and conversation history to inform your decision.

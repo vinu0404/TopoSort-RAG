@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 
@@ -45,6 +46,9 @@ class MailPrompts:
                 conv_section += f"  {role}: {content}\n"
 
         return f"""You are the Gmail Action Planner for a multi-agent RAG system.
+
+### Current Date
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
 
 ### Your Task
 Determine what Gmail action to take for the user's request and provide the needed parameters.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from config.model_list import AgentRegistry
@@ -149,6 +150,9 @@ class MasterAgent:
 
         return f"""You are the Master Planning Agent for a multi-agent RAG system.
 Your job is to analyse the user's query, extract entities, and create an optimal execution plan.
+
+### Current Date & Time
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y %H:%M UTC')}
 
 ### User Query
 {query}
