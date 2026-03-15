@@ -70,8 +70,8 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
 
     # ── Vision (image analysis) ──────────────────────────────────────────
-    vision_model_provider: str = "openai"       # "openai" or "google"
-    vision_model: str = "gpt-4o"                # gpt-4o, gemini-2.0-flash, etc.
+    vision_model_provider: str = "google"       # "openai" or "google"
+    vision_model: str = "gemini-2.0-flash"                # gpt-4o, gemini-2.0-flash, etc.
     vision_max_tokens: int = 2048
 
     # ── Gmail ────────────────────────────────────────────────────────────
