@@ -1028,6 +1028,67 @@ async def voice_synthesize(
         },
     )
 
+@router.post("/tts/speak", tags=["voice"])
+async def tts_speak(
+    request: Request,
+    _auth_user_id: str = Depends(get_current_user_id),
+) -> StreamingResponse:
+    """
+    Text-to-speech for assistant responses.
+
+    Accepts raw assistant message text, strips sources/citations/markdown,
+    then synthesizes clean text via AWS Polly.
+
+    Expects JSON body: { "text": "...", "voice": "Matthew" (optional) }
+    Returns audio/mpeg stream.
+    """
+    import re
+
+    body = await request.json()
+    raw = body.get("text", "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="'text' field is required")
+
+    # 1. Strip trailing "Sources:\n[1] ..." block
+    raw = re.sub(r"\n\n?Sources:\n[\s\S]*$", "", raw)
+    # 2. Strip inline citation references [1], [2], etc.
+    raw = re.sub(r"\[\d+\]", "", raw)
+    # 3. Strip markdown bold/italic markers
+    raw = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", raw)
+    # 4. Strip markdown headers
+    raw = re.sub(r"^#{1,6}\s*", "", raw, flags=re.MULTILINE)
+    # 5. Strip markdown links [text](url) → text
+    raw = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", raw)
+    # 6. Strip code fences
+    raw = re.sub(r"```[\s\S]*?```", "", raw)
+    raw = re.sub(r"`([^`]+)`", r"\1", raw)
+    # 7. Collapse whitespace
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    text = raw.strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="No speakable text after cleaning")
+
+    # Polly has a 3000 char limit for neural engine
+    if len(text) > 3000:
+        text = text[:3000]
+
+    voice = body.get("voice")
+
+    from voice.tts import get_tts_provider
+
+    tts = get_tts_provider()
+    result = await tts.synthesize(text, voice=voice)
+
+    return StreamingResponse(
+        iter([result.audio_bytes]),
+        media_type=result.content_type,
+        headers={
+            "Content-Disposition": "inline; filename=\"speech.mp3\"",
+        },
+    )
+
+
 @router.get("/demo-credentials")
 async def demo_credentials() -> Dict[str, Any]:
     """Expose demo credentials for the login UI when explicitly enabled."""

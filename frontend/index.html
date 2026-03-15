@@ -1193,6 +1193,53 @@
     height: 14px;
   }
 
+  /* ── TTS speak button ────────────────────────────────── */
+  .tts-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+    margin-left: 6px;
+    padding: 5px 12px;
+    font-size: 0.78rem;
+    color: #666;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tts-btn:hover { color: #000; border-color: #000; }
+  .tts-btn.playing { color: #e74c3c; border-color: #e74c3c; }
+  .tts-btn.loading { color: #999; border-color: #ccc; pointer-events: none; }
+  .tts-btn svg { width: 14px; height: 14px; }
+
+  /* ── Follow-up suggestion chips ──────────────────────── */
+  .suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 0 2px;
+  }
+  .suggestion-chip {
+    display: inline-block;
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    color: #444;
+    background: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 18px;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1.3;
+  }
+  .suggestion-chip:hover {
+    background: #e8f0fe;
+    border-color: #4a90d9;
+    color: #1a73e8;
+  }
+
   /* ── Token badge ────────────────────────────────────── */
   .token-badge {
     display: inline-flex;
@@ -3335,6 +3382,109 @@ function updateDocScopeBar() {
   }
 }
 
+// ── Follow-up suggestion chips ────────────────────────
+function showSuggestionChips(msgEl, questions) {
+  // Remove any existing chips in this message
+  msgEl.querySelector('.suggestion-chips')?.remove();
+
+  const container = document.createElement('div');
+  container.className = 'suggestion-chips';
+  for (const q of questions) {
+    const chip = document.createElement('button');
+    chip.className = 'suggestion-chip';
+    chip.textContent = q;
+    chip.addEventListener('click', () => {
+      // Remove chips once one is clicked
+      container.remove();
+      // Fill input and send
+      queryInput.value = q;
+      sendQuery();
+    });
+    container.appendChild(chip);
+  }
+  msgEl.appendChild(container);
+  scrollToBottom();
+}
+
+// ── TTS: Speak assistant response via AWS Polly ───────
+let _ttsAudio = null;  // currently playing Audio instance
+let _ttsActiveBtn = null;  // currently active speak button
+
+const _speakIcon = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h2l3-3v12l-3-3H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M11 5a4 4 0 0 1 0 6M13 3a7 7 0 0 1 0 10"/></svg>`;
+const _stopIcon = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="3" height="10" rx="0.5"/><rect x="9" y="3" width="3" height="10" rx="0.5"/></svg>`;
+
+function _resetTtsBtn(btn) {
+  btn.classList.remove('playing', 'loading');
+  btn.innerHTML = `${_speakIcon} Speak`;
+}
+
+function _stopTts() {
+  if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+  if (_ttsActiveBtn) { _resetTtsBtn(_ttsActiveBtn); _ttsActiveBtn = null; }
+}
+
+async function speakResponse(btn, msgEl) {
+  // If already playing this message, stop it
+  if (_ttsActiveBtn === btn && _ttsAudio) {
+    _stopTts();
+    return;
+  }
+
+  // Stop any other playing audio first
+  _stopTts();
+
+  const text = msgEl._rawTextForTTS || msgEl.querySelector('.msg-content')?.textContent || '';
+  if (!text.trim()) return;
+
+  _ttsActiveBtn = btn;
+
+  // Use cached audio blob if available (avoid re-calling Polly)
+  if (msgEl._ttsAudioBlob) {
+    _playBlob(btn, msgEl, msgEl._ttsAudioBlob);
+    return;
+  }
+
+  // Show loading state while Polly synthesizes
+  btn.classList.add('loading');
+  btn.innerHTML = `${_speakIcon} Loading...`;
+
+  try {
+    const r = await fetch(`${API}/tts/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ text }),
+    });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || 'TTS synthesis failed');
+    }
+    const blob = await r.blob();
+    // Cache the audio blob on the element
+    msgEl._ttsAudioBlob = blob;
+    _playBlob(btn, msgEl, blob);
+  } catch (err) {
+    _resetTtsBtn(btn);
+    _ttsActiveBtn = null;
+    addSystemMessage(`TTS error: ${err.message}`);
+  }
+}
+
+function _playBlob(btn, msgEl, blob) {
+  const url = URL.createObjectURL(blob);
+  _ttsAudio = new Audio(url);
+  btn.classList.remove('loading');
+  btn.classList.add('playing');
+  btn.innerHTML = `${_stopIcon} Stop`;
+  _ttsAudio.onended = () => {
+    URL.revokeObjectURL(url);
+    _resetTtsBtn(btn);
+    _ttsAudio = null;
+    _ttsActiveBtn = null;
+  };
+  _ttsAudio.play();
+}
+
 async function viewFile(docId) {
   try {
     const r = await fetch(`${API}/documents/${docId}/view`, { headers: { 'Content-Type': 'application/json', ...authHeaders() } });
@@ -3368,7 +3518,14 @@ async function viewFile(docId) {
 
     const overlay = document.createElement('div');
     overlay.className = 'preview-overlay';
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    // Close only when mousedown AND mouseup both happen on the overlay
+    // (prevents accidental close when resizing the modal)
+    let _previewDownTarget = null;
+    overlay.addEventListener('mousedown', (e) => { _previewDownTarget = e.target; });
+    overlay.addEventListener('mouseup', (e) => {
+      if (e.target === overlay && _previewDownTarget === overlay) overlay.remove();
+      _previewDownTarget = null;
+    });
     overlay.innerHTML = `
       <div class="preview-modal">
         <div class="preview-header">
@@ -3611,6 +3768,9 @@ function finalizeAssistant(msgEl, sources) {
   
   content.innerHTML = withRefs;
 
+  // Store clean text on the element for TTS
+  msgEl._rawTextForTTS = rawText;
+
   // ── Sources button ────────────────────────────────────
   const validSources = sources.filter(s => s && s.source);
   if (validSources.length > 0) {
@@ -3619,6 +3779,17 @@ function finalizeAssistant(msgEl, sources) {
     btn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12M2 7h8M2 11h10"/></svg> ${validSources.length} source${validSources.length > 1 ? 's' : ''}`;
     btn.addEventListener('click', () => showSourcesPopup(validSources));
     content.after(btn);
+  }
+
+  // ── TTS speak button ──────────────────────────────────
+  {
+    const ttsBtn = document.createElement('button');
+    ttsBtn.className = 'tts-btn';
+    ttsBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h2l3-3v12l-3-3H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M11 5a4 4 0 0 1 0 6M13 3a7 7 0 0 1 0 10"/></svg> Speak`;
+    ttsBtn.addEventListener('click', () => speakResponse(ttsBtn, msgEl));
+    const anchor = msgEl.querySelector('.sources-btn');
+    if (anchor) anchor.after(ttsBtn);
+    else content.after(ttsBtn);
   }
 
   // ── Token badge ───────────────────────────────────────
@@ -3954,6 +4125,7 @@ async function sendStreaming(query) {
           msgEl._totalTokens = data.tokens_used || 0;
           msgEl._tokenDetails = data.token_details || {};
           finalizeAssistant(msgEl, sources);
+          if (msgEl._suggestions) showSuggestionChips(msgEl, msgEl._suggestions);
         }
         // Capture session/conversation IDs from backend
         if (data.session_id) currentSessionId = data.session_id;
@@ -3967,6 +4139,12 @@ async function sendStreaming(query) {
         // Update sidebar title if LLM-generated title arrived
         if (data.conversation_title && data.conversation_id) {
           updateConvItemTitle(data.conversation_id, data.conversation_title);
+        }
+        break;
+
+      case 'suggestions':
+        if (msgEl && data.questions && Array.isArray(data.questions)) {
+          msgEl._suggestions = data.questions;
         }
         break;
 
@@ -4318,6 +4496,7 @@ async function sendStreamingVoice(query) {
           msgEl._totalTokens = data.tokens_used || 0;
           msgEl._tokenDetails = data.token_details || {};
           finalizeAssistant(msgEl, sources);
+          if (msgEl._suggestions) showSuggestionChips(msgEl, msgEl._suggestions);
         }
         if (data.session_id) currentSessionId = data.session_id;
         if (data.conversation_id) {
@@ -4328,6 +4507,11 @@ async function sendStreamingVoice(query) {
         updateShareBtn();
         if (data.conversation_title && data.conversation_id) {
           updateConvItemTitle(data.conversation_id, data.conversation_title);
+        }
+        break;
+      case 'suggestions':
+        if (_msgEl && data.questions && Array.isArray(data.questions)) {
+          _msgEl._suggestions = data.questions;
         }
         break;
       case 'error':

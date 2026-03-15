@@ -453,6 +453,29 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
             except Exception:
                 logger.warning("Title generation task failed", exc_info=True)
 
+        # ── Generate follow-up suggestions ───────────────────
+        try:
+            followup_prompt = (
+                "Based on this Q&A, suggest exactly 3 short follow-up questions "
+                "the user might ask next. Return ONLY the 3 questions, one per line, "
+                "no numbering, no bullet points, no extra text.\n\n"
+                f"User question: {request.query[:300]}\n\n"
+                f"Assistant answer: {composer_answer[:500]}"
+            )
+            followup_result = await composer_llm.generate(
+                prompt=followup_prompt,
+                temperature=0.7,
+                model=request.model if request.model and request.model in _VALID_MODELS else None,
+            )
+            questions = [
+                q.strip().lstrip("0123456789.-) ") for q in followup_result.text.strip().split("\n")
+                if q.strip()
+            ][:3]
+            if questions:
+                yield _sse_event("suggestions", {"questions": questions})
+        except Exception:
+            logger.debug("Follow-up suggestion generation failed", exc_info=True)
+
         elapsed = time.perf_counter() - start_time
         done_payload = {
             "total_time": round(elapsed, 3),
