@@ -135,6 +135,7 @@ class OpenAIProvider(BaseLLMProvider):
         output_schema: Optional[Dict[str, Any]] = None,
     ) -> LLMResult:
         model = model or self.default_model
+        is_o_series = model.startswith(("o1", "o3", "o4"))
 
         messages = [{"role": "user", "content": prompt}]
         kwargs: Dict[str, Any] = {}
@@ -145,11 +146,15 @@ class OpenAIProvider(BaseLLMProvider):
                 f"{json.dumps(output_schema, indent=2)}"
             )
 
+        if is_o_series:
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["max_tokens"] = max_tokens
+
         response = await self.client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
             **kwargs,
         )
 
@@ -181,14 +186,19 @@ class OpenAIProvider(BaseLLMProvider):
         max_tokens: int = 4096,
     ) -> AsyncIterator[str]:
         model = model or self.default_model
+        is_o_series = model.startswith(("o1", "o3", "o4"))
+
+        kwargs: Dict[str, Any] = {"stream": True, "stream_options": {"include_usage": True}}
+        if is_o_series:
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["max_tokens"] = max_tokens
 
         response = await self.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
+            **kwargs,
         )
         async for chunk in response:
             if chunk.choices and chunk.choices[0].delta.content:
@@ -203,14 +213,19 @@ class OpenAIProvider(BaseLLMProvider):
         max_tokens: int = 4096,
     ) -> "StreamResult":
         model = model or self.default_model
+        is_o_series = model.startswith(("o1", "o3", "o4"))
+
+        kwargs: Dict[str, Any] = {"stream": True, "stream_options": {"include_usage": True}}
+        if is_o_series:
+            kwargs["max_completion_tokens"] = max_tokens
+        else:
+            kwargs["temperature"] = temperature
+            kwargs["max_tokens"] = max_tokens
 
         response = await self.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-            stream_options={"include_usage": True},
+            **kwargs,
         )
 
         async def _gen(sr: "StreamResult"):

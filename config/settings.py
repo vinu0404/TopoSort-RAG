@@ -16,7 +16,6 @@ MODEL_CATALOG = {
         {"id": "gpt-4.1",         "label": "GPT-4.1",         "ctx": 1_000_000},
         {"id": "gpt-4.1-mini",    "label": "GPT-4.1 Mini",    "ctx": 1_000_000},
         {"id": "gpt-4.1-nano",    "label": "GPT-4.1 Nano",    "ctx": 1_000_000},
-        {"id": "o3-mini",         "label": "o3 Mini",         "ctx": 200_000},
     ],
     "anthropic": [
         {"id": "claude-sonnet-4-20250514",      "label": "Claude Sonnet 4",  "ctx": 200_000},
