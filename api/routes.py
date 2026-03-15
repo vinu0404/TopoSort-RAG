@@ -690,6 +690,53 @@ async def edit_message(
     }
 
 
+@router.put("/conversations/{conversation_id}/swap-response", tags=["conversations"])
+async def swap_response(
+    conversation_id: str,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Replace the last assistant message content with a new response.
+    Used by the Compare feature when the user clicks 'Use This'.
+    """
+    from database.models import Conversation, Message
+
+    body = await request.json()
+    new_content = body.get("new_content", "").strip()
+    model = body.get("model", "")
+    if not new_content:
+        raise HTTPException(status_code=400, detail="new_content is required")
+
+    # Verify ownership
+    conv = (await session.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == conversation_id,
+            Conversation.user_id == auth_user_id,
+        )
+    )).scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Find last assistant message
+    last_asst = (await session.execute(
+        select(Message)
+        .where(Message.conversation_id == conv.conversation_id, Message.role == "assistant")
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if last_asst is None:
+        raise HTTPException(status_code=404, detail="No assistant message found")
+
+    last_asst.content = new_content
+    if model:
+        last_asst.model_used = model
+    await session.commit()
+
+    return {"message_id": str(last_asst.message_id), "swapped": True}
+
+
 # ── Persona CRUD ────────────────────────────────────────────────────────
 
 

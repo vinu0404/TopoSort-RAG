@@ -4,6 +4,13 @@ A multi-agent Retrieval-Augmented Generation system built with FastAPI, Qdrant, 
 
 ### Dynamic routing of agents with TopoSort without using any frameworks like LangChain or LangGraph
 
+| Experience | URL |
+|-----------|-----|
+| Chat App | https://toposort-rag-1.onrender.com |
+| Database Dashboard | https://toposort-rag-1.onrender.com/api/dashboard |
+| Swagger Docs | https://toposort-rag-1.onrender.com/docs |
+
+
 ### Frontend:
 - http://127.0.0.1:8000/
 ![Login](images/frontend_login.png)
@@ -228,8 +235,9 @@ When a persona is selected in the frontend, its `persona_id` is sent with each q
 |--------|------|------|-------------|
 | `POST` | `/voice/transcribe` | JWT | Transcribe an audio file via the configured STT provider (default: AssemblyAI). Accepts multipart `audio` file (max 25 MB). Returns `{ text, confidence, language }`. |
 | `POST` | `/voice/synthesize` | JWT | Synthesize text to speech via the configured TTS provider (default: AWS Polly Neural). Body: `{ text, voice? }`. Returns `audio/mpeg` binary stream. |
+| `POST` | `/tts/speak` | JWT | Text-to-speech for assistant responses. Strips sources, citations, and markdown before synthesis. Body: `{ text, voice? }`. Returns `audio/mpeg` binary stream. |
 
-The `/voice/synthesize` endpoint exists for direct API consumers. In the chat frontend, TTS audio is delivered inline via SSE (`voice_audio` event) — no extra HTTP round-trip needed.
+The `/voice/synthesize` endpoint exists for direct API consumers. The `/tts/speak` endpoint is optimized for chat responses — it automatically cleans the text (removes `Sources:` block, `[N]` citations, markdown formatting) before sending to Polly. In the voice input flow, TTS audio is delivered inline via SSE (`voice_audio` event) — no extra HTTP round-trip needed.
 
 ### Analytics — `/api/v1`
 
@@ -711,32 +719,6 @@ pending → scraping → ready      (all URLs succeeded)
 | Celery rate limit | 10/m | Prevent overloading external sites |
 | Celery max retries | 2 | Auto-retry with exponential backoff |
 
-### Files Involved
-
-```
-document_pipeline/
-├── web_scraper.py          # scrape_url() + process_scraped_pages()
-├── vector_store.py         # add_web_page(), delete_web_collection(), updated search filters
-tasks/
-├── web_scrape_tasks.py     # Celery task: scrape_web_collection_task
-database/
-├── schema.sql              # web_scrape_collections + web_scrape_urls tables
-├── models.py               # WebScrapeCollection, WebScrapeUrl ORM models
-├── helpers.py              # CRUD functions for web collections
-api/
-├── routes.py               # 6 new endpoints (CRUD + SSE)
-tools/
-├── rag_tools.py            # two_level_search() accepts active_web_collection_ids
-agents/rag_agent/
-├── agent.py                # Passes active web IDs to search tool
-core/
-├── orchestrator.py         # Forwards active_web_collection_ids through context
-utils/
-├── schemas.py              # WebScrapeUrlInput, WebScrapeCollectionCreate, WebScrapeToggle
-frontend/
-├── index.html              # Web Scrape panel, modal, toggles, SSE handler
-```
-
 ---
 
 ## Document Chat Mode — Scoped RAG Search
@@ -900,13 +882,235 @@ Any summary whose cumulative range reaches or exceeds the edited turn number is 
 - **After save** — all messages below the edited one are removed from the DOM, then the edited query is re-sent through the normal streaming pipeline
 - **Error handling** — if the backend call fails, the edit is cancelled and the original message is restored
 
-### Files Involved
+---
 
-| Layer | File | What it does |
-|-------|------|-------------|
-| DB Helper | `database/helpers.py` | `edit_message_and_truncate()` — ownership check, turn counting, cascading deletes, summary trimming |
-| API | `api/routes.py` | `PUT /conversations/{id}/messages/{id}/edit` endpoint |
-| Frontend | `frontend/index.html` | Edit button, inline textarea, DOM cleanup, streaming rerun |
+## Response Text-to-Speech & Follow-up Suggestions
+
+Two features that enhance the chat experience: a **Speak** button on every assistant response that reads it aloud via AWS Polly, and **follow-up suggestion chips** that appear after each response to keep the conversation flowing.
+
+### Response TTS — How It Works
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as POST /tts/speak
+    participant Polly as AWS Polly Neural
+
+    U->>FE: Clicks "Speak" on assistant message
+    FE->>FE: Check cached audio blob on element
+
+    alt Cache hit
+        FE->>FE: Play cached audio (no API call)
+    else Cache miss
+        FE->>FE: Show "Loading..." state
+        FE->>API: POST { text: rawTextForTTS }
+        API->>API: Strip Sources block
+        API->>API: Strip [N] citations
+        API->>API: Strip markdown (bold, headers, links, code)
+        API->>API: Collapse whitespace, truncate to 3000 chars
+        API->>Polly: synthesize_speech(clean_text, neural, mp3)
+        Polly-->>API: audio/mpeg bytes
+        API-->>FE: audio/mpeg stream
+        FE->>FE: Cache blob on msgEl._ttsAudioBlob
+        FE->>FE: Play audio, show "Stop" button
+    end
+
+    U->>FE: Clicks "Stop"
+    FE->>FE: Pause audio, reset to "Speak"
+```
+
+### Text Cleaning Pipeline
+
+The `/tts/speak` endpoint strips non-speakable content before sending to Polly:
+
+| Step | Regex | What It Removes |
+|------|-------|-----------------|
+| 1 | `\n\n?Sources:\n[\s\S]*$` | Trailing sources block (`Sources:\n[1] file.pdf\n...`) |
+| 2 | `\[\d+\]` | Inline citation references (`[1]`, `[2]`) |
+| 3 | `\*{1,3}(.+?)\*{1,3}` | Markdown bold/italic markers |
+| 4 | `^#{1,6}\s*` | Markdown headers |
+| 5 | `\[([^\]]+)\]\([^)]+\)` | Markdown links → keeps link text only |
+| 6 | `` ```...``` `` and `` `...` `` | Code fences and inline code |
+| 7 | `\n{3,}` | Excessive newlines → collapse to `\n\n` |
+
+### Follow-up Suggestions — How It Works
+
+```mermaid
+sequenceDiagram
+    participant LLM as Composer LLM
+    participant BE as Streaming Pipeline
+    participant FE as Frontend
+    participant U as User
+
+    BE->>LLM: Composer streaming completes
+    BE->>LLM: Quick generate() call with Q&A context
+    Note right of LLM: "Suggest 3 follow-up<br/>questions for this Q&A"
+    LLM-->>BE: 3 questions (one per line)
+    BE->>FE: SSE event: suggestions { questions: [...] }
+    BE->>FE: SSE event: done { ... }
+    FE->>FE: finalizeAssistant() renders message
+    FE->>FE: showSuggestionChips() renders clickable pills
+    U->>FE: Clicks a suggestion chip
+    FE->>FE: Fills input, removes chips, calls sendQuery()
+```
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Audio caching on DOM element** | `msgEl._ttsAudioBlob` stores the Polly response. Clicking Speak again replays from cache — zero API cost, instant playback. |
+| **Server-side text cleaning** | Cleaning happens on the backend so the frontend sends raw text and the endpoint handles all stripping. Consistent behavior across any client. |
+| **3000 char truncation** | AWS Polly Neural engine has a per-request character limit. Long responses are silently truncated to stay within bounds. |
+| **Suggestions via SSE, not separate call** | Follow-ups are emitted as an SSE event (`suggestions`) in the same stream, before `done`. No extra HTTP call, no auth issues, no race conditions. |
+| **Stored on element, rendered after finalize** | Suggestions arrive before `done`, stored as `msgEl._suggestions`. Rendered after `finalizeAssistant()` so the DOM order is deterministic: content → sources → speak → tokens → suggestion chips. |
+| **Chips self-destruct on click** | Clicking a suggestion removes all chips and immediately sends the query. Keeps the UI clean. |
+
+### Files Changed
+
+| Layer | File | Change |
+|-------|------|--------|
+| API | `api/routes.py` | `POST /tts/speak` endpoint with text cleaning pipeline |
+| Streaming | `api/streaming.py` | Follow-up suggestion generation + `suggestions` SSE event |
+| Frontend | `frontend/index.html` | Speak button, audio caching, suggestion chips, CSS |
+
+---
+
+## Response Comparison — Side-by-Side Model Evaluation
+
+Compare any assistant response against a different model. A **Compare** button on each message opens a model picker; the selected model re-runs the full pipeline and streams its answer next to the original. The user picks the better response — "Keep Original" dismisses the card, "Use This" replaces the original in-place.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant FE as Frontend
+    participant API as /query/stream
+    participant MA as Master Agent
+    participant Agents as Specialized Agents
+    participant C as Composer
+
+    U->>FE: Click Compare on message
+    FE->>FE: Show model picker dropdown
+    U->>FE: Select different model
+    FE->>FE: Create side-by-side card<br/>(left = original, right = empty)
+    FE->>API: POST /query/stream<br/>{ compare: true, model: "new-model" }
+
+    Note over API: compare=true skips:<br/>• title generation<br/>• memory extraction<br/>• DB saves (messages, agents)<br/>• follow-up suggestions<br/>• voice TTS task
+
+    API->>MA: Plan with new model
+    MA->>Agents: Execute agents (all use new model)
+    Agents->>C: Stream composed answer
+    C-->>FE: SSE tokens → right pane
+
+    FE->>FE: Render markdown in right pane
+    FE->>U: Enable "Keep Original" / "Use This"
+
+    alt Keep Original
+        U->>FE: Click "Keep Original"
+        FE->>FE: Remove comparison card
+    else Use This
+        U->>FE: Click "Use This"
+        FE->>FE: Replace original msg-content<br/>Clear TTS audio cache
+    end
+```
+
+### Model Override Architecture
+
+When the user selects a model from the chat dropdown (or picks one in the comparison picker), **all** pipeline components use that model — not just the Composer:
+
+```mermaid
+flowchart LR
+    subgraph "User Selection"
+        D[Model Dropdown]
+    end
+
+    subgraph "agent_factory.py"
+        F["build_agent_instances(registry, model_override)"]
+        L["_llm() helper"]
+        F --> L
+    end
+
+    D -->|model_override| F
+
+    subgraph "Pipeline Components"
+        M[Master Agent]
+        R[RAG Agent]
+        W[Web Search Agent]
+        CO[Code Agent]
+        MA[Mail Agent]
+        G[GitHub Agent]
+        CM[Composer Agent]
+    end
+
+    L -->|override provider| M
+    L -->|override provider| R
+    L -->|override provider| W
+    L -->|override provider| CO
+    L -->|override provider| MA
+    L -->|override provider| G
+    D -->|model_override| CM
+
+    style D fill:#4a90d9,color:#fff
+    style F fill:#2d2d2d,color:#fff
+    style L fill:#2d2d2d,color:#fff
+```
+
+> Agents do **not** pass `model=` in their `.generate()` calls. The model is baked into the `llm_provider` at construction time by `build_agent_instances()`, so a single `model_override` propagates to every component automatically.
+
+### Compare Mode — What Gets Skipped
+
+| Operation | Normal Query | Compare Mode | Why |
+|-----------|:---:|:---:|-----|
+| Master Agent plan | Yes | Yes | Need full pipeline |
+| Agent execution | Yes | Yes | Need full pipeline |
+| Composer streaming | Yes | Yes | Need the answer |
+| Title generation | Yes | **No** | Conversation already has a title |
+| Memory extraction | Yes | **No** | Don't pollute memory with comparison |
+| Message DB save | Yes | **No** | Comparison is ephemeral |
+| Agent execution DB save | Yes | **No** | Comparison is ephemeral |
+| Follow-up suggestions | Yes | **No** | Only needed for committed responses |
+| Voice TTS task | Yes | **No** | User can TTS after choosing |
+
+### Frontend Interaction Details
+
+| Element | Behavior |
+|---------|----------|
+| **Compare button** | Appears after TTS button on every assistant message |
+| **Model picker** | Dropdown grouped by provider; disables current model & unavailable providers |
+| **Side-by-side card** | CSS Grid (2 columns on desktop, stacked on mobile < 768px) |
+| **Close button (X)** | Aborts in-flight stream, removes card |
+| **Keep Original** | Removes comparison card, no changes |
+| **Use This** | Replaces original `msg-content` innerHTML, clears `_ttsAudioBlob` cache, updates `_rawTextForTTS` |
+| **Guard** | `sendQuery()` blocked while comparison is active; only one comparison at a time |
+| **AbortController** | Separate `_compareAbort` from main `_streamAbort`; cleaned up on conversation switch, new chat, logout |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Ephemeral (no DB save) | Comparisons are exploratory — saving would double storage and pollute analytics |
+| Reuse `/query/stream` | Same endpoint, same pipeline — just a `compare: true` flag to skip side effects |
+| Separate AbortController | Main stream and comparison stream are independent; aborting one shouldn't cancel the other |
+| Clear TTS cache on "Use This" | Old audio no longer matches the new text; force re-synthesis on next play |
+| Skip memory extraction | Comparison answers shouldn't create duplicate memory entries |
+
+### Files Changed
+
+| Layer | File | Change |
+|-------|------|--------|
+| Schema | `utils/schemas.py` | Added `compare: bool = False` to `QueryRequest` |
+| Streaming | `api/streaming.py` | Compare skip guards around title, memory, DB saves, suggestions, voice |
+| Factory | `core/agent_factory.py` | `model_override` param — all agents use user-selected model |
+| Master | `core/master_agent.py` | Removed explicit `model=config.*` from `.generate()` |
+| Composer | `core/composer_agent.py` | Removed explicit `model=config.*` from voice summary `.generate()` |
+| RAG Agent | `agents/rag_agent/agent.py` | Removed explicit `model=config.*` from `.generate()` |
+| Web Agent | `agents/web_search_agent/agent.py` | Removed explicit `model=config.*` from `.generate()` (2 calls) |
+| Code Agent | `agents/code_agent/agent.py` | Removed explicit `model=config.*` from `.generate()` |
+| Mail Agent | `agents/mail_agent/agent.py` | Removed explicit `model=config.*` from `.generate()` (3 calls) |
+| GitHub Agent | `agents/github_agent/agent.py` | Removed explicit `model=config.*` from `.generate()` |
+| Frontend | `frontend/index.html` | Compare button, model picker, side-by-side card, SSE handler, CSS |
 
 ---
 
@@ -1666,7 +1870,7 @@ plan = result.data                        # parsed dict
 tokens = result.usage["total_tokens"]
 ```
 
-Every agent accumulates `tokens_used` from `result.usage["total_tokens"]` and reports it in `resource_usage`. All token counts come from the provider API response — no client-side estimation.
+> **Do not pass `model=` explicitly** in agent `.generate()` calls. The model is set at construction time via the `llm_provider` injected by `build_agent_instances()`. This allows the user's model dropdown selection to override all agents at once. Only pass `temperature` and `output_schema`.
 
 ### Master Agent → Composer Pipeline
 
@@ -1950,6 +2154,7 @@ class SlackConnector(BaseConnector):
                 )
                 return resp.json().get("ok", False)
         except Exception:
+            logger.warning("Slack token revocation failed", exc_info=True)
             return False
 ```
 
@@ -2023,7 +2228,7 @@ class GitHubConnector(BaseConnector):
             resp.raise_for_status()
             data = resp.json()
             if "error" in data:
-                raise ValueError(f"GitHub OAuth error: {data['error_description']}")
+                raise ValueError(f"GitHub OAuth error: {data.get('error_description', data['error'])}")
 
             # Fetch user profile
             user_resp = await client.get(
@@ -2047,6 +2252,7 @@ class GitHubConnector(BaseConnector):
                 "login": user.get("login"),
                 "name": user.get("name"),
                 "avatar_url": user.get("avatar_url"),
+                "email": user.get("email"),
             },
         }
 
@@ -2065,6 +2271,8 @@ class GitHubConnector(BaseConnector):
             )
             resp.raise_for_status()
             data = resp.json()
+            if "error" in data:
+                raise ValueError(f"GitHub token refresh error: {data.get('error_description', data['error'])}")
 
         return {
             "access_token": data["access_token"],
@@ -2082,6 +2290,7 @@ class GitHubConnector(BaseConnector):
                 )
                 return resp.status_code == 204
         except Exception:
+            logger.warning("GitHub token revocation failed", exc_info=True)
             return False
 ```
 
@@ -2240,6 +2449,8 @@ async def send_slack_dm(token: str, user_id: str, text: str) -> Dict[str, Any]:
     return {"channel": channel_id, "ts": data.get("ts"), "message": text}
 ```
 
+> **Note:** The `_slack_api` helper uses `json=kwargs` for all methods. Some Slack endpoints (notably `search.messages`) only accept `application/x-www-form-urlencoded`. In production, use `data=kwargs` for search methods or add method-specific handling.
+
 #### GitHub Tools — `tools/github_tools.py`
 
 Same pattern — `httpx` REST calls, token passed from agent. Note the HITL distinction: reading repo info is safe, creating repos/PRs is not.
@@ -2259,10 +2470,33 @@ _GH_API = "https://api.github.com"
 
 
 def _gh_headers(token: str) -> Dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
 
 
 # ── Read-only tools (no approval) ─────────────────────────────────────
+
+@tool("github_agent")
+async def list_user_repos(
+    token: str, sort: str = "updated", limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """List repositories for the authenticated user."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{_GH_API}/user/repos",
+            headers=_gh_headers(token),
+            params={"sort": sort, "per_page": min(limit, 30)},
+        )
+        resp.raise_for_status()
+    return [{"full_name": r["full_name"], "description": r.get("description"),
+             "language": r.get("language"), "stars": r["stargazers_count"],
+             "private": r["private"], "html_url": r["html_url"],
+             "updated_at": r.get("updated_at")}
+            for r in resp.json()]
+
 
 @tool("github_agent")
 async def get_repo_info(token: str, owner: str, repo: str) -> Dict[str, Any]:
@@ -2277,6 +2511,8 @@ async def get_repo_info(token: str, owner: str, repo: str) -> Dict[str, Any]:
         "forks": data["forks_count"], "open_issues": data["open_issues_count"],
         "visibility": data.get("visibility", "public"),
         "default_branch": data["default_branch"],
+        "html_url": data["html_url"],
+        "created_at": data.get("created_at"), "updated_at": data.get("updated_at"),
     }
 
 
@@ -2293,7 +2529,8 @@ async def list_repo_issues(
         )
         resp.raise_for_status()
     return [{"number": i["number"], "title": i["title"], "state": i["state"],
-             "user": i["user"]["login"], "labels": [l["name"] for l in i.get("labels", [])]}
+             "user": i["user"]["login"], "labels": [l["name"] for l in i.get("labels", [])],
+             "created_at": i.get("created_at"), "html_url": i["html_url"]}
             for i in resp.json() if "pull_request" not in i]
 
 
@@ -2310,7 +2547,9 @@ async def list_pull_requests(
         )
         resp.raise_for_status()
     return [{"number": p["number"], "title": p["title"], "state": p["state"],
-             "user": p["user"]["login"], "head": p["head"]["ref"], "base": p["base"]["ref"]}
+             "user": p["user"]["login"], "head": p["head"]["ref"], "base": p["base"]["ref"],
+             "draft": p.get("draft", False),
+             "created_at": p.get("created_at"), "html_url": p["html_url"]}
             for p in resp.json()]
 
 
@@ -2333,7 +2572,7 @@ async def create_repo(
         resp.raise_for_status()
         data = resp.json()
     logger.info("create_repo → %s", data["full_name"])
-    return {"full_name": data["full_name"], "url": data["html_url"],
+    return {"full_name": data["full_name"], "html_url": data["html_url"],
             "private": data["private"], "default_branch": data["default_branch"]}
 
 
@@ -2355,8 +2594,8 @@ async def create_pull_request(
         resp.raise_for_status()
         data = resp.json()
     logger.info("create_pull_request → %s#%d", f"{owner}/{repo}", data["number"])
-    return {"number": data["number"], "title": data["title"], "url": data["html_url"],
-            "state": data["state"], "head": head, "base": base}
+    return {"number": data["number"], "title": data["title"], "html_url": data["html_url"],
+            "state": data["state"], "head": head, "base": base, "draft": data.get("draft", False)}
 ```
 
 **HITL decision guide — when to use `requires_approval=True`:**
@@ -2392,6 +2631,7 @@ from typing import Any, Dict, List
 from agents.base_agent import BaseAgent
 from agents.slack_agent.prompts import SlackPrompts
 from config.settings import config
+from connectors.token_manager import get_active_token
 from utils.schemas import AgentInput, AgentOutput
 
 import logging
@@ -2413,15 +2653,13 @@ class SlackAgent(BaseAgent):
         user_id = task_config.metadata.get("user_id", "")
 
         # ── Fresh token every request (no caching, no globals) ────────
-        from connectors.token_manager import get_active_token
         token = await get_active_token(user_id, "slack")
         if not token:
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=task_config.task,
-                status="failed", task_done=False,
-                result="Slack not connected. Please connect Slack via Settings → Connections.",
+                task_done=False,
                 data={"error": "not_connected"},
             )
 
@@ -2435,9 +2673,9 @@ class SlackAgent(BaseAgent):
                     entities=task_config.entities,
                     dependency_outputs=task_config.dependency_outputs,
                     long_term_memory=task_config.long_term_memory,
+                    conversation_history=task_config.conversation_history,
                 ),
                 temperature=config.get_agent_model_config("slack_agent")["temperature"],
-                model=config.get_agent_model_config("slack_agent")["model"],
                 output_schema={
                     "action": "list_channels | read_history | search | send_message | send_dm",
                     "params": "dict of tool parameters",
@@ -2452,6 +2690,7 @@ class SlackAgent(BaseAgent):
             action = plan.get("action", "search")
             params = plan.get("params", {})
             result_data: Dict[str, Any] = {"action": action}
+            success = True
 
             # Token is passed directly to each tool — no ContextVar needed
             if action == "list_channels":
@@ -2482,15 +2721,18 @@ class SlackAgent(BaseAgent):
                     token=token, user_id=params.get("user_id", ""), text=params.get("text", ""),
                 )
 
+            else:
+                result_data["error"] = f"Unknown action: {action}"
+                success = False
+
+            logger.info("[SlackAgent] Output: %s", result_data)
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=effective_task,
-                status="success", task_done=True,
-                result=result_data.get("sent") or result_data.get("results")
-                       or result_data.get("messages") or result_data.get("channels"),
+                task_done=success,
                 data=result_data,
-                confidence_score=0.85,
+                confidence_score=0.85 if success else 0.4,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
                     "tokens_used": tokens_used,
@@ -2514,6 +2756,7 @@ from typing import Any, Dict, List
 from agents.base_agent import BaseAgent
 from agents.github_agent.prompts import GitHubPrompts
 from config.settings import config
+from connectors.token_manager import get_active_token
 from utils.schemas import AgentInput, AgentOutput
 
 import logging
@@ -2527,23 +2770,21 @@ class GitHubAgent(BaseAgent):
         self.prompts = GitHubPrompts()
 
     def get_required_tools(self) -> List[str]:
-        return ["get_repo_info", "list_repo_issues", "list_pull_requests",
-                "create_repo", "create_pull_request"]
+        return ["list_user_repos", "get_repo_info", "list_repo_issues",
+                "list_pull_requests", "create_repo", "create_pull_request"]
 
     async def execute(self, task_config: AgentInput) -> AgentOutput:
         start = time.perf_counter()
         user_id = task_config.metadata.get("user_id", "")
 
         # ── Fresh token every request ─────────────────────────────────
-        from connectors.token_manager import get_active_token
         token = await get_active_token(user_id, "github")
         if not token:
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=task_config.task,
-                status="failed", task_done=False,
-                result="GitHub not connected. Please connect via Settings → Connections.",
+                task_done=False,
                 data={"error": "not_connected"},
             )
 
@@ -2556,11 +2797,11 @@ class GitHubAgent(BaseAgent):
                     entities=task_config.entities,
                     dependency_outputs=task_config.dependency_outputs,
                     long_term_memory=task_config.long_term_memory,
+                    conversation_history=task_config.conversation_history,
                 ),
                 temperature=config.get_agent_model_config("github_agent")["temperature"],
-                model=config.get_agent_model_config("github_agent")["model"],
                 output_schema={
-                    "action": "repo_info | list_issues | list_prs | create_repo | create_pr",
+                    "action": "list_repos | repo_info | list_issues | list_prs | create_repo | create_pr",
                     "params": "dict of tool parameters",
                     "reasoning": "string",
                 },
@@ -2573,8 +2814,15 @@ class GitHubAgent(BaseAgent):
             action = plan.get("action", "repo_info")
             params = plan.get("params", {})
             result_data: Dict[str, Any] = {"action": action}
+            success = True
 
-            if action == "repo_info":
+            if action == "list_repos":
+                tool_fn = self.get_tool("list_user_repos")
+                result_data["repos"] = await tool_fn(
+                    token=token, sort=params.get("sort", "updated"),
+                )
+
+            elif action == "repo_info":
                 tool_fn = self.get_tool("get_repo_info")
                 result_data["repo"] = await tool_fn(
                     token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
@@ -2608,18 +2856,21 @@ class GitHubAgent(BaseAgent):
                     token=token, owner=params.get("owner", ""), repo=params.get("repo", ""),
                     title=params.get("title", ""), head=params.get("head", ""),
                     base=params.get("base", "main"), body=params.get("body", ""),
+                    draft=params.get("draft", False),
                 )
 
+            else:
+                result_data["error"] = f"Unknown action: {action}"
+                success = False
+
+            logger.info("[GitHubAgent] Output: %s", result_data)
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
                 task_description=effective_task,
-                status="success", task_done=True,
-                result=result_data.get("created") or result_data.get("pull_request")
-                       or result_data.get("repo") or result_data.get("issues")
-                       or result_data.get("pull_requests"),
+                task_done=success,
                 data=result_data,
-                confidence_score=0.85,
+                confidence_score=0.85 if success else 0.4,
                 resource_usage={
                     "time_taken_ms": int((time.perf_counter() - start) * 1000),
                     "tokens_used": tokens_used,
@@ -2707,6 +2958,7 @@ Add entries to `config/agent_registry.yaml`:
       - github_prs
       - github_create
     tools:
+      - list_user_repos
       - get_repo_info
       - list_repo_issues
       - list_pull_requests
@@ -2756,25 +3008,36 @@ All agents are built centrally in `core/agent_factory.py`. Add your agents to `b
 from agents.slack_agent.agent import SlackAgent
 from agents.github_agent.agent import GitHubAgent
 
-def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
-    # ... existing agents ...
-    slack_cfg  = config.get_agent_model_config("slack_agent")
-    github_cfg = config.get_agent_model_config("github_agent")
+def build_agent_instances(
+    registry: ToolRegistry,
+    model_override: str | None = None,    # ← from user model dropdown
+) -> Dict[str, BaseAgent]:
+    # When model_override is set, ALL agents use that model
+    if model_override and model_override in _VALID_MODELS:
+        _override_llm = get_llm_provider(model_provider_for(model_override), default_model=model_override)
+    else:
+        _override_llm = None
+
+    def _llm(agent_name: str):
+        if _override_llm:
+            return _override_llm                          # user-selected model
+        cfg = config.get_agent_model_config(agent_name)
+        return get_llm_provider(cfg["provider"], default_model=cfg["model"])
 
     return {
         # ... existing agents ...
         "slack_agent": SlackAgent(
             tool_registry=registry,
-            llm_provider=get_llm_provider(slack_cfg["provider"], default_model=slack_cfg["model"]),
+            llm_provider=_llm("slack_agent"),
         ),
         "github_agent": GitHubAgent(
             tool_registry=registry,
-            llm_provider=get_llm_provider(github_cfg["provider"], default_model=github_cfg["model"]),
+            llm_provider=_llm("github_agent"),
         ),
     }
 ```
 
-`api/routes.py` and `api/streaming.py` both call `build_agent_instances()` — you do **not** edit them.
+`api/routes.py` and `api/streaming.py` both call `build_agent_instances()` — you do **not** edit them. The streaming endpoint automatically passes the user's model selection as `model_override`.
 
 ---
 
@@ -3020,6 +3283,7 @@ Every prompt class follows the same pattern: static methods that accept task dat
 """Summary agent prompts — production-quality, personalised."""
 
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from utils.prompt_utils import format_user_profile
@@ -3034,6 +3298,7 @@ class SummaryPrompts:
         entities: Dict[str, Any],
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -3048,7 +3313,20 @@ class SummaryPrompts:
 
         profile = format_user_profile(long_term_memory or {})
 
+        history_context = ""
+        if conversation_history:
+            history_context = "\n### Recent conversation\n"
+            for msg in conversation_history[-4:]:
+                role = msg.get("role", "user")
+                text = str(msg.get("content", ""))[:300]
+                history_context += f"- {role}: {text}\n"
+
+        current_date = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
+
         return f"""You are a Summarisation Expert in a multi-agent RAG system.
+
+### Current Date
+{current_date}
 
 ### Task
 {task}
@@ -3057,6 +3335,7 @@ class SummaryPrompts:
 {entity_str}
 {dep_context}
 {profile}
+{history_context}
 ### Source Text
 {source_text[:5000]}
 
@@ -3088,6 +3367,9 @@ from agents.summary_agent.prompts import SummaryPrompts
 from config.settings import config
 from utils.schemas import AgentInput, AgentOutput
 
+import logging
+logger = logging.getLogger("summary_agent")
+
 
 class SummaryAgent(BaseAgent):
     def __init__(self, tool_registry, llm_provider):
@@ -3103,7 +3385,8 @@ class SummaryAgent(BaseAgent):
         start = time.perf_counter()
 
         try:
-            summarise = self.get_tool("summarise_text")
+            # HITL-aware effective task (returns task unchanged if no HITL context)
+            effective_task = await self._effective_task(task_config)
 
             # Build the source text from dependency outputs or the task itself
             source_text = ""
@@ -3114,30 +3397,30 @@ class SummaryAgent(BaseAgent):
                     else:
                         source_text += str(dep_data) + "\n"
             else:
-                source_text = task_config.task
+                source_text = effective_task
 
             # Ask LLM to summarise
             prompt = self.prompts.summarise_prompt(
-                task=task_config.task,
+                task=effective_task,
                 source_text=source_text,
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
-                long_term_memory=task_config.long_term_memory,     # ← always pass memory
+                long_term_memory=task_config.long_term_memory,
+                conversation_history=task_config.conversation_history,
             )
             llm_result = await self.llm.generate(
                 prompt=prompt,
                 temperature=config.summary_temperature,
-                model=config.summary_model,
             )
             summary = llm_result.text    # LLMResult.text — raw string response
             tokens_used = llm_result.usage.get("total_tokens", 0)
 
+            logger.info("[SummaryAgent] Output: %s", summary[:200])
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
-                task_description=task_config.task,
+                task_description=effective_task,
                 task_done=True,
-                result=summary,
                 data={"summary": summary},
                 confidence_score=0.9,
                 resource_usage={
@@ -3148,6 +3431,7 @@ class SummaryAgent(BaseAgent):
             )
 
         except Exception:
+            logger.exception("[SummaryAgent] Error for input: %s", task_config)
             raise   # let execute_with_retry handle retries
 ```
 
@@ -3162,15 +3446,27 @@ All agents are built centrally in `core/agent_factory.py`. Add your agent to the
 
 from agents.summary_agent.agent import SummaryAgent
 
-def build_agent_instances(registry: ToolRegistry) -> Dict[str, BaseAgent]:
-    # ... existing agents ...
-    summary_cfg = config.get_agent_model_config("summary_agent")
+def build_agent_instances(
+    registry: ToolRegistry,
+    model_override: str | None = None,    # ← from user model dropdown
+) -> Dict[str, BaseAgent]:
+    # When model_override is set, ALL agents use that model
+    if model_override and model_override in _VALID_MODELS:
+        _override_llm = get_llm_provider(model_provider_for(model_override), default_model=model_override)
+    else:
+        _override_llm = None
+
+    def _llm(agent_name: str):
+        if _override_llm:
+            return _override_llm                          # user-selected model
+        cfg = config.get_agent_model_config(agent_name)
+        return get_llm_provider(cfg["provider"], default_model=cfg["model"])
 
     return {
         # ... existing agents ...
         "summary_agent": SummaryAgent(
             tool_registry=registry,
-            llm_provider=get_llm_provider(summary_cfg["provider"], default_model=summary_cfg["model"]),
+            llm_provider=_llm("summary_agent"),
         ),
     }
 ```
@@ -3193,7 +3489,10 @@ async def test_summary_agent_execute():
     mock_registry.get_tool.return_value = AsyncMock(return_value={"summary": "test"})
 
     mock_llm = AsyncMock()
-    mock_llm.generate.return_value = "This is a concise summary."
+    mock_llm.generate.return_value = MagicMock(
+        text="This is a concise summary.",
+        usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+    )
 
     agent = SummaryAgent(mock_registry, mock_llm)
 
@@ -3224,9 +3523,9 @@ async def test_summary_agent_execute():
 | 2 | `config/settings.py` | Add `*_model_provider`, `*_model`, `*_temperature` fields + mapping entry |
 | 3 | `.env` / `.env.example` | Add corresponding env vars |
 | 4 | `tools/<name>_tools.py` | Create `@tool("agent_name")` functions |
-| 5 | `agents/<name>/__init__.py` | Empty package file |
-| 5 | `agents/<name>/prompts.py` | Prompt class using `format_user_profile()` from `utils/prompt_utils.py` |
-| 5 | `agents/<name>/agent.py` | Subclass `BaseAgent`, implement `execute()` + `get_required_tools()` |
+| 5a | `agents/<name>/__init__.py` | Empty package file |
+| 5b | `agents/<name>/prompts.py` | Prompt class using `format_user_profile()` from `utils/prompt_utils.py` |
+| 5c | `agents/<name>/agent.py` | Subclass `BaseAgent`, implement `execute()` + `get_required_tools()` |
 | 6 | `core/agent_factory.py` | Add agent to `build_agent_instances()` return dict |
 | 7 | `tests/test_<name>_agent.py` | Unit test for the new agent |
 
@@ -3271,7 +3570,7 @@ sequenceDiagram
 
     Note over User: User sees approval dialog
 
-    loop Poll DB every 1.5s
+    loop Poll DB every 6s
         Orch->>DB: SELECT status WHERE request_id=abc-123
         DB-->>Orch: status = 'pending'
     end
@@ -3299,6 +3598,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User as User
+    participant HITL as POST /hitl/respond
     participant SSE as SSE Stream
     participant Orch as Orchestrator
     participant DB as PostgreSQL
@@ -3306,8 +3606,8 @@ sequenceDiagram
     Orch->>DB: INSERT hitl_requests (pending)
     SSE-->>User: event: hitl_required
 
-    User->>DB: POST /hitl/respond<br/>{decision: "denied"}
-    Note over DB: status = 'denied'
+    User->>HITL: POST /hitl/respond<br/>{decision: "denied"}
+    HITL->>DB: UPDATE status='denied'
 
     Orch->>DB: Poll → status='denied'
     SSE-->>User: event: hitl_denied
@@ -3321,12 +3621,13 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
+    participant User as User (Frontend)
     participant SSE as SSE Stream
     participant Orch as Orchestrator
     participant DB as PostgreSQL
 
     Orch->>DB: INSERT hitl_requests (pending, expires_at=+120s)
-    SSE-->>SSE: event: hitl_required
+    SSE-->>User: event: hitl_required
 
     loop 120 seconds of polling
         Orch->>DB: SELECT status → 'pending'
@@ -3335,7 +3636,7 @@ sequenceDiagram
     Note over DB: expires_at reached
 
     Orch->>DB: UPDATE status='timed_out'
-    SSE-->>SSE: event: hitl_timeout
+    SSE-->>User: event: hitl_timeout
 
     Note over Orch: Treated as denial:<br/>task_done=False, error="hitl_timeout"
 ```
@@ -3377,7 +3678,7 @@ graph TD
     Orch -->|"calls"| CB
     CB -->|"INSERT pending"| DB
     CB -->|"push SSE event"| Queue
-    CB -->|"poll every 1.5s"| DB
+    CB -->|"poll every 6s"| DB
     HitlEndpoint -->|"UPDATE decision"| DB
     Queue -->|"yield SSE"| Stream
     Stream -->|"SSE events"| FE
@@ -3449,7 +3750,7 @@ stateDiagram-v2
 | Event | When | Payload |
 |-------|------|---------|
 | `hitl_required` | Agent has HITL tools, approval needed | `{request_id, agent_id, agent_name, tool_names, task_description, timeout_seconds}` |
-| `hitl_approved` | User approved the request | `{request_id, agent_id}` |
+| `hitl_approved` | User approved the request | `{request_id, agent_id, user_instructions}` |
 | `hitl_denied` | User denied the request | `{request_id, agent_id}` |
 | `hitl_timeout` | Approval timed out | `{request_id, agent_id}` |
 
@@ -3598,6 +3899,11 @@ If a dependency was denied by the user, explain what happened clearly:
 | `send_email` | `mail_agent` | Sends a real email via Gmail API |
 | `reply_to_message` | `mail_agent` | Sends a real reply via Gmail API |
 | `execute_code` | `code_agent` | Executes arbitrary Python code on the server |
+| `create_repo` | `github_agent` | Creates a real repository on the user's GitHub account |
+| `create_pull_request` | `github_agent` | Opens a real PR on a repository |
+| `web_search` | `web_search_agent` | Performs a live web search (costs API credits) |
+| `web_search_news` | `web_search_agent` | Performs a live news search (costs API credits) |
+| `web_search_deep` | `web_search_agent` | Performs a deep web search (costs API credits) |
 
 ### Non-Streaming Endpoint Behavior
 

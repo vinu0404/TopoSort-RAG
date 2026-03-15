@@ -1240,6 +1240,82 @@
     color: #1a73e8;
   }
 
+  /* ── Compare button ──────────────────────────────────── */
+  .compare-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-top: 10px; margin-left: 6px;
+    padding: 5px 12px; font-size: 0.78rem;
+    color: #666; background: #fff;
+    border: 1px solid #ddd; border-radius: 14px;
+    cursor: pointer; transition: all 0.15s;
+    position: relative;
+  }
+  .compare-btn:hover { color: #000; border-color: #000; }
+  .compare-btn svg { width: 14px; height: 14px; }
+
+  /* ── Compare model picker dropdown ───────────────────── */
+  .cmp-picker {
+    position: absolute; bottom: calc(100% + 8px); left: 0;
+    min-width: 210px; background: #fff;
+    border: 1px solid #ddd; border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    padding: 6px 0; z-index: 100;
+  }
+  .cmp-picker-group { padding: 6px 14px 2px; font-size: 0.68rem; color: #999; font-weight: 600; text-transform: uppercase; }
+  .cmp-picker-opt {
+    display: block; width: 100%; padding: 7px 14px;
+    border: none; background: none; text-align: left;
+    font-size: 0.8rem; color: #333; cursor: pointer;
+  }
+  .cmp-picker-opt:hover { background: #f0f5ff; color: #1a73e8; }
+  .cmp-picker-opt:disabled { opacity: 0.35; cursor: default; }
+  .cmp-picker-opt:disabled:hover { background: none; color: #333; }
+
+  /* ── Comparison card (side-by-side) ──────────────────── */
+  .compare-card {
+    margin-top: 14px; border: 1px solid #ddd;
+    border-radius: 12px; overflow: hidden; background: #fafafa;
+  }
+  .compare-card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: #f0f0f0;
+    font-size: 0.82rem; font-weight: 600; color: #333;
+    border-bottom: 1px solid #ddd;
+  }
+  .compare-card-close {
+    background: none; border: none; font-size: 1.1rem;
+    cursor: pointer; color: #999; padding: 2px 6px; border-radius: 4px;
+  }
+  .compare-card-close:hover { color: #333; background: #e0e0e0; }
+  .compare-status { font-size: 0.75rem; color: #888; padding: 6px 16px; }
+  .compare-columns {
+    display: grid; grid-template-columns: 1fr 1fr; min-height: 100px;
+  }
+  .compare-side { padding: 14px 16px; }
+  .compare-side:first-child { border-right: 1px solid #e0e0e0; }
+  .compare-side-label {
+    font-size: 0.72rem; font-weight: 600; color: #888;
+    margin-bottom: 8px; text-transform: uppercase;
+  }
+  .compare-content { font-size: 0.88rem; line-height: 1.6; color: #333; }
+  .compare-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 10px 16px; border-top: 1px solid #ddd; background: #f5f5f5;
+  }
+  .compare-actions button {
+    padding: 7px 18px; border-radius: 8px; font-size: 0.8rem;
+    cursor: pointer; border: 1px solid #ddd; background: #fff; color: #333;
+    transition: all 0.15s;
+  }
+  .compare-actions button:hover { border-color: #999; }
+  .compare-actions .btn-use-this { background: #000; color: #fff; border-color: #000; }
+  .compare-actions .btn-use-this:hover { opacity: 0.85; }
+  .compare-actions button:disabled { opacity: 0.4; cursor: default; }
+  @media (max-width: 768px) {
+    .compare-columns { grid-template-columns: 1fr; }
+    .compare-side:first-child { border-right: none; border-bottom: 1px solid #e0e0e0; }
+  }
+
   /* ── Token badge ────────────────────────────────────── */
   .token-badge {
     display: inline-flex;
@@ -2138,6 +2214,8 @@ async function doLogout() {
       });
     } catch (e) { /* ignore — user is logging out regardless */ }
   }
+  if (_compareAbort) { _compareAbort.abort(); _compareAbort = null; }
+  _activeCompareCard = null;
   currentUser = null;
   currentSessionId = null;
   currentConversationId = null;
@@ -2239,6 +2317,10 @@ async function switchConversation(conversationId) {
     loadPersonas();
   }
 
+  // Abort any active comparison
+  if (_compareAbort) { _compareAbort.abort(); _compareAbort = null; }
+  _activeCompareCard = null;
+
   // Clear chat and show loading
   messagesEl.innerHTML = '';
   messagesEl.appendChild(welcomeEl);
@@ -2286,6 +2368,8 @@ async function switchConversation(conversationId) {
 
 function newChat() {
   if (isProcessing) return;
+  if (_compareAbort) { _compareAbort.abort(); _compareAbort = null; }
+  _activeCompareCard = null;
   currentConversationId = null;
   currentPersonaId = null;
   messagesEl.innerHTML = '';
@@ -3406,6 +3490,188 @@ function showSuggestionChips(msgEl, questions) {
   scrollToBottom();
 }
 
+// ── Response Comparison ───────────────────────────────
+let _compareAbort = null;
+let _activeCompareCard = null;
+
+function showCompareModelPicker(btn, msgEl) {
+  document.querySelector('.cmp-picker')?.remove();
+  if (isProcessing || _compareAbort) return;
+
+  const currentModel = msgEl._modelUsed || '';
+  const picker = document.createElement('div');
+  picker.className = 'cmp-picker';
+
+  const groups = modelSelect.querySelectorAll('optgroup');
+  for (const grp of groups) {
+    const lbl = document.createElement('div');
+    lbl.className = 'cmp-picker-group';
+    lbl.textContent = grp.label;
+    picker.appendChild(lbl);
+    for (const opt of grp.options) {
+      const b = document.createElement('button');
+      b.className = 'cmp-picker-opt';
+      b.textContent = opt.textContent;
+      b.disabled = opt.disabled || opt.value === currentModel;
+      b.addEventListener('click', () => { picker.remove(); document.removeEventListener('click', close); startComparison(msgEl, opt.value, opt.textContent); });
+      picker.appendChild(b);
+    }
+  }
+
+  btn.appendChild(picker);
+  const close = (e) => { if (!picker.contains(e.target) && e.target !== btn) { picker.remove(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function startComparison(msgEl, newModel, modelLabel) {
+  if (_activeCompareCard) { _activeCompareCard.remove(); _activeCompareCard = null; }
+  if (_compareAbort) { _compareAbort.abort(); _compareAbort = null; }
+
+  // Find original query from the preceding user message
+  let userMsg = msgEl.previousElementSibling;
+  while (userMsg && !userMsg.classList.contains('user')) userMsg = userMsg.previousElementSibling;
+  const query = userMsg ? userMsg.querySelector('.msg-content').textContent.trim() : '';
+  if (!query) return;
+
+  const card = document.createElement('div');
+  card.className = 'compare-card';
+  const safeLabel = escapeHtml(modelLabel);
+  const safeOrig = escapeHtml(msgEl._modelUsed || 'Default');
+  card.innerHTML = `
+    <div class="compare-card-header">
+      <span>Comparing: ${safeOrig} vs ${safeLabel}</span>
+      <button class="compare-card-close" title="Cancel">&times;</button>
+    </div>
+    <div class="compare-status">Planning...</div>
+    <div class="compare-columns">
+      <div class="compare-side">
+        <div class="compare-side-label">${safeOrig} (Original)</div>
+        <div class="compare-content compare-left"></div>
+      </div>
+      <div class="compare-side">
+        <div class="compare-side-label">${safeLabel}</div>
+        <div class="compare-content compare-right"></div>
+      </div>
+    </div>
+    <div class="compare-actions">
+      <button class="btn-keep" disabled>Keep Original</button>
+      <button class="btn-use-this" disabled>Use This</button>
+    </div>
+  `;
+
+  card.querySelector('.compare-left').innerHTML = msgEl.querySelector('.msg-content').innerHTML;
+  msgEl.after(card);
+  _activeCompareCard = card;
+  scrollToBottom();
+
+  card.querySelector('.compare-card-close').addEventListener('click', () => {
+    if (_compareAbort) _compareAbort.abort();
+    card.remove(); _activeCompareCard = null; _compareAbort = null;
+  });
+
+  _compareAbort = new AbortController();
+  const rightEl = card.querySelector('.compare-right');
+  const statusEl = card.querySelector('.compare-status');
+  let rawText = '';
+  let cmpSources = [];
+
+  try {
+    const r = await fetch(`${API}/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        query,
+        session_id: currentSessionId,
+        conversation_id: currentConversationId,
+        persona_id: currentPersonaId,
+        model: newModel,
+        compare: true,
+        active_web_collection_ids: _webCollections.filter(c => c.is_active).map(c => c.collection_id),
+        selected_doc_ids: _selectedDocIds,
+      }),
+      signal: _compareAbort.signal,
+    });
+
+    if (!r.ok) {
+      if (r.status === 401) { doLogout(); return; }
+      statusEl.textContent = `Error: ${r.statusText}`;
+      statusEl.style.color = '#ff3b30';
+      return;
+    }
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', eventType = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+        else if (line.startsWith('data: ') && eventType) {
+          let d; try { d = JSON.parse(line.slice(6)); } catch { d = line.slice(6); }
+          switch (eventType) {
+            case 'status':
+              if (d.phase === 'planning') statusEl.textContent = 'Planning...';
+              else if (d.phase === 'executing') statusEl.textContent = 'Running agents...';
+              else if (d.phase === 'composing') statusEl.textContent = 'Composing...';
+              break;
+            case 'token':
+              rightEl.textContent += (d.text || '');
+              rawText += (d.text || '');
+              scrollToBottom();
+              break;
+            case 'agent_result':
+              if (d.sources && Array.isArray(d.sources)) cmpSources.push(...d.sources);
+              break;
+            case 'done':
+              statusEl.textContent = `Done in ${d.total_time}s \u2022 ${(d.tokens_used || 0).toLocaleString()} tokens`;
+              // Finalize: strip sources, render markdown
+              let clean = rawText;
+              const sm = clean.match(/\n\n?Sources:\n([\s\S]*)$/);
+              if (sm) clean = clean.slice(0, sm.index).trimEnd();
+              rightEl.innerHTML = renderMarkdown(clean);
+              break;
+            case 'error':
+              statusEl.textContent = `Error: ${d.message || d}`;
+              statusEl.style.color = '#ff3b30';
+              break;
+          }
+          eventType = null;
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') { statusEl.textContent = 'Cancelled.'; }
+    else { statusEl.textContent = `Error: ${err.message}`; statusEl.style.color = '#ff3b30'; }
+  } finally {
+    _compareAbort = null;
+  }
+
+  // Enable action buttons
+  const keepBtn = card.querySelector('.btn-keep');
+  const useBtn = card.querySelector('.btn-use-this');
+  keepBtn.disabled = false;
+  useBtn.disabled = false;
+
+  keepBtn.addEventListener('click', () => { card.remove(); _activeCompareCard = null; });
+  useBtn.addEventListener('click', () => {
+    // Strip sources from rawText for clean content
+    let clean = rawText;
+    const sm = clean.match(/\n\n?Sources:\n([\s\S]*)$/);
+    if (sm) clean = clean.slice(0, sm.index).trimEnd();
+    const rendered = renderMarkdown(clean);
+    msgEl.querySelector('.msg-content').innerHTML = rendered;
+    msgEl._rawTextForTTS = clean;
+    msgEl._ttsAudioBlob = null;  // clear TTS cache
+    msgEl._modelUsed = newModel;
+    card.remove();
+    _activeCompareCard = null;
+  });
+}
+
 // ── TTS: Speak assistant response via AWS Polly ───────
 let _ttsAudio = null;  // currently playing Audio instance
 let _ttsActiveBtn = null;  // currently active speak button
@@ -3792,6 +4058,17 @@ function finalizeAssistant(msgEl, sources) {
     else content.after(ttsBtn);
   }
 
+  // ── Compare button ─────────────────────────────────────
+  {
+    const cmpBtn = document.createElement('button');
+    cmpBtn.className = 'compare-btn';
+    cmpBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1v14"/><path d="M3 5l2-2 2 2"/><path d="M11 11l2 2 2-2"/></svg> Compare`;
+    cmpBtn.addEventListener('click', () => showCompareModelPicker(cmpBtn, msgEl));
+    const cmpAnchor = msgEl.querySelector('.tts-btn');
+    if (cmpAnchor) cmpAnchor.after(cmpBtn);
+    else { const a2 = msgEl.querySelector('.sources-btn'); if (a2) a2.after(cmpBtn); else content.after(cmpBtn); }
+  }
+
   // ── Token badge ───────────────────────────────────────
   if (tokenTotal > 0) {
     const badge = document.createElement('button');
@@ -3989,7 +4266,7 @@ function renderMarkdown(text) {
 // ── Send query ──────────────────────────────────────────────
 async function sendQuery() {
   const query = queryInput.value.trim();
-  if (!query || isProcessing) return;
+  if (!query || isProcessing || _compareAbort) return;
   if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
 
   isProcessing = true;
@@ -4124,6 +4401,7 @@ async function sendStreaming(query) {
         if (msgEl) {
           msgEl._totalTokens = data.tokens_used || 0;
           msgEl._tokenDetails = data.token_details || {};
+          msgEl._modelUsed = modelSelect.value || 'Default';
           finalizeAssistant(msgEl, sources);
           if (msgEl._suggestions) showSuggestionChips(msgEl, msgEl._suggestions);
         }
@@ -4495,6 +4773,7 @@ async function sendStreamingVoice(query) {
         if (msgEl) {
           msgEl._totalTokens = data.tokens_used || 0;
           msgEl._tokenDetails = data.token_details || {};
+          msgEl._modelUsed = modelSelect.value || 'Default';
           finalizeAssistant(msgEl, sources);
           if (msgEl._suggestions) showSuggestionChips(msgEl, msgEl._suggestions);
         }

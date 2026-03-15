@@ -88,7 +88,6 @@ class RAGAgent(BaseAgent):
             synthesis_result = await self.llm.generate(
                 prompt=synthesis_prompt,
                 temperature=config.rag_temperature,
-                model=config.rag_model,
             )
             final_answer = synthesis_result.text
             tokens_used += synthesis_result.usage.get("total_tokens", 0)

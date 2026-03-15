@@ -68,7 +68,6 @@ class GitHubAgent(BaseAgent):
                     conversation_history=task_config.conversation_history,
                 ),
                 temperature=config.get_agent_model_config("github_agent")["temperature"],
-                model=config.get_agent_model_config("github_agent")["model"],
                 output_schema={
                     "action": "list_repos | repo_info | list_issues | list_prs | create_repo | create_pr",
                     "params": "dict of tool parameters",
