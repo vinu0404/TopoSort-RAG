@@ -3960,7 +3960,7 @@ The `POST /query` endpoint does **not** support HITL dialogs (no SSE connection 
 
 Scheduled Jobs let users set up **cron-like automated agent pipelines** that run on a recurring schedule. Think of it as building multi-agent workflows that fire automatically — e.g., *"Every Monday at 9 AM, search for AI news and email me a summary."*
 
-Each job is a **multi-step pipeline** where steps can depend on each other, enabling data flow between agents (step 2 reads step 1's output). Jobs support natural language creation ("Parse & Preview"), manual step-by-step building, pause/resume, manual triggering, and per-run history with step-level results.
+Each job is a **multi-step pipeline** where steps can depend on each other, enabling data flow between agents (step 2 reads step 1's output). After all agents complete, the **Composer Agent** synthesises a polished, citation-linked answer — the same quality as a live chat response. Jobs support natural language creation ("Parse & Preview"), manual step-by-step building, pause/resume, manual triggering, timezone-aware scheduling, and per-run history with full composed results.
 
 ### High-Level Architecture
 
@@ -3981,19 +3981,22 @@ flowchart TD
         Worker["Celery Worker<br/><i>execute_scheduled_job task</i>"]
         Orch["Orchestrator<br/><i>execute_plan() — topological sort<br/>parallel where deps allow</i>"]
         Agents["Agent Instances<br/><i>RAG, Mail, Web Search,<br/>Code, GitHub, etc.</i>"]
+        Composer["Composer Agent<br/><i>synthesise polished answer<br/>with citations</i>"]
     end
 
     UI -->|"POST /scheduled-jobs"| API
     API -->|"CRUD"| PG
-    API -->|"sync_job_to_beat()"| Redis
+    API -->|"sync_job_to_beat()<br/><i>TZ → UTC conversion</i>"| Redis
 
     Beat -->|"cron fires"| Worker
     Worker -->|"load job + steps"| PG
     Worker --> Orch
     Orch -->|"topological execution"| Agents
     Agents -->|"outputs"| Orch
-    Orch -->|"record results"| PG
-    Worker -->|"Pub/Sub status"| Redis
+    Orch -->|"agent results"| Composer
+    Composer -->|"composed answer"| Worker
+    Worker -->|"record results"| PG
+    Worker -->|"Pub/Sub status +<br/>composed text"| Redis
     Redis -->|"SSE push"| UI
 
     style UI fill:#2196F3,color:#fff
@@ -4004,6 +4007,7 @@ flowchart TD
     style Worker fill:#9C27B0,color:#fff
     style Orch fill:#9C27B0,color:#fff
     style Agents fill:#E91E63,color:#fff
+    style Composer fill:#9C27B0,color:#fff
 ```
 
 ### End-to-End Flow — Job Creation to Execution
@@ -4019,23 +4023,24 @@ sequenceDiagram
     participant W as Celery Worker
     participant O as Orchestrator
     participant A as Agents
+    participant C as Composer Agent
 
     Note over U: Option A — Natural Language
-    U->>API: POST /scheduled-jobs/from-prompt<br/>{ prompt: "Every Monday, search AI news<br/>and email me a summary" }
+    U->>API: POST /scheduled-jobs/from-prompt<br/>{ prompt: "Every Monday, search AI news<br/>and email me a summary",<br/>timezone: "Asia/Kolkata" }
     API->>MA: plan_scheduled_job(prompt)
     MA-->>API: { name, cron_expression,<br/>steps: [{web_search_agent, ...},<br/>{mail_agent, ...}] }
     API-->>U: { preview: { ... } }
     U->>U: Review preview, click "Create Job"
 
     Note over U: Option B — Manual Builder
-    U->>API: POST /scheduled-jobs<br/>{ name, cron_expression,<br/>steps: [...] }
+    U->>API: POST /scheduled-jobs<br/>{ name, cron_expression,<br/>timezone, steps: [...] }
 
     API->>DB: INSERT scheduled_jobs + scheduled_job_steps
-    API->>RB: sync_job_to_beat(job_id, cron)
+    API->>RB: sync_job_to_beat(job_id, cron, tz)<br/>_convert_cron_to_utc() → store UTC cron
     RB-->>RB: RedBeatSchedulerEntry saved
     API-->>U: { job_id, status: "active" }
 
-    Note over Beat: Cron time arrives
+    Note over Beat: Cron time arrives (UTC)
     Beat->>W: execute_scheduled_job.delay(job_id)
     W->>DB: load job + steps
     W->>DB: INSERT scheduled_job_runs (status: running)
@@ -4048,10 +4053,15 @@ sequenceDiagram
     end
     O-->>W: shared_state (all agent outputs)
 
-    W->>DB: UPDATE step_results + run status
-    W->>DB: UPDATE job.last_run_at, next_run_at
-    W->>RB: Pub/Sub → scheduled_job:{user_id}
-    RB-->>U: SSE push (run_complete event)
+    Note over W,C: Composer synthesises final answer
+    W->>C: ComposerInput(agent_results, sources, memory)
+    C-->>W: ComposerOutput(answer with citations)
+
+    W->>DB: UPDATE step_results (+ composed_answer) + run status
+    W->>DB: UPDATE job.last_run_at, next_run_at (timezone-aware)
+    W->>RB: Pub/Sub → scheduled_job:{user_id}<br/>includes composed result_text
+    RB-->>U: SSE push (run_complete event + text preview)
+    U->>U: Toast notification (20s) + "View Full Results" button
     W->>W: _send_notification() (email / in_app)
 ```
 
@@ -4076,9 +4086,14 @@ flowchart LR
         Stage2["Stage 2<br/>mail_agent<br/><i>reads web_search output<br/>via dependency_outputs</i>"]
     end
 
+    subgraph Compose["Composer"]
+        CI["ComposerInput<br/><i>agent_results, sources,<br/>memory</i>"]
+        CA["Composer Agent<br/><i>LLM synthesises answer<br/>with [1], [2] citations</i>"]
+    end
+
     subgraph Record["Results"]
         SR1["StepResult 0<br/>status: success"]
-        SR2["StepResult 1<br/>status: success"]
+        SR2["StepResult 1<br/>status: success<br/><i>+ composed_answer</i>"]
         Run["Run<br/>status: success<br/>2/2 steps"]
     end
 
@@ -4086,13 +4101,16 @@ flowchart LR
     S1 & S2 --> RT --> Plan
     Plan --> Topo
     Topo --> Stage1 --> Stage2
+    Stage1 & Stage2 --> CI --> CA
     Stage1 --> SR1
     Stage2 --> SR2
+    CA --> SR2
     SR1 & SR2 --> Run
 
     style Job fill:#2196F3,color:#fff
     style Stage1 fill:#FF9800,color:#fff
     style Stage2 fill:#FF9800,color:#fff
+    style CA fill:#9C27B0,color:#fff
     style Run fill:#4CAF50,color:#fff
 ```
 
@@ -4313,12 +4331,15 @@ The LLM knows all available agents and their capabilities (from `agent_registry.
 | Decision | Rationale |
 |----------|-----------|
 | **Reuses `Orchestrator.execute_plan()`** | Steps are converted to `ResolvedAgentTask` — the same schema the live query pipeline uses. No duplicate orchestration logic. |
-| **RedBeat (Redis-backed dynamic scheduler)** | Add/remove/update cron entries at runtime without restarting Celery Beat. Each entry is a Redis key. |
+| **Full pipeline: Agents → Composer** | After all agents complete, the Composer Agent synthesises a polished, citation-linked answer — identical quality to live chat. The composed answer is stored in `agent_output.composed_answer` and sent via SSE for toast display. |
+| **Timezone-aware scheduling** | Frontend sends browser timezone (e.g., `Asia/Kolkata`). `_convert_cron_to_utc()` converts cron hour/minute to UTC before saving to RedBeat. `next_run_at` is calculated using the job's timezone so the UI shows correct local times. |
+| **RedBeat (Redis-backed dynamic scheduler)** | Add/remove/update cron entries at runtime without restarting Celery Beat. Each entry is a Redis key. `beat_max_loop_interval=10` ensures new entries are picked up within seconds. |
 | **Auto-approve HITL** | Scheduled jobs run unattended, so HITL tools (email send, code execute) are auto-approved. The user pre-approves when creating the job. |
 | **Soft-delete jobs** | `DELETE` sets `status = "deleted"` instead of hard-delete. Preserves run history for audit. |
 | **`asyncio.run()` bridge** | Celery tasks are sync; the orchestrator is async. Same pattern as `document_tasks.py`. |
 | **Step dependency via `depends_on_steps`** | Step indices map to agent IDs at runtime. Topological sort ensures correct execution order with parallel stages where possible. |
 | **Separate run + step_result tables** | Each run is a snapshot. Step results track per-agent success/failure, output, timing, and resource usage for debugging. |
+| **SSE + Toast with View Results** | `run_complete` event includes first 2000 chars of composed text. Toast stays 20s with a "View Full Results" button that opens a modal fetching `GET /{job_id}/runs/{run_id}` for the full composed answer + raw agent data. |
 
 ### File Map
 
@@ -4328,9 +4349,10 @@ The LLM knows all available agents and their capabilities (from `agent_registry.
 | `database/models.py` | 4 SQLAlchemy ORM models (`ScheduledJob`, `ScheduledJobStep`, `ScheduledJobRun`, `ScheduledJobStepResult`) |
 | `utils/schemas.py` | Pydantic schemas (`ScheduledJobCreate`, `ScheduledJobNLCreate`, `ScheduledJobUpdate`, `ScheduledJobStepCreate`, `CRON_PRESETS`) |
 | `database/helpers.py` | CRUD helpers: `create_scheduled_job`, `get_scheduled_jobs_for_user`, `get_scheduled_job`, `update_scheduled_job`, `delete_scheduled_job`, `create_scheduled_job_run`, `get_scheduled_job_runs`, `get_scheduled_job_run_detail`, `load_scheduled_job_with_steps` |
-| `tasks/scheduled_job_tasks.py` | Celery task `execute_scheduled_job` + async engine that loads job → builds `ResolvedExecutionPlan` → runs `Orchestrator.execute_plan()` → records results → notifies |
-| `tasks/schedule_sync.py` | RedBeat sync: `sync_job_to_beat()` creates/updates cron entries, `remove_job_from_beat()` deletes them |
+| `tasks/scheduled_job_tasks.py` | Celery task `execute_scheduled_job` + async engine that loads job → builds `ResolvedExecutionPlan` → runs `Orchestrator.execute_plan()` → runs **Composer Agent** → records results → notifies |
+| `tasks/schedule_sync.py` | RedBeat sync: `sync_job_to_beat()` with `_convert_cron_to_utc()` timezone conversion, `remove_job_from_beat()` deletes entries |
 | `celery_app.py` | Beat scheduler config (`redbeat.RedBeatScheduler`) + task include |
 | `api/scheduled_jobs.py` | FastAPI router — 12 endpoints for CRUD, pause/resume, trigger, run history |
 | `core/master_agent.py` | `plan_scheduled_job()` — LLM-powered NL → structured job parser |
-| `frontend/index.html` | Scheduled Jobs panel (icon rail, job cards, creation modal with NL + manual tabs, run history modal) |
+| `frontend/index.html` | Scheduled Jobs panel (icon rail, job cards, creation modal with NL + manual tabs, run history modal, **View Results** modal with composed answer, toast notifications with 20s duration + View Full Results button) |
+| `core/composer_agent.py` | Composer Agent — called after orchestration to synthesise polished answer from agent outputs (same as live chat) |
