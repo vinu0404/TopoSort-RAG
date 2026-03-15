@@ -5,6 +5,7 @@ extracts entities, classifies intent, and builds the execution plan.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -119,6 +120,72 @@ class MasterAgent:
             usage=result.usage,
         )
         return generate_agent_ids(master_output)
+
+    async def plan_scheduled_job(
+        self,
+        natural_language: str,
+        user_id: str,
+    ) -> dict | None:
+        """
+        Parse a natural-language scheduled job description into structured data.
+
+        Returns a dict with: name, cron_expression, description, steps[]
+        or None if parsing fails.
+        """
+        agent_capabilities = ""
+        if self.agent_registry:
+            for agent in self.agent_registry.get_agent_capabilities():
+                name = agent.get("agent_name") or agent.get("name", "unknown")
+                desc = agent.get("description", "")
+                tools = ", ".join(agent.get("tools", []))
+                agent_capabilities += f"- **{name}**: {desc} (tools: {tools})\n"
+
+        prompt = f"""You are a scheduling assistant. Parse the user's request into a scheduled job definition.
+
+### User Request
+{natural_language}
+
+### Available Agents
+{agent_capabilities}
+
+### Instructions
+1. Extract a short name for the job (max 50 chars)
+2. Determine the cron expression (5-field: minute hour day_of_month month day_of_week)
+3. Break the task into ordered steps, each assigned to an agent
+4. Steps can depend on previous steps (by index) for data chaining
+5. Assign the correct tools from the agent's available tools
+
+Respond ONLY with valid JSON matching this schema:
+{json.dumps({
+    "name": "string — short job name",
+    "description": "string — what this job does",
+    "cron_expression": "string — 5-field cron expression",
+    "steps": [
+        {
+            "agent_name": "string — one of the available agents",
+            "task": "string — specific task description for this step",
+            "tools": ["string — tool names to use"],
+            "depends_on_steps": ["int — indices of steps this depends on"],
+        }
+    ]
+}, indent=2)}"""
+
+        result = await self.llm.generate(
+            prompt=prompt,
+            temperature=0.2,
+            model=config.master_model,
+            output_schema={
+                "name": "string",
+                "description": "string",
+                "cron_expression": "string",
+                "steps": [{"agent_name": "string", "task": "string",
+                           "tools": ["string"], "depends_on_steps": ["int"]}],
+            },
+        )
+
+        if result.data and "name" in result.data and "steps" in result.data:
+            return result.data
+        return None
 
     @staticmethod
     def _build_prompt(

@@ -102,6 +102,9 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
 
+    from api.scheduled_jobs import router as scheduled_jobs_router
+    app.include_router(scheduled_jobs_router, prefix="/api/v1")
+
     # ── Public shared conversation routes (no auth) ─────────────────
     @app.get("/api/v1/shared/{share_token}")
     async def get_shared_conversation(share_token: str):

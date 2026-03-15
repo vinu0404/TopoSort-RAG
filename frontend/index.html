@@ -488,7 +488,7 @@
 
   /* ── Side Panel ────────────────────────────────────────── */
   .side-panel {
-    width: 260px;
+    width: 320px;
     border-right: 1px solid #e0e0e0;
     display: none; flex-direction: column;
     background: #fff; overflow: hidden;
@@ -1748,6 +1748,145 @@
     animation: pulse 1s infinite;
   }
 
+  /* ═══ Scheduled Jobs Panel ═══════════════════════════════ */
+  .sj-list { display: flex; flex-direction: column; gap: 6px; }
+  .sj-card {
+    padding: 10px 12px; border-radius: 8px; background: #fafafa;
+    border: 1px solid #f0f0f0; cursor: default;
+  }
+  .sj-card-top { display: flex; align-items: center; gap: 8px; }
+  .sj-card-name { font-weight: 600; font-size: 0.85rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sj-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+  }
+  .sj-badge.active   { background: #d4edda; color: #155724; }
+  .sj-badge.paused    { background: #fff3cd; color: #856404; }
+  .sj-badge.deleted   { background: #f8d7da; color: #721c24; }
+  .sj-card-schedule { font-size: 0.75rem; color: #888; margin-top: 4px; }
+  .sj-card-meta { font-size: 0.7rem; color: #aaa; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .sj-card-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .sj-card-actions button {
+    font-size: 0.65rem; padding: 3px 8px; border: 1px solid #ddd;
+    border-radius: 6px; background: #fff; cursor: pointer; color: #333;
+  }
+  .sj-card-actions button:hover { background: #f5f5f5; }
+  .sj-card-actions button.sj-danger { color: #d9534f; border-color: #f5c6cb; }
+  .sj-card-actions button.sj-danger:hover { background: #fdecea; }
+  .sj-card-steps { margin-top: 6px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .sj-step-pill {
+    font-size: 0.6rem; padding: 2px 6px; border-radius: 8px;
+    background: #e8f4fd; color: #0369a1; border: 1px solid #bae6fd;
+  }
+  .sj-step-arrow { font-size: 0.6rem; color: #bbb; }
+  /* run history */
+  .sj-runs { margin-top: 8px; }
+  .sj-run-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0; border-bottom: 1px solid #f5f5f5; font-size: 0.7rem;
+  }
+  .sj-run-status { font-weight: 600; }
+  .sj-run-status.success { color: #155724; }
+  .sj-run-status.failed { color: #721c24; }
+  .sj-run-status.partial_failure { color: #856404; }
+  .sj-run-status.running { color: #004085; }
+  .sj-run-status.pending { color: #888; }
+
+  /* modal */
+  .sj-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+    z-index: 2000; display: flex; align-items: center; justify-content: center;
+  }
+  .sj-modal {
+    background: #fff; border-radius: 12px; width: 520px; max-width: 92vw;
+    max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18); animation: popupIn 0.2s ease;
+  }
+  .sj-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 20px; border-bottom: 1px solid #eee;
+  }
+  .sj-modal-header h3 { margin: 0; font-size: 1rem; }
+  .sj-modal-header button { background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #888; }
+  .sj-modal-body { padding: 16px 20px; }
+  .sj-modal-body label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 4px; color: #555; }
+  .sj-modal-body input, .sj-modal-body textarea, .sj-modal-body select {
+    width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 0.82rem; margin-bottom: 12px; box-sizing: border-box;
+    font-family: inherit;
+  }
+  .sj-modal-body textarea { resize: vertical; min-height: 60px; }
+  .sj-modal-tabs { display: flex; gap: 0; margin-bottom: 14px; }
+  .sj-modal-tab {
+    flex: 1; padding: 8px; text-align: center; font-size: 0.78rem; cursor: pointer;
+    border: 1px solid #ddd; background: #f5f5f5; font-weight: 600; color: #666;
+  }
+  .sj-modal-tab:first-child { border-radius: 8px 0 0 8px; }
+  .sj-modal-tab:last-child { border-radius: 0 8px 8px 0; }
+  .sj-modal-tab.active { background: #000; color: #fff; border-color: #000; }
+  .sj-modal-footer {
+    display: flex; gap: 10px; justify-content: flex-end;
+    padding: 12px 20px 16px; border-top: 1px solid #eee;
+  }
+  .sj-modal-cancel { padding: 8px 16px; border-radius: 8px; border: 1px solid #ddd; background: #f0f0f0; cursor: pointer; font-size: 0.82rem; }
+  .sj-modal-save { padding: 8px 16px; border-radius: 8px; border: none; background: #000; color: #fff; cursor: pointer; font-size: 0.82rem; }
+  .sj-modal-save:disabled { opacity: 0.5; cursor: default; }
+  /* step builder */
+  .sj-steps-builder { display: flex; flex-direction: column; gap: 8px; }
+  .sj-step-row {
+    padding: 8px 10px; border: 1px solid #e5e5e5; border-radius: 8px;
+    background: #fafafa; position: relative;
+  }
+  .sj-step-row label { margin-bottom: 2px; }
+  .sj-step-row input, .sj-step-row select, .sj-step-row textarea {
+    margin-bottom: 6px;
+  }
+  .sj-step-remove {
+    position: absolute; top: 6px; right: 8px; background: none; border: none;
+    color: #d9534f; cursor: pointer; font-size: 0.9rem;
+  }
+  .sj-add-step-btn {
+    width: 100%; padding: 7px; border: 1px dashed #d0d0d0; border-radius: 8px;
+    background: none; cursor: pointer; color: #888; font-size: 0.78rem;
+    margin-top: 4px;
+  }
+  .sj-add-step-btn:hover { background: #f5f5f5; }
+  .sj-nl-preview { padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #eee; margin-top: 8px; font-size: 0.78rem; }
+  .sj-nl-preview h4 { margin: 0 0 6px; font-size: 0.82rem; }
+
+  /* ═══ Toast Notifications ═══════════════════════════════ */
+  .toast-container {
+    position: fixed; top: 16px; right: 16px; z-index: 9999;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none; max-height: 90vh; overflow-y: auto;
+  }
+  .toast {
+    pointer-events: auto; position: relative;
+    min-width: 300px; max-width: 440px; padding: 12px 32px 12px 16px;
+    border-radius: 10px; background: #fff;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.15);
+    border-left: 4px solid #2196F3;
+    animation: toastIn 0.3s ease;
+    font-size: 0.82rem; line-height: 1.4;
+  }
+  .toast.success { border-left-color: #4CAF50; }
+  .toast.error { border-left-color: #d9534f; }
+  .toast.warning { border-left-color: #FF9800; }
+  .toast-title { font-weight: 700; margin-bottom: 3px; font-size: 0.85rem; }
+  .toast-body { color: #555; font-size: 0.78rem; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+  .toast-close {
+    position: absolute; top: 6px; right: 8px; background: none;
+    border: none; cursor: pointer; color: #aaa; font-size: 1rem;
+  }
+  .toast-actions { margin-top: 8px; display: flex; gap: 6px; }
+  .toast-actions button {
+    padding: 4px 10px; font-size: 0.75rem; border-radius: 6px;
+    border: 1px solid #ddd; background: #f0f4ff; color: #1a73e8;
+    cursor: pointer; font-weight: 600;
+  }
+  .toast-actions button:hover { background: #dde6fb; }
+  @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
   @media (max-width: 768px) {
     .icon-rail { width: 40px; }
     .rail-btn { width: 34px; height: 34px; }
@@ -1757,6 +1896,7 @@
 </style>
 </head>
 <body>
+<div class="toast-container" id="toastContainer"></div>
 
 <!-- ── Auth ────────────────────────────────────────────────── -->
 <div class="auth-overlay" id="authOverlay">
@@ -1851,6 +1991,10 @@
     <button class="rail-btn" data-panel="panelAnalytics" onclick="togglePanel('panelAnalytics')" title="Analytics">
       <svg viewBox="0 0 24 24"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
     </button>
+    <button class="rail-btn" data-panel="panelScheduledJobs" onclick="togglePanel('panelScheduledJobs')" title="Scheduled Jobs">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span class="rail-badge" id="sjBadge" style="display:none">0</span>
+    </button>
     <div class="rail-spacer"></div>
     <button class="rail-btn" data-panel="panelInfo" onclick="togglePanel('panelInfo')" title="Info">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -1927,6 +2071,16 @@
         <div id="analyticsContent" class="analytics-content">
           <div style="color:#888;font-size:0.8em;padding:12px;">Select to load analytics</div>
         </div>
+      </div>
+      <div class="panel-view" id="panelScheduledJobs">
+        <div class="files-header">
+          <span>Scheduled Jobs</span>
+          <button class="btn-refresh" onclick="loadScheduledJobs()" title="Refresh">&#x21bb;</button>
+        </div>
+        <div class="sj-list" id="sjList">
+          <div class="file-empty">No scheduled jobs yet</div>
+        </div>
+        <button class="add-persona-btn" onclick="showScheduledJobModal()">+ New Job</button>
       </div>
     </div>
   </aside>
@@ -2020,12 +2174,14 @@ function togglePanel(panelId) {
     panelWebScrape: 'Web Scrape',
     panelConnections: 'Connections',
     panelInfo: 'Info',
-    panelAnalytics: 'Analytics'
+    panelAnalytics: 'Analytics',
+    panelScheduledJobs: 'Scheduled Jobs'
   };
   document.getElementById('panelTitle').textContent = titles[panelId] || '';
   panel.classList.add('open');
   _activePanel = panelId;
   if (panelId === 'panelAnalytics') loadAnalytics();
+  if (panelId === 'panelScheduledJobs') loadScheduledJobs();
 }
 
 function closePanel() {
@@ -2099,9 +2255,15 @@ function switchTab(tab) {
 async function loadDemoCredentials() {
   if (!demoCredBox) return;
   try {
-    const r = await fetch(`${API}/auth/demo-credentials`);
-    if (!r.ok) return;
-    const data = await r.json();
+    let data = null;
+    const paths = [`${API}/auth/demo-credentials`, `${API}/demo-credentials`];
+    for (const url of paths) {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      data = await r.json();
+      break;
+    }
+    if (!data) return;
     if (!data.enabled) {
       demoCredBox.style.display = 'none';
       return;
@@ -2202,6 +2364,8 @@ function onLoginSuccess(data) {
   loadUserFiles();
   loadModels();
   loadWebCollections();
+  loadScheduledJobs();
+  startScheduledJobSSE();
 }
 
 async function doLogout() {
@@ -2228,8 +2392,11 @@ async function doLogout() {
   document.getElementById('convList').innerHTML = '<div style="color:#888;font-size:0.8em">No conversations yet</div>';
   document.getElementById('personaList').innerHTML = '<div style="color:#888;font-size:0.8em">No personas yet</div>';
   document.getElementById('wscList').innerHTML = '<div class="file-empty">No web collections yet</div>';
+  document.getElementById('sjList').innerHTML = '<div class="file-empty">No scheduled jobs yet</div>';
   _webCollections = [];
+  _scheduledJobs = [];
   _selectedDocIds = [];
+  if (_sjSSECtrl) { _sjSSECtrl.abort(); _sjSSECtrl = null; }
   if (_wscAbortCtrl) { _wscAbortCtrl.abort(); _wscAbortCtrl = null; }
   currentPersonaId = null;
   updatePersonaBar();
@@ -2947,6 +3114,550 @@ function renderAnalytics(data) {
   el.innerHTML = statsHtml + usageHtml + timelineHtml + rtHtml + bdHtml + wsHtml;
 }
 
+// ─── Toast Notifications ──────────────────────────────
+function showToast(title, body, type = 'info', actions = null, duration = 20000) {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  let actionsHtml = '';
+  if (actions && actions.length) {
+    actionsHtml = '<div class="toast-actions">' + actions.map((a, i) =>
+      `<button data-act="${i}">${escapeHtml(a.label)}</button>`
+    ).join('') + '</div>';
+  }
+  toast.innerHTML = `<button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+    <div class="toast-title">${escapeHtml(title)}</div>
+    <div class="toast-body">${escapeHtml(body)}</div>${actionsHtml}`;
+  if (actions && actions.length) {
+    actions.forEach((a, i) => {
+      const btn = toast.querySelector(`[data-act="${i}"]`);
+      if (btn) btn.addEventListener('click', () => { a.onClick(); toast.remove(); });
+    });
+  }
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, duration);
+}
+
+// ─── Scheduled Jobs SSE Stream ────────────────────────
+let _sjSSECtrl = null;
+
+function startScheduledJobSSE() {
+  if (_sjSSECtrl) { _sjSSECtrl.abort(); _sjSSECtrl = null; }
+  if (!currentUser) return;
+
+  const ctrl = new AbortController();
+  _sjSSECtrl = ctrl;
+
+  (async function readSjSSE() {
+    try {
+      const res = await fetch(`${API}/scheduled-jobs/status/stream`, {
+        headers: { ...authHeaders(), 'Accept': 'text/event-stream' },
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+
+        for (const part of parts) {
+          if (!part.trim() || part.startsWith(':')) continue;
+          const dataMatch = part.match(/^data:\s*(.+)$/m);
+          if (!dataMatch) continue;
+          try {
+            const data = JSON.parse(dataMatch[1]);
+            const event = data.event;
+
+            if (event === 'run_started') {
+              showToast('Job Started', `Running job (trigger: ${data.trigger_type || 'scheduled'})`, 'info', null, 8000);
+            } else if (event === 'run_complete') {
+              const type = data.status === 'success' ? 'success' : data.status === 'failed' ? 'error' : 'warning';
+              const preview = data.result_text ? data.result_text.substring(0, 300) + (data.result_text.length > 300 ? '...' : '') : `${data.completed_steps}/${data.total_steps} steps succeeded`;
+              const actions = [];
+              if (data.run_id && data.job_id) {
+                actions.push({ label: 'View Full Results', onClick: () => showRunDetail(data.job_id, data.run_id) });
+              }
+              showToast(
+                `Job ${data.status === 'success' ? 'Completed' : data.status === 'failed' ? 'Failed' : 'Partial'}`,
+                preview,
+                type,
+                actions
+              );
+              loadScheduledJobs();
+            } else if (event === 'step_complete') {
+              // skip individual step toasts to reduce noise
+            } else if (event === 'notification') {
+              const actions = [];
+              if (data.run_id && data.job_id) {
+                actions.push({ label: 'View Full Results', onClick: () => showRunDetail(data.job_id, data.run_id) });
+              }
+              showToast(data.title || 'Job Notification', data.summary || '', 'info', actions);
+            }
+          } catch (err) { console.error('SJ SSE parse error:', err); }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.warn('SJ SSE disconnected, retrying in 5s...');
+        setTimeout(() => { if (currentUser) startScheduledJobSSE(); }, 5000);
+      }
+    }
+  })();
+}
+
+// ─── Scheduled Jobs Panel ──────────────────────────────
+let _scheduledJobs = [];
+let _sjPresets = {};
+let _sjAgentNames = [];
+
+async function loadScheduledJobs() {
+  const el = document.getElementById('sjList');
+  if (!el || !currentUser) return;
+  try {
+    const [jobsRes, presetsRes] = await Promise.all([
+      fetch(`${API}/scheduled-jobs`, { headers: authHeaders() }),
+      fetch(`${API}/scheduled-jobs/presets`, { headers: authHeaders() }),
+    ]);
+    if (jobsRes.status === 401) { doLogout(); return; }
+    _scheduledJobs = jobsRes.ok ? await jobsRes.json() : [];
+    _sjPresets = presetsRes.ok ? await presetsRes.json() : {};
+    const badge = document.getElementById('sjBadge');
+    if (badge) {
+      const active = _scheduledJobs.filter(j => j.status === 'active').length;
+      badge.textContent = active;
+      badge.style.display = active > 0 ? '' : 'none';
+    }
+    renderScheduledJobs();
+  } catch (err) {
+    console.error('loadScheduledJobs error:', err);
+  }
+}
+
+function renderScheduledJobs() {
+  const el = document.getElementById('sjList');
+  if (!_scheduledJobs.length) {
+    el.innerHTML = '<div class="file-empty">No scheduled jobs yet</div>';
+    return;
+  }
+  el.innerHTML = _scheduledJobs.map(j => {
+    const steps = (j.steps || []).map((s, i) => {
+      const name = (s.agent_name || '').replace(/_agent$/, '');
+      return `<span class="sj-step-pill" title="${escapeHtml(s.task || '')}">${escapeHtml(name)}</span>`;
+    }).join('<span class="sj-step-arrow">&rarr;</span>');
+
+    const lastRun = j.last_run_at ? new Date(j.last_run_at).toLocaleString('en', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : 'Never';
+    const nextRun = j.next_run_at ? new Date(j.next_run_at).toLocaleString('en', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '—';
+
+    const isPaused = j.status === 'paused';
+    const isActive = j.status === 'active';
+
+    return `<div class="sj-card" data-jobid="${j.job_id}">
+      <div class="sj-card-top">
+        <span class="sj-card-name" title="${escapeHtml(j.name)}">${escapeHtml(j.name)}</span>
+        <span class="sj-badge ${j.status}">${j.status}</span>
+      </div>
+      <div class="sj-card-schedule">${escapeHtml(j.cron_human || j.cron_expression)}</div>
+      ${steps ? `<div class="sj-card-steps">${steps}</div>` : ''}
+      <div class="sj-card-meta">
+        <span>Last: ${lastRun}</span>
+        <span>Next: ${nextRun}</span>
+      </div>
+      <div class="sj-card-actions">
+        <button onclick="triggerScheduledJob('${j.job_id}')">Run Now</button>
+        ${isActive ? `<button onclick="pauseScheduledJob('${j.job_id}')">Pause</button>` : ''}
+        ${isPaused ? `<button onclick="resumeScheduledJob('${j.job_id}')">Resume</button>` : ''}
+        <button onclick="showScheduledJobRuns('${j.job_id}')">History</button>
+        <button onclick="viewLatestResults('${j.job_id}')">View Results</button>
+        <button class="sj-danger" onclick="deleteScheduledJob('${j.job_id}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function triggerScheduledJob(jobId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/trigger`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) { showToast('Trigger Failed', 'Could not trigger job', 'error'); return; }
+    showToast('Job Queued', 'Job has been queued and will run shortly', 'info', null, 6000);
+    setTimeout(() => loadScheduledJobs(), 2000);
+  } catch (err) { console.error('triggerJob error:', err); }
+}
+
+async function pauseScheduledJob(jobId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/pause`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    if (r.ok) await loadScheduledJobs();
+  } catch (err) { console.error('pauseJob error:', err); }
+}
+
+async function resumeScheduledJob(jobId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/resume`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    if (r.ok) await loadScheduledJobs();
+  } catch (err) { console.error('resumeJob error:', err); }
+}
+
+async function deleteScheduledJob(jobId) {
+  if (!confirm('Delete this scheduled job?')) return;
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}`, {
+      method: 'DELETE', headers: authHeaders(),
+    });
+    if (r.ok) await loadScheduledJobs();
+  } catch (err) { console.error('deleteJob error:', err); }
+}
+
+async function showScheduledJobRuns(jobId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/runs?limit=10`, { headers: authHeaders() });
+    if (!r.ok) return;
+    const runs = await r.json();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sj-modal-overlay';
+    const runsHtml = runs.length ? runs.map(run => {
+      const started = run.started_at ? new Date(run.started_at).toLocaleString('en', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '—';
+      return `<div class="sj-run-row" style="display:flex;align-items:center;gap:8px;">
+        <span class="sj-run-status ${run.status}">${run.status}</span>
+        <span>${run.trigger_type}</span>
+        <span>${started}</span>
+        <span>${run.completed_steps}/${run.total_steps} steps</span>
+        <button onclick="this.closest('.sj-modal-overlay').remove(); showRunDetail('${jobId}','${run.run_id}')" style="margin-left:auto;padding:2px 8px;font-size:0.75rem;border:1px solid #ddd;border-radius:4px;background:#f0f4ff;color:#1a73e8;cursor:pointer;">View</button>
+      </div>`;
+    }).join('') : '<div style="color:#888;font-size:0.8em;padding:8px 0">No runs yet</div>';
+
+    overlay.innerHTML = `<div class="sj-modal">
+      <div class="sj-modal-header"><h3>Run History</h3><button onclick="this.closest('.sj-modal-overlay').remove()">&times;</button></div>
+      <div class="sj-modal-body">${runsHtml}</div>
+      <div class="sj-modal-footer">
+        <button class="sj-modal-cancel" onclick="this.closest('.sj-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  } catch (err) { console.error('showRuns error:', err); }
+}
+
+async function showRunDetail(jobId, runId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/runs/${runId}`, { headers: authHeaders() });
+    if (!r.ok) { showToast('Error', 'Could not load run details', 'error'); return; }
+    const run = await r.json();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sj-modal-overlay';
+
+    // Extract composed answer from first step that has it
+    let composedAnswer = '';
+    for (const sr of (run.step_results || [])) {
+      if (sr.agent_output && sr.agent_output.composed_answer) {
+        composedAnswer = sr.agent_output.composed_answer;
+        break;
+      }
+    }
+
+    const composedHtml = composedAnswer
+      ? `<div style="margin-bottom:14px;padding:12px;background:#f0f7ff;border:1px solid #d0e3ff;border-radius:8px;">
+          <div style="font-weight:700;font-size:0.85rem;color:#1a73e8;margin-bottom:6px;">Composed Answer</div>
+          <div style="font-size:0.82rem;color:#333;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto;">${escapeHtml(composedAnswer)}</div>
+        </div>`
+      : '';
+
+    const stepsHtml = (run.step_results || []).map(sr => {
+      const statusCls = sr.status === 'success' ? 'color:#4CAF50' : sr.status === 'failed' ? 'color:#d9534f' : 'color:#FF9800';
+      const agentLabel = (sr.agent_name || '').replace(/_agent$/, '');
+      let outputHtml = '';
+      if (sr.agent_output && sr.agent_output.data) {
+        const tavilyAnswer = sr.agent_output.data.tavily_answer || '';
+        const rawData = tavilyAnswer || JSON.stringify(sr.agent_output.data, null, 2);
+        outputHtml = `<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:0.75rem;color:#888;">Raw agent data</summary>
+          <div style="margin-top:4px;padding:8px 10px;background:#f8f9fa;border-radius:6px;font-size:0.78rem;color:#333;max-height:200px;overflow-y:auto;white-space:pre-wrap;line-height:1.5;">${escapeHtml(rawData)}</div></details>`;
+      }
+      if (sr.error_message) {
+        outputHtml += `<div style="margin-top:4px;padding:6px 10px;background:#fdf2f2;border-radius:6px;font-size:0.75rem;color:#d9534f;">${escapeHtml(sr.error_message)}</div>`;
+      }
+      return `<div style="border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <strong>Step ${sr.step_order + 1}: ${escapeHtml(agentLabel)}</strong>
+          <span style="${statusCls};font-weight:600;font-size:0.8rem;">${sr.status}</span>
+        </div>
+        ${outputHtml}
+      </div>`;
+    }).join('');
+
+    const started = run.started_at ? new Date(run.started_at).toLocaleString() : '—';
+    const completed = run.completed_at ? new Date(run.completed_at).toLocaleString() : '—';
+
+    overlay.innerHTML = `<div class="sj-modal" style="max-width:640px;">
+      <div class="sj-modal-header"><h3>Run Results</h3><button onclick="this.closest('.sj-modal-overlay').remove()">&times;</button></div>
+      <div class="sj-modal-body" style="max-height:70vh;overflow-y:auto;">
+        <div style="display:flex;gap:12px;margin-bottom:12px;font-size:0.8rem;color:#666;flex-wrap:wrap;">
+          <span>Status: <strong style="color:${run.status==='success'?'#4CAF50':'#d9534f'}">${run.status}</strong></span>
+          <span>Trigger: ${run.trigger_type}</span>
+          <span>Started: ${started}</span>
+          <span>Finished: ${completed}</span>
+        </div>
+        ${composedHtml}
+        ${stepsHtml || '<div style="color:#888">No step results</div>'}
+      </div>
+      <div class="sj-modal-footer">
+        <button class="sj-modal-cancel" onclick="this.closest('.sj-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  } catch (err) { console.error('showRunDetail error:', err); }
+}
+
+async function viewLatestResults(jobId) {
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/${jobId}/runs?limit=1`, { headers: authHeaders() });
+    if (!r.ok) return;
+    const runs = await r.json();
+    if (!runs.length) { showToast('No Runs', 'This job has not run yet', 'info', null, 5000); return; }
+    showRunDetail(jobId, runs[0].run_id);
+  } catch (err) { console.error('viewLatestResults error:', err); }
+}
+
+// ── Job Creation Modal ──
+let _sjModalTab = 'nl'; // 'nl' or 'manual'
+let _sjNlPreview = null;
+
+function showScheduledJobModal() {
+  document.querySelector('.sj-modal-overlay')?.remove();
+  _sjNlPreview = null;
+  _sjModalTab = 'nl';
+
+  // Gather agent names from the info panel
+  _sjAgentNames = [];
+  const agentSpan = document.getElementById('agentList');
+  if (agentSpan && agentSpan.textContent && agentSpan.textContent !== 'Loading…') {
+    _sjAgentNames = agentSpan.textContent.split(', ').map(n => n.toLowerCase().replace(/\s+/g, '_') + '_agent');
+  }
+
+  const presetOptions = Object.entries(_sjPresets).map(([name, info]) =>
+    `<option value="${info.cron}">${info.label} (${info.cron})</option>`
+  ).join('');
+
+  const agentOptions = _sjAgentNames.map(a =>
+    `<option value="${a}">${a.replace(/_agent$/, '').replace(/_/g, ' ')}</option>`
+  ).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sj-modal-overlay';
+  overlay.innerHTML = `<div class="sj-modal">
+    <div class="sj-modal-header"><h3>New Scheduled Job</h3><button onclick="this.closest('.sj-modal-overlay').remove()">&times;</button></div>
+    <div class="sj-modal-body">
+      <div class="sj-modal-tabs">
+        <div class="sj-modal-tab active" onclick="switchSjTab('nl')">Natural Language</div>
+        <div class="sj-modal-tab" onclick="switchSjTab('manual')">Manual Builder</div>
+      </div>
+
+      <!-- NL Tab -->
+      <div id="sjTabNl">
+        <label>Describe what you want scheduled</label>
+        <textarea id="sjNlPrompt" placeholder="e.g. Every Monday morning, search for AI news and email a summary to me" rows="3"></textarea>
+        <button class="sj-modal-save" onclick="parseSjPrompt()" id="sjNlParseBtn" style="margin-bottom:12px;">Parse &amp; Preview</button>
+        <div id="sjNlPreview"></div>
+      </div>
+
+      <!-- Manual Tab -->
+      <div id="sjTabManual" style="display:none;">
+        <label>Job Name</label>
+        <input id="sjManualName" placeholder="My Weekly Digest" />
+
+        <label>Description</label>
+        <input id="sjManualDesc" placeholder="Optional description" />
+
+        <label>Schedule</label>
+        <select id="sjManualPreset" onchange="document.getElementById('sjManualCron').value = this.value">
+          <option value="">Custom...</option>
+          ${presetOptions}
+        </select>
+        <input id="sjManualCron" placeholder="Cron expression (e.g. 0 9 * * 1)" style="margin-top:4px;" />
+
+        <label>Notification</label>
+        <select id="sjManualNotify">
+          <option value="in_app">In-App</option>
+          <option value="email">Email</option>
+          <option value="none">None</option>
+        </select>
+
+        <label style="margin-top:8px;">Steps</label>
+        <div class="sj-steps-builder" id="sjStepsBuilder">
+          <div class="sj-step-row" data-idx="0">
+            <button class="sj-step-remove" onclick="this.parentElement.remove()">&times;</button>
+            <label>Agent</label>
+            <select class="sj-step-agent">${agentOptions}</select>
+            <label>Task</label>
+            <textarea class="sj-step-task" rows="2" placeholder="What should this agent do?"></textarea>
+          </div>
+        </div>
+        <button class="sj-add-step-btn" onclick="addSjStep()">+ Add Step</button>
+      </div>
+    </div>
+    <div class="sj-modal-footer">
+      <button class="sj-modal-cancel" onclick="this.closest('.sj-modal-overlay').remove()">Cancel</button>
+      <button class="sj-modal-save" onclick="saveScheduledJob()" id="sjSaveBtn">Create Job</button>
+    </div>
+  </div>`;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function switchSjTab(tab) {
+  _sjModalTab = tab;
+  document.querySelectorAll('.sj-modal-tab').forEach((el, i) => {
+    el.classList.toggle('active', (i === 0 && tab === 'nl') || (i === 1 && tab === 'manual'));
+  });
+  document.getElementById('sjTabNl').style.display = tab === 'nl' ? '' : 'none';
+  document.getElementById('sjTabManual').style.display = tab === 'manual' ? '' : 'none';
+}
+
+function addSjStep() {
+  const builder = document.getElementById('sjStepsBuilder');
+  const idx = builder.children.length;
+  const agentOptions = _sjAgentNames.map(a =>
+    `<option value="${a}">${a.replace(/_agent$/, '').replace(/_/g, ' ')}</option>`
+  ).join('');
+  const row = document.createElement('div');
+  row.className = 'sj-step-row';
+  row.dataset.idx = idx;
+  row.innerHTML = `<button class="sj-step-remove" onclick="this.parentElement.remove()">&times;</button>
+    <label>Agent</label>
+    <select class="sj-step-agent">${agentOptions}</select>
+    <label>Task</label>
+    <textarea class="sj-step-task" rows="2" placeholder="What should this agent do?"></textarea>`;
+  builder.appendChild(row);
+}
+
+async function parseSjPrompt() {
+  const prompt = document.getElementById('sjNlPrompt')?.value?.trim();
+  if (!prompt) return;
+  const btn = document.getElementById('sjNlParseBtn');
+  const previewEl = document.getElementById('sjNlPreview');
+  btn.disabled = true;
+  btn.textContent = 'Parsing...';
+  previewEl.innerHTML = '';
+
+  try {
+    const r = await fetch(`${API}/scheduled-jobs/from-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ prompt, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }),
+    });
+    if (!r.ok) { previewEl.innerHTML = `<div style="color:#d9534f;font-size:0.8em">Failed to parse. Try rephrasing.</div>`; return; }
+    const data = await r.json();
+    _sjNlPreview = data.preview;
+
+    const steps = (_sjNlPreview.steps || []).map((s, i) => {
+      const deps = (s.depends_on_steps || []).length ? ` (after step ${s.depends_on_steps.join(', ')})` : '';
+      return `<div style="margin:4px 0;"><strong>Step ${i + 1}:</strong> ${escapeHtml(s.agent_name)} &mdash; ${escapeHtml(s.task)}${deps}</div>`;
+    }).join('');
+
+    previewEl.innerHTML = `<div class="sj-nl-preview">
+      <h4>${escapeHtml(_sjNlPreview.name || 'Untitled')}</h4>
+      <div style="color:#555;margin-bottom:6px;">${escapeHtml(_sjNlPreview.description || '')}</div>
+      <div style="margin-bottom:6px;"><strong>Schedule:</strong> ${escapeHtml(_sjNlPreview.cron_expression || '')} (${escapeHtml(_sjNlPreview.cron_human || '')})</div>
+      ${steps}
+    </div>`;
+  } catch (err) {
+    previewEl.innerHTML = `<div style="color:#d9534f;font-size:0.8em">Error: ${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Parse & Preview';
+  }
+}
+
+async function saveScheduledJob() {
+  const saveBtn = document.getElementById('sjSaveBtn');
+  saveBtn.disabled = true;
+  try {
+    let body;
+    if (_sjModalTab === 'nl') {
+      // Use the parsed NL preview
+      if (!_sjNlPreview) { alert('Please parse a prompt first'); return; }
+      body = {
+        name: _sjNlPreview.name,
+        description: _sjNlPreview.description || '',
+        cron_expression: _sjNlPreview.cron_expression,
+        timezone: _sjNlPreview.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        notification_mode: _sjNlPreview.notification_mode || 'in_app',
+        steps: (_sjNlPreview.steps || []).map(s => ({
+          agent_name: s.agent_name,
+          task: s.task,
+          tools: s.tools || [],
+          depends_on_steps: s.depends_on_steps || [],
+        })),
+      };
+    } else {
+      // Manual builder
+      const name = document.getElementById('sjManualName')?.value?.trim();
+      const cron = document.getElementById('sjManualCron')?.value?.trim();
+      if (!name || !cron) { alert('Name and cron expression are required'); return; }
+
+      const stepRows = document.querySelectorAll('.sj-step-row');
+      const steps = [];
+      stepRows.forEach((row, i) => {
+        const agent = row.querySelector('.sj-step-agent')?.value;
+        const task = row.querySelector('.sj-step-task')?.value?.trim();
+        if (agent && task) {
+          steps.push({
+            agent_name: agent,
+            task,
+            tools: [],
+            depends_on_steps: i > 0 ? [i - 1] : [],
+          });
+        }
+      });
+      if (!steps.length) { alert('Add at least one step'); return; }
+
+      body = {
+        name,
+        description: document.getElementById('sjManualDesc')?.value?.trim() || '',
+        cron_expression: cron,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        notification_mode: document.getElementById('sjManualNotify')?.value || 'in_app',
+        steps,
+      };
+    }
+
+    const r = await fetch(`${API}/scheduled-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert(`Failed to create job: ${err.detail || r.statusText}`);
+      return;
+    }
+    document.querySelector('.sj-modal-overlay')?.remove();
+    await loadScheduledJobs();
+  } catch (err) {
+    console.error('saveScheduledJob error:', err);
+    alert(`Error: ${err.message}`);
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 // ─── Connections (OAuth) ──────────────────────────────
 const PROVIDER_ICONS = {
   gmail: '📧', slack: '💬', notion: '📝', github: '🐙',
@@ -3087,6 +3798,8 @@ window.addEventListener('message', (event) => {
     loadPersonas();
     loadUserFiles();
     loadModels();
+    loadScheduledJobs();
+    startScheduledJobSSE();
   }
 })();
 

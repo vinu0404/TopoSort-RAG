@@ -47,5 +47,11 @@ celery.conf.update(
 )
 
 celery.conf.update(
-    include=["tasks.document_tasks", "tasks.web_scrape_tasks"],
+    include=["tasks.document_tasks", "tasks.web_scrape_tasks", "tasks.scheduled_job_tasks"],
+
+    # RedBeat — dynamic schedule stored in Redis
+    beat_scheduler="redbeat.RedBeatScheduler",
+    redbeat_redis_url=config.celery_broker_url,
+    redbeat_key_prefix="mrag:redbeat:",
+    beat_max_loop_interval=10,          # check for new/changed entries every 15s
 )

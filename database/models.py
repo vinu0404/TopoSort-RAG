@@ -240,3 +240,92 @@ class WebScrapeUrl(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     collection = relationship("WebScrapeCollection", back_populates="urls")
+
+
+# ── Scheduled Jobs ──────────────────────────────────────────────────────────
+
+
+class ScheduledJob(Base):
+    __tablename__ = "scheduled_jobs"
+
+    job_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(256), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    cron_expression = Column(String(128), nullable=False)
+    timezone = Column(String(64), nullable=False, default="UTC")
+    status = Column(String(16), nullable=False, default="active")
+    notification_mode = Column(String(32), nullable=False, default="in_app")
+    notification_target = Column(Text, nullable=True)
+    max_retries = Column(Integer, nullable=False, default=2)
+    metadata_ = Column("metadata", JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    next_run_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User")
+    steps = relationship(
+        "ScheduledJobStep", back_populates="job",
+        cascade="all, delete-orphan", order_by="ScheduledJobStep.step_order",
+    )
+    runs = relationship("ScheduledJobRun", back_populates="job", cascade="all, delete-orphan")
+
+
+class ScheduledJobStep(Base):
+    __tablename__ = "scheduled_job_steps"
+
+    step_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("scheduled_jobs.job_id", ondelete="CASCADE"), nullable=False)
+    step_order = Column(Integer, nullable=False)
+    agent_name = Column(String(64), nullable=False)
+    task = Column(Text, nullable=False)
+    entities = Column(JSONB, default=dict)
+    tools = Column(ARRAY(Text), default=list)
+    depends_on_steps = Column(ARRAY(Integer), default=list)
+    timeout = Column(Integer, nullable=False, default=60)
+    max_retries = Column(Integer, nullable=False, default=2)
+    priority = Column(String(16), nullable=False, default="critical")
+    config = Column(JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    job = relationship("ScheduledJob", back_populates="steps")
+
+
+class ScheduledJobRun(Base):
+    __tablename__ = "scheduled_job_runs"
+
+    run_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("scheduled_jobs.job_id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    trigger_type = Column(String(16), nullable=False, default="scheduled")
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    error_summary = Column(Text, nullable=True)
+    total_steps = Column(Integer, nullable=False, default=0)
+    completed_steps = Column(Integer, nullable=False, default=0)
+    failed_steps = Column(Integer, nullable=False, default=0)
+    notification_sent = Column(Boolean, nullable=False, default=False)
+    metadata_ = Column("metadata", JSONB, default=dict)
+    created_at_ = Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    job = relationship("ScheduledJob", back_populates="runs")
+    step_results = relationship("ScheduledJobStepResult", back_populates="run", cascade="all, delete-orphan")
+
+
+class ScheduledJobStepResult(Base):
+    __tablename__ = "scheduled_job_step_results"
+
+    result_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("scheduled_job_runs.run_id", ondelete="CASCADE"), nullable=False)
+    step_id = Column(UUID(as_uuid=True), ForeignKey("scheduled_job_steps.step_id", ondelete="CASCADE"), nullable=False)
+    step_order = Column(Integer, nullable=False)
+    agent_name = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    agent_output = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    resource_usage = Column(JSONB, default=dict)
+
+    run = relationship("ScheduledJobRun", back_populates="step_results")

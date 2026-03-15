@@ -22,6 +22,10 @@ from database.models import (
     HitlRequest,
     Message,
     Persona,
+    ScheduledJob,
+    ScheduledJobRun,
+    ScheduledJobStep,
+    ScheduledJobStepResult,
     Session,
     User,
     WebScrapeCollection,
@@ -52,7 +56,6 @@ async def ensure_user_exists(session: AsyncSession, user_id: str) -> None:
     )
     await session.execute(stmt)
     await session.flush()
-
 
 async def ensure_demo_user(session: AsyncSession) -> dict | None:
     """Ensure the configured demo user exists (idempotent)."""
@@ -99,7 +102,6 @@ async def ensure_demo_user(session: AsyncSession) -> dict | None:
         "email": existing.email,
         "display_name": existing.display_name,
     }
-
 
 async def ensure_session_exists(
     session: AsyncSession,
@@ -1559,3 +1561,373 @@ async def get_web_scrape_stats(
             "created_at": c.created_at.isoformat() if c.created_at else None,
         })
     return stats
+
+
+# ── Scheduled Jobs helpers ────────────────────────────────────────
+
+
+def _job_to_dict(row: ScheduledJob, steps: list | None = None) -> dict:
+    """Serialise a ScheduledJob row to a JSON-friendly dict."""
+    d = {
+        "job_id": str(row.job_id),
+        "name": row.name,
+        "description": row.description,
+        "cron_expression": row.cron_expression,
+        "timezone": row.timezone,
+        "status": row.status,
+        "notification_mode": row.notification_mode,
+        "notification_target": row.notification_target,
+        "max_retries": row.max_retries,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "last_run_at": row.last_run_at.isoformat() if row.last_run_at else None,
+        "next_run_at": row.next_run_at.isoformat() if row.next_run_at else None,
+    }
+    if steps is not None:
+        d["steps"] = steps
+    return d
+
+
+def _step_to_dict(row: ScheduledJobStep) -> dict:
+    return {
+        "step_id": str(row.step_id),
+        "step_order": row.step_order,
+        "agent_name": row.agent_name,
+        "task": row.task,
+        "entities": row.entities or {},
+        "tools": row.tools or [],
+        "depends_on_steps": row.depends_on_steps or [],
+        "timeout": row.timeout,
+        "max_retries": row.max_retries,
+        "priority": row.priority,
+        "config": row.config or {},
+    }
+
+
+def _run_to_dict(row: ScheduledJobRun, step_results: list | None = None) -> dict:
+    d = {
+        "run_id": str(row.run_id),
+        "job_id": str(row.job_id),
+        "status": row.status,
+        "trigger_type": row.trigger_type,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "error_summary": row.error_summary,
+        "total_steps": row.total_steps,
+        "completed_steps": row.completed_steps,
+        "failed_steps": row.failed_steps,
+        "notification_sent": row.notification_sent,
+    }
+    if step_results is not None:
+        d["step_results"] = step_results
+    return d
+
+
+def _step_result_to_dict(row: ScheduledJobStepResult) -> dict:
+    return {
+        "result_id": str(row.result_id),
+        "step_id": str(row.step_id),
+        "step_order": row.step_order,
+        "agent_name": row.agent_name,
+        "status": row.status,
+        "agent_output": row.agent_output,
+        "error_message": row.error_message,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "resource_usage": row.resource_usage or {},
+    }
+
+
+async def create_scheduled_job(
+    session: AsyncSession,
+    user_id: str,
+    name: str,
+    description: str,
+    cron_expression: str,
+    timezone_str: str,
+    steps_data: List[Dict[str, Any]],
+    notification_mode: str = "in_app",
+    notification_target: str | None = None,
+) -> dict:
+    """Create a scheduled job with its steps. Returns serialised dict."""
+    uid = _to_uuid(user_id)
+    job = ScheduledJob(
+        user_id=uid,
+        name=name,
+        description=description,
+        cron_expression=cron_expression,
+        timezone=timezone_str,
+        notification_mode=notification_mode,
+        notification_target=notification_target,
+    )
+    # Calculate first next_run_at in the user's timezone
+    try:
+        from croniter import croniter
+        from zoneinfo import ZoneInfo
+        local_tz = ZoneInfo(timezone_str) if timezone_str and timezone_str != "UTC" else timezone.utc
+        now_local = datetime.now(local_tz)
+        cron_iter = croniter(cron_expression, now_local)
+        next_local = cron_iter.get_next(datetime)
+        job.next_run_at = next_local.astimezone(timezone.utc)
+    except Exception:
+        pass
+    session.add(job)
+    await session.flush()
+
+    step_dicts = []
+    for i, s in enumerate(steps_data):
+        step = ScheduledJobStep(
+            job_id=job.job_id,
+            step_order=i,
+            agent_name=s["agent_name"],
+            task=s["task"],
+            entities=s.get("entities", {}),
+            tools=s.get("tools", []),
+            depends_on_steps=s.get("depends_on_steps", []),
+            timeout=s.get("timeout", 60),
+            max_retries=s.get("max_retries", 2),
+            priority=s.get("priority", "critical"),
+            config=s.get("config", {}),
+        )
+        session.add(step)
+        await session.flush()
+        step_dicts.append(_step_to_dict(step))
+
+    return _job_to_dict(job, steps=step_dicts)
+
+
+async def get_scheduled_jobs_for_user(
+    session: AsyncSession,
+    user_id: str,
+) -> list[dict]:
+    """List all scheduled jobs for a user (newest first)."""
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(ScheduledJob)
+        .where(ScheduledJob.user_id == uid, ScheduledJob.status != "deleted")
+        .order_by(ScheduledJob.created_at.desc())
+    )
+    jobs = result.scalars().all()
+
+    items = []
+    for j in jobs:
+        step_result = await session.execute(
+            select(ScheduledJobStep)
+            .where(ScheduledJobStep.job_id == j.job_id)
+            .order_by(ScheduledJobStep.step_order)
+        )
+        steps = [_step_to_dict(s) for s in step_result.scalars()]
+        items.append(_job_to_dict(j, steps=steps))
+    return items
+
+
+async def get_scheduled_job(
+    session: AsyncSession,
+    job_id: str,
+    user_id: str,
+) -> dict | None:
+    """Fetch a single scheduled job with steps — ownership-checked."""
+    jid = _to_uuid(job_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(ScheduledJob).where(
+            ScheduledJob.job_id == jid,
+            ScheduledJob.user_id == uid,
+            ScheduledJob.status != "deleted",
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+    step_result = await session.execute(
+        select(ScheduledJobStep)
+        .where(ScheduledJobStep.job_id == jid)
+        .order_by(ScheduledJobStep.step_order)
+    )
+    steps = [_step_to_dict(s) for s in step_result.scalars()]
+    return _job_to_dict(job, steps=steps)
+
+
+async def update_scheduled_job(
+    session: AsyncSession,
+    job_id: str,
+    user_id: str,
+    **kwargs,
+) -> dict | None:
+    """Update a scheduled job's fields. Returns updated dict or None."""
+    jid = _to_uuid(job_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(ScheduledJob).where(
+            ScheduledJob.job_id == jid, ScheduledJob.user_id == uid,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None
+
+    for field in ("name", "description", "cron_expression", "timezone",
+                  "status", "notification_mode", "notification_target"):
+        if field in kwargs and kwargs[field] is not None:
+            setattr(job, field, kwargs[field])
+
+    # Replace steps if provided
+    if "steps" in kwargs and kwargs["steps"] is not None:
+        await session.execute(
+            sa_delete(ScheduledJobStep).where(ScheduledJobStep.job_id == jid)
+        )
+        await session.flush()
+        for i, s in enumerate(kwargs["steps"]):
+            step = ScheduledJobStep(
+                job_id=jid,
+                step_order=i,
+                agent_name=s["agent_name"],
+                task=s["task"],
+                entities=s.get("entities", {}),
+                tools=s.get("tools", []),
+                depends_on_steps=s.get("depends_on_steps", []),
+                timeout=s.get("timeout", 60),
+                max_retries=s.get("max_retries", 2),
+                priority=s.get("priority", "critical"),
+                config=s.get("config", {}),
+            )
+            session.add(step)
+
+    job.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    step_result = await session.execute(
+        select(ScheduledJobStep)
+        .where(ScheduledJobStep.job_id == jid)
+        .order_by(ScheduledJobStep.step_order)
+    )
+    steps = [_step_to_dict(s) for s in step_result.scalars()]
+    return _job_to_dict(job, steps=steps)
+
+
+async def delete_scheduled_job(
+    session: AsyncSession,
+    job_id: str,
+    user_id: str,
+) -> bool:
+    """Soft-delete a scheduled job. Returns True if found."""
+    jid = _to_uuid(job_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(ScheduledJob).where(
+            ScheduledJob.job_id == jid, ScheduledJob.user_id == uid,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return False
+    job.status = "deleted"
+    job.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+    return True
+
+
+async def create_scheduled_job_run(
+    session: AsyncSession,
+    job_id: str,
+    trigger_type: str = "scheduled",
+    total_steps: int = 0,
+) -> ScheduledJobRun:
+    """Create a new run record for a scheduled job."""
+    jid = _to_uuid(job_id)
+    run = ScheduledJobRun(
+        job_id=jid,
+        status="running",
+        trigger_type=trigger_type,
+        started_at=datetime.now(timezone.utc),
+        total_steps=total_steps,
+    )
+    session.add(run)
+    await session.flush()
+    return run
+
+
+async def get_scheduled_job_runs(
+    session: AsyncSession,
+    job_id: str,
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict]:
+    """List run history for a job (newest first), ownership-checked."""
+    jid = _to_uuid(job_id)
+    uid = _to_uuid(user_id)
+    # Verify ownership
+    job_result = await session.execute(
+        select(ScheduledJob.job_id).where(
+            ScheduledJob.job_id == jid, ScheduledJob.user_id == uid,
+        )
+    )
+    if job_result.scalar_one_or_none() is None:
+        return []
+
+    result = await session.execute(
+        select(ScheduledJobRun)
+        .where(ScheduledJobRun.job_id == jid)
+        .order_by(ScheduledJobRun.created_at_.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return [_run_to_dict(r) for r in result.scalars()]
+
+
+async def get_scheduled_job_run_detail(
+    session: AsyncSession,
+    job_id: str,
+    run_id: str,
+    user_id: str,
+) -> dict | None:
+    """Get a single run with step results — ownership-checked."""
+    jid = _to_uuid(job_id)
+    rid = _to_uuid(run_id)
+    uid = _to_uuid(user_id)
+    # Verify ownership
+    job_result = await session.execute(
+        select(ScheduledJob.job_id).where(
+            ScheduledJob.job_id == jid, ScheduledJob.user_id == uid,
+        )
+    )
+    if job_result.scalar_one_or_none() is None:
+        return None
+
+    result = await session.execute(
+        select(ScheduledJobRun).where(
+            ScheduledJobRun.run_id == rid, ScheduledJobRun.job_id == jid,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        return None
+
+    sr_result = await session.execute(
+        select(ScheduledJobStepResult)
+        .where(ScheduledJobStepResult.run_id == rid)
+        .order_by(ScheduledJobStepResult.step_order)
+    )
+    step_results = [_step_result_to_dict(sr) for sr in sr_result.scalars()]
+    return _run_to_dict(run, step_results=step_results)
+
+
+async def load_scheduled_job_with_steps(
+    session: AsyncSession,
+    job_id: str,
+) -> tuple[ScheduledJob | None, list[ScheduledJobStep]]:
+    """Load a job + its steps (no ownership check — for Celery tasks)."""
+    jid = _to_uuid(job_id)
+    result = await session.execute(
+        select(ScheduledJob).where(ScheduledJob.job_id == jid)
+    )
+    job = result.scalar_one_or_none()
+    if job is None:
+        return None, []
+    step_result = await session.execute(
+        select(ScheduledJobStep)
+        .where(ScheduledJobStep.job_id == jid)
+        .order_by(ScheduledJobStep.step_order)
+    )
+    return job, list(step_result.scalars().all())
