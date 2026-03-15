@@ -338,8 +338,14 @@ class QueryRequest(BaseModel):
     persona_id: Optional[str] = None
     source: str = "text"  # "text" | "voice"
     model: Optional[str] = None  # user-selected model override (e.g. "gpt-4o", "claude-sonnet-4-20250514")
+    compare: bool = False  # if True, run full pipeline but skip all DB writes (comparison mode)
     active_web_collection_ids: List[str] = Field(default_factory=list)
     selected_doc_ids: List[str] = Field(default_factory=list)
+
+
+class RecomposeRequest(BaseModel):
+    conversation_id: str
+    model: str  # required — the model to recompose with
 
 
 class MasterAgentInput(BaseModel):

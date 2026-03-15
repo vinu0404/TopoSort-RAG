@@ -66,7 +66,6 @@ class MasterAgent:
         result = await self.llm.generate(
             prompt=prompt,
             temperature=config.master_temperature,
-            model=config.master_model,
             output_schema={
                 "analysis": {
                     "intent": "string",

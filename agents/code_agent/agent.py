@@ -39,7 +39,6 @@ class CodeAgent(BaseAgent):
             code_result = await self.llm.generate(
                 prompt=prompt,
                 temperature=config.code_temperature,
-                model=config.code_model,
             )
             code = code_result.text
             tokens_used = code_result.usage.get("total_tokens", 0)

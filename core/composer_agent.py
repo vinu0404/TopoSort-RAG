@@ -27,14 +27,14 @@ class ComposerAgent:
         self.llm = llm_provider
         self.last_stream_usage: dict = {}
 
-    async def compose(self, composer_input: ComposerInput) -> ComposerOutput:
+    async def compose(self, composer_input: ComposerInput, model_override: str | None = None) -> ComposerOutput:
         prompt = self._build_prompt(composer_input)
         logger.info(f"[ComposerAgent] Input: {composer_input}")
         logger.debug(f"[ComposerAgent] Prompt: {prompt[:500]}")
         result = await self.llm.generate(
             prompt=prompt,
             temperature=config.composer_temperature,
-            model=config.composer_model,
+            model=model_override or config.composer_model,
         )
         answer_text = result.text
         answer_text = self._append_source_list(answer_text, composer_input.all_sources)
@@ -48,7 +48,7 @@ class ComposerAgent:
         )
 
 
-    async def stream(self, composer_input: ComposerInput) -> AsyncIterator[str]:
+    async def stream(self, composer_input: ComposerInput, model_override: str | None = None) -> AsyncIterator[str]:
         """Yield text chunks for SSE consumption.  Token usage is stored
         in ``self.last_stream_usage`` after iteration completes."""
         prompt = self._build_prompt(composer_input)
@@ -57,7 +57,7 @@ class ComposerAgent:
         sr = await self.llm.stream_with_usage(
             prompt=prompt,
             temperature=config.composer_temperature,
-            model=config.composer_model,
+            model=model_override or config.composer_model,
         )
         async for chunk in sr:
             yield chunk
@@ -316,6 +316,5 @@ When the user asks who you are, your name, or what you are, always say you are {
         result = await self.llm.generate(
             prompt=prompt,
             temperature=0.3,
-            model=config.composer_model,
         )
         return result.text.strip()

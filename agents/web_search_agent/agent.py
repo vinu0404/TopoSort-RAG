@@ -47,7 +47,6 @@ class WebSearchAgent(BaseAgent):
             strategy_result = await self.llm.generate(
                 prompt=strategy_prompt,
                 temperature=config.web_temperature,
-                model=config.web_model,
                 output_schema={
                     "search_query": "string",
                     "search_type": "basic | news | deep",
@@ -93,7 +92,6 @@ class WebSearchAgent(BaseAgent):
             synthesis_result = await self.llm.generate(
                 prompt=synthesis_prompt,
                 temperature=config.web_temperature,
-                model=config.web_model,
             )
             final_answer = synthesis_result.text
             tokens_used += synthesis_result.usage.get("total_tokens", 0)

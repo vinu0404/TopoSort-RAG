@@ -562,6 +562,32 @@ async def save_agent_executions(
     await session.flush()
 
 
+async def load_agent_executions_for_conversation(
+    session: AsyncSession,
+    conversation_id: str,
+) -> list[dict]:
+    """
+    Load the most recent batch of agent execution output payloads
+    for a conversation.  Returns a list of dicts, each being a
+    full ``AgentOutput.model_dump()``.
+    """
+    cid = _to_uuid(conversation_id)
+    # Latest batch shares the same started_at timestamp
+    max_ts_stmt = select(func.max(AgentExecution.started_at)).where(
+        AgentExecution.conversation_id == cid,
+    )
+    max_ts = (await session.execute(max_ts_stmt)).scalar()
+    if max_ts is None:
+        return []
+
+    stmt = select(AgentExecution).where(
+        AgentExecution.conversation_id == cid,
+        AgentExecution.started_at == max_ts,
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [row.output_payload for row in rows if row.output_payload]
+
+
 async def save_document_record(
     session: AsyncSession,
     user_id: str,

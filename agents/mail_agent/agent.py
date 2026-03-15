@@ -59,7 +59,6 @@ class MailAgent(BaseAgent):
             plan_result = await self.llm.generate(
                 prompt=plan_prompt,
                 temperature=config.mail_temperature,
-                model=config.mail_model,
                 output_schema={
                     "action": "search_inbox | search_sent | search_drafts | send | draft | reply | read",
                     "search_query": "string or null",
@@ -133,7 +132,6 @@ class MailAgent(BaseAgent):
                         compose_result = await self.llm.generate(
                             prompt=compose_prompt,
                             temperature=config.mail_temperature,
-                            model=config.mail_model,
                             output_schema={
                                 "to": "string",
                                 "subject": "string",
@@ -170,7 +168,6 @@ class MailAgent(BaseAgent):
                 draft_result = await self.llm.generate(
                     prompt=compose_prompt,
                     temperature=config.mail_temperature,
-                    model=config.mail_model,
                     output_schema={
                         "to": "string",
                         "subject": "string",
