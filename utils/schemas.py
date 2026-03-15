@@ -435,3 +435,91 @@ class HitlResolvedDecision(BaseModel):
     instructions: Optional[str] = None
     tool_names: List[str] = Field(default_factory=list)
     reason: Optional[str] = None  # "denied_by_user" | "hitl_timeout" | "hitl_skipped"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Scheduled Jobs Schemas
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+CRON_PRESETS = {
+    "every_hour": "0 * * * *",
+    "every_morning": "0 9 * * *",
+    "every_evening": "0 18 * * *",
+    "every_monday": "0 9 * * 1",
+    "every_weekday": "0 9 * * 1-5",
+    "twice_daily": "0 9,18 * * *",
+    "weekly_friday": "0 17 * * 5",
+    "monthly_first": "0 9 1 * *",
+}
+
+
+class ScheduledJobStepCreate(BaseModel):
+    agent_name: str
+    task: str
+    entities: Dict[str, Any] = Field(default_factory=dict)
+    tools: List[str] = Field(default_factory=list)
+    depends_on_steps: List[int] = Field(default_factory=list)
+    timeout: int = 60
+    max_retries: int = 2
+    priority: str = "critical"
+
+
+class ScheduledJobCreate(BaseModel):
+    """Structured creation — user provides steps explicitly."""
+    name: str = Field(..., min_length=1, max_length=256)
+    description: str = ""
+    cron_expression: str = Field(...)
+    timezone: str = "UTC"
+    steps: List[ScheduledJobStepCreate] = Field(..., min_length=1)
+    notification_mode: str = "in_app"
+    notification_target: Optional[str] = None
+
+
+class ScheduledJobNLCreate(BaseModel):
+    """Natural language creation — MasterAgent parses into steps."""
+    prompt: str = Field(..., min_length=5, max_length=2000)
+    timezone: str = "UTC"
+    notification_mode: str = "in_app"
+
+
+class ScheduledJobUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cron_expression: Optional[str] = None
+    timezone: Optional[str] = None
+    status: Optional[str] = None
+    notification_mode: Optional[str] = None
+    notification_target: Optional[str] = None
+    steps: Optional[List[ScheduledJobStepCreate]] = None
+
+
+class ScheduledJobResponse(BaseModel):
+    job_id: str
+    name: str
+    description: str
+    cron_expression: str
+    cron_human: str = ""
+    timezone: str
+    status: str
+    notification_mode: str
+    notification_target: Optional[str] = None
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    last_run_at: Optional[str] = None
+    next_run_at: Optional[str] = None
+
+
+class ScheduledJobRunResponse(BaseModel):
+    run_id: str
+    job_id: str
+    status: str
+    trigger_type: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error_summary: Optional[str] = None
+    total_steps: int = 0
+    completed_steps: int = 0
+    failed_steps: int = 0
+    step_results: List[Dict[str, Any]] = Field(default_factory=list)

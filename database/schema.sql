@@ -206,3 +206,84 @@ CREATE TABLE IF NOT EXISTS user_connections (
 CREATE INDEX IF NOT EXISTS idx_conn_user     ON user_connections(user_id);
 CREATE INDEX IF NOT EXISTS idx_conn_provider ON user_connections(user_id, provider);
 CREATE INDEX IF NOT EXISTS idx_conn_status   ON user_connections(status);
+
+-- Scheduled Jobs ──────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    job_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name              VARCHAR(256) NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    cron_expression   VARCHAR(128) NOT NULL,
+    timezone          VARCHAR(64) NOT NULL DEFAULT 'UTC',
+    status            VARCHAR(16) NOT NULL DEFAULT 'active',
+                      -- active | paused | deleted
+    notification_mode VARCHAR(32) NOT NULL DEFAULT 'in_app',
+                      -- email | in_app | none
+    notification_target TEXT,
+    max_retries       INT NOT NULL DEFAULT 2,
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_run_at       TIMESTAMPTZ,
+    next_run_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_sj_user   ON scheduled_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_sj_status ON scheduled_jobs(status);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_steps (
+    step_id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE,
+    step_order        INT NOT NULL,
+    agent_name        VARCHAR(64) NOT NULL,
+    task              TEXT NOT NULL,
+    entities          JSONB DEFAULT '{}',
+    tools             TEXT[] DEFAULT '{}',
+    depends_on_steps  INT[] DEFAULT '{}',
+    timeout           INT NOT NULL DEFAULT 60,
+    max_retries       INT NOT NULL DEFAULT 2,
+    priority          VARCHAR(16) NOT NULL DEFAULT 'critical',
+    config            JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(job_id, step_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sjs_job ON scheduled_job_steps(job_id);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+    run_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | running | success | partial_failure | failed
+    trigger_type      VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+                      -- scheduled | manual
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    error_summary     TEXT,
+    total_steps       INT NOT NULL DEFAULT 0,
+    completed_steps   INT NOT NULL DEFAULT 0,
+    failed_steps      INT NOT NULL DEFAULT 0,
+    notification_sent BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sjr_job ON scheduled_job_runs(job_id);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_step_results (
+    result_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id            UUID NOT NULL REFERENCES scheduled_job_runs(run_id) ON DELETE CASCADE,
+    step_id           UUID NOT NULL REFERENCES scheduled_job_steps(step_id) ON DELETE CASCADE,
+    step_order        INT NOT NULL,
+    agent_name        VARCHAR(64) NOT NULL,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | running | success | failed | skipped
+    agent_output      JSONB,
+    error_message     TEXT,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    resource_usage    JSONB DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_sjsr_run ON scheduled_job_step_results(run_id);

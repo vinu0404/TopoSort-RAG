@@ -112,7 +112,11 @@ def create_app() -> FastAPI:
             'user_connections', (SELECT json_agg(row_to_json(t)) FROM user_connections t),
             'personas', (SELECT json_agg(row_to_json(t)) FROM personas t),
             'web_scrape_collections', (SELECT json_agg(row_to_json(t)) FROM web_scrape_collections t),
-            'web_scrape_urls', (SELECT json_agg(row_to_json(t)) FROM web_scrape_urls t)
+            'web_scrape_urls', (SELECT json_agg(row_to_json(t)) FROM web_scrape_urls t),
+            'scheduled_jobs', (SELECT json_agg(row_to_json(t)) FROM scheduled_jobs t),
+            'scheduled_job_steps', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_steps t),
+            'scheduled_job_runs', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_runs t),
+            'scheduled_job_step_results', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_step_results t)
         ) AS data;
     """
     snapshot_tables = [
@@ -120,6 +124,8 @@ def create_app() -> FastAPI:
         "agent_executions", "documents", "conversation_summaries",
         "user_long_term_memory", "hitl_requests", "user_connections", "personas",
         "web_scrape_collections", "web_scrape_urls",
+        "scheduled_jobs", "scheduled_job_steps",
+        "scheduled_job_runs", "scheduled_job_step_results",
     ]
 
     # Routes
@@ -127,6 +133,9 @@ def create_app() -> FastAPI:
     app.include_router(connector_router, prefix="/api/v1/connectors")
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(stream_router, prefix="/api/v1")
+
+    from api.scheduled_jobs import router as scheduled_jobs_router
+    app.include_router(scheduled_jobs_router, prefix="/api/v1")
 
     @app.get("/api/dashboard", response_class=HTMLResponse, tags=["dashboard"], summary="Serve Dashboard HTML")
     async def dashboard_page():

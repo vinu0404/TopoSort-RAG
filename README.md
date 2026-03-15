@@ -142,7 +142,18 @@ The Celery worker processes uploaded documents asynchronously. Without it, file 
 - `max_retries=3` — automatic retry with exponential backoff
 - `rate_limit=20/m` — prevents embedding API throttling
 
-### 6. Start the Admin Dashboard (Optional)
+### 6. Start Celery Beat (Scheduled Jobs)
+
+In a **separate terminal** (with the venv activated):
+
+```bash
+# Required for scheduled/cron jobs — uses RedBeat (Redis-backed dynamic scheduler)
+celery -A celery_app beat --scheduler=redbeat.RedBeatScheduler --loglevel=info
+```
+
+Without Beat running, scheduled jobs will be created and stored in the database, but they will **not** fire at their cron times. You can still trigger them manually via the API or UI.
+
+### 7. Start the Admin Dashboard (Optional)
 
 In a **separate terminal**:
 
@@ -160,8 +171,9 @@ The dashboard connects to PostgreSQL via Docker and displays all database tables
 ```
 Terminal 1:  docker compose up -d
 Terminal 2:  python main.py                                    # FastAPI  → :8000
-Terminal 3:  python -m celery -A celery_app worker --pool=solo # Celery   → processes uploads
-Terminal 4:  cd frontend && python dashboard.py                # Dashboard → :8080  (optional)
+Terminal 3:  python -m celery -A celery_app worker --pool=solo # Celery   → processes uploads + jobs
+Terminal 4:  celery -A celery_app beat --scheduler=redbeat.RedBeatScheduler  # Beat → cron triggers
+Terminal 5:  cd frontend && python dashboard.py                # Dashboard → :8080  (optional)
 ```
 
 | URL | What |
@@ -251,6 +263,23 @@ The analytics endpoint aggregates data from `agent_executions`, `messages`, and 
 - **Response Times** — Average, min, and max response times per agent.
 - **Query Patterns** — Total executions, success rate, conversation and message counts.
 - **Token Breakdown** — Per-agent token totals extracted from the `token_details` JSONB column.
+
+### Scheduled Jobs — `/api/v1/scheduled-jobs`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/` | JWT | Create a new scheduled job with explicit steps. Body: `{ name, description?, cron_expression, timezone?, steps: [{agent_name, task, tools?, depends_on_steps?}], notification_mode?, notification_target? }`. Validates cron syntax and step dependency graph. Syncs to Celery Beat. Returns the created job with steps. |
+| `POST` | `/from-prompt` | JWT | Parse natural language into a scheduled job preview using LLM. Body: `{ prompt, timezone?, notification_mode? }`. Returns `{ preview: { name, cron_expression, cron_human, steps, ... } }`. The preview can be reviewed before creating. |
+| `GET` | `/` | JWT | List all scheduled jobs for the authenticated user (excludes soft-deleted). Returns array of jobs with steps, schedule info, and last/next run timestamps. |
+| `GET` | `/presets` | JWT | Get available cron preset schedules. Returns `{ every_hour: {cron, label}, every_morning: {cron, label}, ... }`. |
+| `GET` | `/{job_id}` | JWT | Get a single scheduled job with its steps. Ownership verified. Returns job object. |
+| `PUT` | `/{job_id}` | JWT | Update a scheduled job (name, cron, steps, notification, etc.). Body: any subset of `ScheduledJobUpdate` fields. Re-syncs Celery Beat if schedule changes. Returns updated job. |
+| `DELETE` | `/{job_id}` | JWT | Soft-delete a scheduled job. Removes from Celery Beat. Returns `{ status: "deleted" }`. |
+| `POST` | `/{job_id}/pause` | JWT | Pause an active job. Removes from Celery Beat (stops cron triggers). Returns `{ status: "paused" }`. |
+| `POST` | `/{job_id}/resume` | JWT | Resume a paused job. Re-syncs to Celery Beat. Returns `{ status: "active" }`. |
+| `POST` | `/{job_id}/trigger` | JWT | Manually trigger a job (run now). Enqueues a Celery task immediately regardless of cron schedule. Returns `{ status: "queued", task_id, job_id }`. |
+| `GET` | `/{job_id}/runs` | JWT | List run history (paginated, newest first). Query params: `limit` (default 20), `offset`. Returns array of run objects. |
+| `GET` | `/{job_id}/runs/{run_id}` | JWT | Get a single run with per-step results. Returns run object with `step_results` array. |
 
 ---
 
@@ -3924,3 +3953,384 @@ The `POST /query` endpoint does **not** support HITL dialogs (no SSE connection 
 | **Timeout** | Configurable via `HITL_TIMEOUT_SECONDS` env var (default 120s). Treated as denial. |
 | **Parallel agents in same stage** | Non-HITL agents execute immediately. HITL agent polls DB. `asyncio.gather` waits for all. |
 | **No in-memory state** | `asyncio.Queue` is per-request (dies with the SSE connection). All real state is in the `hitl_requests` table. |
+
+---
+
+## Scheduled Jobs (Cron Agents)
+
+Scheduled Jobs let users set up **cron-like automated agent pipelines** that run on a recurring schedule. Think of it as building multi-agent workflows that fire automatically — e.g., *"Every Monday at 9 AM, search for AI news and email me a summary."*
+
+Each job is a **multi-step pipeline** where steps can depend on each other, enabling data flow between agents (step 2 reads step 1's output). Jobs support natural language creation ("Parse & Preview"), manual step-by-step building, pause/resume, manual triggering, and per-run history with step-level results.
+
+### High-Level Architecture
+
+```mermaid
+flowchart TD
+    subgraph UserLayer["User Layer"]
+        UI["Frontend UI<br/><i>Natural Language / Manual Builder</i>"]
+        API["FastAPI Router<br/><i>/api/v1/scheduled-jobs</i>"]
+    end
+
+    subgraph Storage["Storage Layer"]
+        PG["PostgreSQL<br/><i>4 tables: jobs, steps,<br/>runs, step_results</i>"]
+        Redis["Redis<br/><i>RedBeat schedule entries<br/>+ Pub/Sub status events</i>"]
+    end
+
+    subgraph Execution["Execution Layer"]
+        Beat["Celery Beat<br/><i>RedBeat Scheduler<br/>reads dynamic cron entries</i>"]
+        Worker["Celery Worker<br/><i>execute_scheduled_job task</i>"]
+        Orch["Orchestrator<br/><i>execute_plan() — topological sort<br/>parallel where deps allow</i>"]
+        Agents["Agent Instances<br/><i>RAG, Mail, Web Search,<br/>Code, GitHub, etc.</i>"]
+    end
+
+    UI -->|"POST /scheduled-jobs"| API
+    API -->|"CRUD"| PG
+    API -->|"sync_job_to_beat()"| Redis
+
+    Beat -->|"cron fires"| Worker
+    Worker -->|"load job + steps"| PG
+    Worker --> Orch
+    Orch -->|"topological execution"| Agents
+    Agents -->|"outputs"| Orch
+    Orch -->|"record results"| PG
+    Worker -->|"Pub/Sub status"| Redis
+    Redis -->|"SSE push"| UI
+
+    style UI fill:#2196F3,color:#fff
+    style API fill:#2196F3,color:#fff
+    style PG fill:#4CAF50,color:#fff
+    style Redis fill:#FF9800,color:#fff
+    style Beat fill:#FF9800,color:#fff
+    style Worker fill:#9C27B0,color:#fff
+    style Orch fill:#9C27B0,color:#fff
+    style Agents fill:#E91E63,color:#fff
+```
+
+### End-to-End Flow — Job Creation to Execution
+
+```mermaid
+sequenceDiagram
+    participant U as User (Frontend)
+    participant API as FastAPI
+    participant MA as MasterAgent
+    participant DB as PostgreSQL
+    participant RB as Redis / RedBeat
+    participant Beat as Celery Beat
+    participant W as Celery Worker
+    participant O as Orchestrator
+    participant A as Agents
+
+    Note over U: Option A — Natural Language
+    U->>API: POST /scheduled-jobs/from-prompt<br/>{ prompt: "Every Monday, search AI news<br/>and email me a summary" }
+    API->>MA: plan_scheduled_job(prompt)
+    MA-->>API: { name, cron_expression,<br/>steps: [{web_search_agent, ...},<br/>{mail_agent, ...}] }
+    API-->>U: { preview: { ... } }
+    U->>U: Review preview, click "Create Job"
+
+    Note over U: Option B — Manual Builder
+    U->>API: POST /scheduled-jobs<br/>{ name, cron_expression,<br/>steps: [...] }
+
+    API->>DB: INSERT scheduled_jobs + scheduled_job_steps
+    API->>RB: sync_job_to_beat(job_id, cron)
+    RB-->>RB: RedBeatSchedulerEntry saved
+    API-->>U: { job_id, status: "active" }
+
+    Note over Beat: Cron time arrives
+    Beat->>W: execute_scheduled_job.delay(job_id)
+    W->>DB: load job + steps
+    W->>DB: INSERT scheduled_job_runs (status: running)
+
+    W->>O: execute_plan(ResolvedExecutionPlan)
+    loop For each stage (topological order)
+        O->>A: agent.execute(task_config)
+        A-->>O: AgentOutput
+        O->>O: Store in shared_state<br/>(next stage reads via dependency_outputs)
+    end
+    O-->>W: shared_state (all agent outputs)
+
+    W->>DB: UPDATE step_results + run status
+    W->>DB: UPDATE job.last_run_at, next_run_at
+    W->>RB: Pub/Sub → scheduled_job:{user_id}
+    RB-->>U: SSE push (run_complete event)
+    W->>W: _send_notification() (email / in_app)
+```
+
+### Job Execution Pipeline Detail
+
+```mermaid
+flowchart LR
+    subgraph Input["Job Input"]
+        Job["ScheduledJob<br/><i>cron: 0 9 * * 1</i>"]
+        S1["Step 0<br/><b>web_search_agent</b><br/><i>'Search AI news'</i>"]
+        S2["Step 1<br/><b>mail_agent</b><br/><i>'Email summary'</i><br/>depends_on: [0]"]
+    end
+
+    subgraph Convert["Plan Conversion"]
+        RT["ResolvedAgentTask[]<br/><i>agent_ids assigned<br/>index deps → id deps</i>"]
+        Plan["ResolvedExecutionPlan"]
+    end
+
+    subgraph Execute["Orchestrator — execute_plan()"]
+        Topo["Topological Sort<br/><i>(Kahn's algorithm)</i>"]
+        Stage1["Stage 1<br/>web_search_agent"]
+        Stage2["Stage 2<br/>mail_agent<br/><i>reads web_search output<br/>via dependency_outputs</i>"]
+    end
+
+    subgraph Record["Results"]
+        SR1["StepResult 0<br/>status: success"]
+        SR2["StepResult 1<br/>status: success"]
+        Run["Run<br/>status: success<br/>2/2 steps"]
+    end
+
+    Job --> S1 & S2
+    S1 & S2 --> RT --> Plan
+    Plan --> Topo
+    Topo --> Stage1 --> Stage2
+    Stage1 --> SR1
+    Stage2 --> SR2
+    SR1 & SR2 --> Run
+
+    style Job fill:#2196F3,color:#fff
+    style Stage1 fill:#FF9800,color:#fff
+    style Stage2 fill:#FF9800,color:#fff
+    style Run fill:#4CAF50,color:#fff
+```
+
+### Database Schema
+
+```mermaid
+erDiagram
+    users ||--o{ scheduled_jobs : "owns"
+    scheduled_jobs ||--o{ scheduled_job_steps : "has"
+    scheduled_jobs ||--o{ scheduled_job_runs : "has"
+    scheduled_job_runs ||--o{ scheduled_job_step_results : "has"
+    scheduled_job_steps ||--o{ scheduled_job_step_results : "references"
+
+    scheduled_jobs {
+        uuid job_id PK
+        uuid user_id FK
+        varchar name
+        text description
+        varchar cron_expression
+        varchar timezone
+        varchar status "active | paused | deleted"
+        varchar notification_mode "in_app | email | none"
+        text notification_target
+        int max_retries
+        jsonb metadata
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz last_run_at
+        timestamptz next_run_at
+    }
+
+    scheduled_job_steps {
+        uuid step_id PK
+        uuid job_id FK
+        int step_order
+        varchar agent_name
+        text task
+        jsonb entities
+        text_arr tools
+        int_arr depends_on_steps
+        int timeout
+        int max_retries
+        varchar priority
+        jsonb config
+        timestamptz created_at
+    }
+
+    scheduled_job_runs {
+        uuid run_id PK
+        uuid job_id FK
+        varchar status "pending | running | success | partial_failure | failed"
+        varchar trigger_type "scheduled | manual"
+        timestamptz started_at
+        timestamptz completed_at
+        text error_summary
+        int total_steps
+        int completed_steps
+        int failed_steps
+        boolean notification_sent
+        jsonb metadata
+        timestamptz created_at
+    }
+
+    scheduled_job_step_results {
+        uuid result_id PK
+        uuid run_id FK
+        uuid step_id FK
+        int step_order
+        varchar agent_name
+        varchar status "pending | running | success | failed | skipped"
+        jsonb agent_output
+        text error_message
+        timestamptz started_at
+        timestamptz completed_at
+        jsonb resource_usage
+    }
+```
+
+### SQL Tables
+
+```sql
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    job_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name              VARCHAR(256) NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    cron_expression   VARCHAR(128) NOT NULL,
+    timezone          VARCHAR(64)  NOT NULL DEFAULT 'UTC',
+    status            VARCHAR(16)  NOT NULL DEFAULT 'active',
+    notification_mode VARCHAR(32)  NOT NULL DEFAULT 'in_app',
+    notification_target TEXT,
+    max_retries       INT NOT NULL DEFAULT 2,
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_run_at       TIMESTAMPTZ,
+    next_run_at       TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_steps (
+    step_id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE,
+    step_order        INT NOT NULL,
+    agent_name        VARCHAR(64) NOT NULL,
+    task              TEXT NOT NULL,
+    entities          JSONB DEFAULT '{}',
+    tools             TEXT[] DEFAULT '{}',
+    depends_on_steps  INT[] DEFAULT '{}',
+    timeout           INT NOT NULL DEFAULT 60,
+    max_retries       INT NOT NULL DEFAULT 2,
+    priority          VARCHAR(16) NOT NULL DEFAULT 'critical',
+    config            JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+    run_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES scheduled_jobs(job_id) ON DELETE CASCADE,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+    trigger_type      VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    error_summary     TEXT,
+    total_steps       INT NOT NULL DEFAULT 0,
+    completed_steps   INT NOT NULL DEFAULT 0,
+    failed_steps      INT NOT NULL DEFAULT 0,
+    notification_sent BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata          JSONB DEFAULT '{}',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_job_step_results (
+    result_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id            UUID NOT NULL REFERENCES scheduled_job_runs(run_id) ON DELETE CASCADE,
+    step_id           UUID NOT NULL REFERENCES scheduled_job_steps(step_id) ON DELETE CASCADE,
+    step_order        INT NOT NULL,
+    agent_name        VARCHAR(64) NOT NULL,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+    agent_output      JSONB,
+    error_message     TEXT,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    resource_usage    JSONB DEFAULT '{}'
+);
+```
+
+### Job Status Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> active : Job created
+    active --> paused : POST /pause
+    paused --> active : POST /resume
+    active --> deleted : DELETE
+    paused --> deleted : DELETE
+
+    state active {
+        [*] --> Idle
+        Idle --> Running : Cron fires / Manual trigger
+        Running --> Idle : Run completes
+    }
+```
+
+### Run Status Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : Run created
+    pending --> running : Worker picks up
+    running --> success : All steps pass
+    running --> partial_failure : Some steps fail
+    running --> failed : All steps fail / exception
+```
+
+### Cron Presets
+
+| Preset | Cron Expression | Schedule |
+|--------|----------------|----------|
+| `every_hour` | `0 * * * *` | Top of every hour |
+| `every_morning` | `0 9 * * *` | Daily at 9:00 AM |
+| `every_evening` | `0 18 * * *` | Daily at 6:00 PM |
+| `every_monday` | `0 9 * * 1` | Every Monday at 9:00 AM |
+| `every_weekday` | `0 9 * * 1-5` | Weekdays at 9:00 AM |
+| `twice_daily` | `0 9,18 * * *` | Daily at 9 AM and 6 PM |
+| `weekly_friday` | `0 17 * * 5` | Every Friday at 5:00 PM |
+| `monthly_first` | `0 9 1 * *` | 1st of each month at 9:00 AM |
+
+Custom cron expressions are also supported (5-field: `minute hour day_of_month month day_of_week`).
+
+### Natural Language Job Creation
+
+The `POST /from-prompt` endpoint uses the **MasterAgent** with the full agent registry to parse natural language into a structured job definition:
+
+```
+User: "Every weekday morning, search for the latest AI research papers and email me a summary"
+
+Parsed Result:
+  name: "Daily AI Research Digest"
+  cron_expression: "0 9 * * 1-5"
+  steps:
+    Step 0 — web_search_agent: "Search for the latest AI research papers published today"
+    Step 1 — mail_agent: "Compose and send an email summarizing the AI research findings"
+             depends_on: [0]
+```
+
+The LLM knows all available agents and their capabilities (from `agent_registry.yaml`), so it maps tasks to the correct agents and sets up dependency chains automatically.
+
+### Notification Modes
+
+| Mode | Behavior |
+|------|----------|
+| `in_app` | Redis Pub/Sub → SSE push to frontend. Shows as a toast notification in the UI. |
+| `email` | Sends a summary email via the user's connected Gmail account (OAuth). Falls back silently if Gmail is not connected. |
+| `none` | No notification. Results are available in run history. |
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Reuses `Orchestrator.execute_plan()`** | Steps are converted to `ResolvedAgentTask` — the same schema the live query pipeline uses. No duplicate orchestration logic. |
+| **RedBeat (Redis-backed dynamic scheduler)** | Add/remove/update cron entries at runtime without restarting Celery Beat. Each entry is a Redis key. |
+| **Auto-approve HITL** | Scheduled jobs run unattended, so HITL tools (email send, code execute) are auto-approved. The user pre-approves when creating the job. |
+| **Soft-delete jobs** | `DELETE` sets `status = "deleted"` instead of hard-delete. Preserves run history for audit. |
+| **`asyncio.run()` bridge** | Celery tasks are sync; the orchestrator is async. Same pattern as `document_tasks.py`. |
+| **Step dependency via `depends_on_steps`** | Step indices map to agent IDs at runtime. Topological sort ensures correct execution order with parallel stages where possible. |
+| **Separate run + step_result tables** | Each run is a snapshot. Step results track per-agent success/failure, output, timing, and resource usage for debugging. |
+
+### File Map
+
+| File | Purpose |
+|------|---------|
+| `database/schema.sql` | 4 new tables (`scheduled_jobs`, `scheduled_job_steps`, `scheduled_job_runs`, `scheduled_job_step_results`) |
+| `database/models.py` | 4 SQLAlchemy ORM models (`ScheduledJob`, `ScheduledJobStep`, `ScheduledJobRun`, `ScheduledJobStepResult`) |
+| `utils/schemas.py` | Pydantic schemas (`ScheduledJobCreate`, `ScheduledJobNLCreate`, `ScheduledJobUpdate`, `ScheduledJobStepCreate`, `CRON_PRESETS`) |
+| `database/helpers.py` | CRUD helpers: `create_scheduled_job`, `get_scheduled_jobs_for_user`, `get_scheduled_job`, `update_scheduled_job`, `delete_scheduled_job`, `create_scheduled_job_run`, `get_scheduled_job_runs`, `get_scheduled_job_run_detail`, `load_scheduled_job_with_steps` |
+| `tasks/scheduled_job_tasks.py` | Celery task `execute_scheduled_job` + async engine that loads job → builds `ResolvedExecutionPlan` → runs `Orchestrator.execute_plan()` → records results → notifies |
+| `tasks/schedule_sync.py` | RedBeat sync: `sync_job_to_beat()` creates/updates cron entries, `remove_job_from_beat()` deletes them |
+| `celery_app.py` | Beat scheduler config (`redbeat.RedBeatScheduler`) + task include |
+| `api/scheduled_jobs.py` | FastAPI router — 12 endpoints for CRUD, pause/resume, trigger, run history |
+| `core/master_agent.py` | `plan_scheduled_job()` — LLM-powered NL → structured job parser |
+| `frontend/index.html` | Scheduled Jobs panel (icon rail, job cards, creation modal with NL + manual tabs, run history modal) |
