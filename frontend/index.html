@@ -927,6 +927,37 @@
   }
   .confirm-box .btn-danger:hover { background: #c9302c; }
 
+  /* ── Document Preview Modal ───────────────────────────── */
+  .preview-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 960;
+  }
+  .preview-modal {
+    background: #fff; border-radius: 12px;
+    width: 700px; max-width: 90vw; max-height: 85vh;
+    min-width: 320px; min-height: 250px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+    resize: both; overflow: hidden;
+  }
+  .preview-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #eee;
+  }
+  .preview-header h3 { font-size: 0.9rem; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview-close {
+    background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #666; padding: 4px 8px; border-radius: 4px;
+  }
+  .preview-close:hover { background: #f0f0f0; }
+  .preview-body {
+    flex: 1; overflow: auto; padding: 18px;
+  }
+  .preview-body iframe { width: 100%; height: 100%; min-height: 500px; border: none; }
+  .preview-body img { max-width: 100%; border-radius: 6px; }
+  .preview-body pre { white-space: pre-wrap; word-break: break-word; font-size: 0.82rem; line-height: 1.6; }
+
   /* ── Pipeline (horizontal bar above chat) ────────────── */
   .pipeline-section {
     display: none;
@@ -1377,6 +1408,18 @@
   }
   .btn-send:hover { opacity: 0.8; }
   .btn-send:disabled { opacity: 0.3; }
+  .btn-stop {
+    background: #e74c3c;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: none;
+  }
+  .btn-stop:hover { background: #c0392b; }
 
   /* ── Mic / Voice ───────────────────────────────────────── */
   .btn-mic {
@@ -1808,6 +1851,7 @@
       <textarea id="queryInput" placeholder="Ask anything..." rows="1"></textarea>
       <button class="btn-mic" id="micBtn" onclick="toggleRecording()" title="Voice input">🎤</button>
       <button class="btn-send" id="sendBtn" onclick="sendQuery()">Send</button>
+      <button class="btn-stop" id="stopBtn" onclick="stopStreaming()">Stop</button>
     </div>
   </main>
 </div>
@@ -1866,6 +1910,7 @@ let currentSessionId = null;
 let currentConversationId = null;
 let currentPersonaId = null;
 let isProcessing = false;
+let _streamAbort = null;  // AbortController for streaming cancellation
 let _convPersonaMap = {};  // conversation_id → persona_id
 let _convShareMap = {};    // conversation_id → share_token | null
 let _webCollections = [];
@@ -1880,6 +1925,7 @@ const messagesEl = document.getElementById('messages');
 const welcomeEl = document.getElementById('welcome');
 const queryInput = document.getElementById('queryInput');
 const sendBtn = document.getElementById('sendBtn');
+const stopBtn = document.getElementById('stopBtn');
 const userNameEl = document.getElementById('userName');
 const healthDot = document.getElementById('healthDot');
 const fileInput = document.getElementById('fileInput');
@@ -3289,7 +3335,44 @@ async function viewFile(docId) {
     if (r.status === 401) { doLogout(); return; }
     if (!r.ok) { const e = await r.json(); addSystemMessage(`View error: ${e.detail || 'Failed'}`); return; }
     const data = await r.json();
-    if (data.url) window.open(data.url, '_blank');
+    if (!data.url) return;
+
+    const filename = data.filename || 'Document';
+    const safeName = escapeHtml(filename);
+    const ct = (data.content_type || '').toLowerCase();
+    const isImage = ct.startsWith('image/');
+    const isPdf = ct === 'application/pdf' || filename.endsWith('.pdf');
+
+    let bodyHtml;
+    if (isImage) {
+      bodyHtml = `<img src="${data.url}" alt="${safeName}">`;
+    } else if (isPdf) {
+      bodyHtml = `<iframe src="${data.url}"></iframe>`;
+    } else {
+      try {
+        const tr = await fetch(data.url);
+        const text = await tr.text();
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        bodyHtml = pre.outerHTML;
+      } catch {
+        bodyHtml = `<p>Unable to load preview. <a href="${data.url}" target="_blank">Open in new tab</a></p>`;
+      }
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'preview-overlay';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+      <div class="preview-modal">
+        <div class="preview-header">
+          <h3 title="${safeName}">${safeName}</h3>
+          <button class="preview-close" onclick="this.closest('.preview-overlay').remove()">&#x2715;</button>
+        </div>
+        <div class="preview-body">${bodyHtml}</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
   } catch (err) {
     addSystemMessage(`View error: ${err.message}`);
   }
@@ -3435,10 +3518,13 @@ async function saveEditAndRerun(btn) {
 
   // 4. Re-run the query through normal streaming
   isProcessing = true;
-  sendBtn.disabled = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = '';
   clearPipeline();
   await sendStreaming(newText);
   isProcessing = false;
+  sendBtn.style.display = '';
+  stopBtn.style.display = 'none';
   sendBtn.disabled = false;
   queryInput.focus();
 }
@@ -3730,7 +3816,8 @@ async function sendQuery() {
   if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
 
   isProcessing = true;
-  sendBtn.disabled = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = '';
   queryInput.value = '';
   queryInput.style.height = 'auto';
 
@@ -3740,14 +3827,21 @@ async function sendQuery() {
   await sendStreaming(query);
 
   isProcessing = false;
+  sendBtn.style.display = '';
+  stopBtn.style.display = 'none';
   sendBtn.disabled = false;
   queryInput.focus();
+}
+
+function stopStreaming() {
+  if (_streamAbort) _streamAbort.abort();
 }
 
 async function sendStreaming(query) {
   typingInd.classList.add('visible');
   let msgEl = null;
   let sources = [];
+  _streamAbort = new AbortController();
 
   try {
     const response = await fetch(`${API}/query/stream`, {
@@ -3762,6 +3856,7 @@ async function sendStreaming(query) {
         active_web_collection_ids: _webCollections.filter(c => c.is_active).map(c => c.collection_id),
         selected_doc_ids: _selectedDocIds,
       }),
+      signal: _streamAbort.signal,
     });
 
     if (!response.ok) {
@@ -3802,7 +3897,13 @@ async function sendStreaming(query) {
     typingInd.classList.remove('visible');
   } catch (err) {
     typingInd.classList.remove('visible');
-    addSystemMessage(`Error: ${err.message}`);
+    if (err.name === 'AbortError') {
+      addSystemMessage('Response generation stopped.');
+    } else {
+      addSystemMessage(`Error: ${err.message}`);
+    }
+  } finally {
+    _streamAbort = null;
   }
 
   function handleSSE(event, rawData) {
@@ -4099,11 +4200,14 @@ async function transcribeAndSend(audioBlob) {
 
     // Send transcribed text as a voice query
     isProcessing = true;
-    sendBtn.disabled = true;
+    sendBtn.style.display = 'none';
+    stopBtn.style.display = '';
     addUserMessage(text);
     clearPipeline();
     await sendStreamingVoice(text);
     isProcessing = false;
+    sendBtn.style.display = '';
+    stopBtn.style.display = 'none';
     sendBtn.disabled = false;
     queryInput.focus();
 
@@ -4116,6 +4220,7 @@ async function sendStreamingVoice(query) {
   typingInd.classList.add('visible');
   let msgEl = null;
   let sources = [];
+  _streamAbort = new AbortController();
 
   try {
     const response = await fetch(`${API}/query/stream`, {
@@ -4129,6 +4234,7 @@ async function sendStreamingVoice(query) {
         source: 'voice',
         model: modelSelect.value || undefined,
       }),
+      signal: _streamAbort.signal,
     });
 
     if (!response.ok) {
@@ -4163,7 +4269,13 @@ async function sendStreamingVoice(query) {
     typingInd.classList.remove('visible');
   } catch (err) {
     typingInd.classList.remove('visible');
-    addSystemMessage(`Error: ${err.message}`);
+    if (err.name === 'AbortError') {
+      addSystemMessage('Response generation stopped.');
+    } else {
+      addSystemMessage(`Error: ${err.message}`);
+    }
+  } finally {
+    _streamAbort = null;
   }
 
   function handleVoiceSSE(event, rawData, _msgEl, _sources, setMsgEl) {

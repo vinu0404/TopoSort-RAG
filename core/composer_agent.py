@@ -108,7 +108,7 @@ Answer ENTIRELY from the conversation history and user profile below.
 4. Be precise — quote exact queries and answers when the user asks for them.
 5. Use a natural, conversational tone. Don't over-explain.
 6. **Address the user by name** if their name is available in the User Profile.
-7. **Language**: If the user profile specifies a preferred language, respond in that language.
+7. **Language**: Always respond in the same language the user wrote their query in. If the user profile specifies a preferred language, that takes priority.
 
 ### Answer"""
 
@@ -160,8 +160,9 @@ When the user asks who you are, your name, or what you are, always say you are {
 10. If an agent found emails, web results, or code output, present them in a
     user-friendly format (not raw JSON).
 11. **Address the user by name** if their name is available in the User Profile.
-12. **Language**: If the user profile specifies a preferred language, write the entire
-    response in that language.
+12. **Language**: Always respond in the same language the user wrote their query in.
+    If the user writes in Hindi, respond in Hindi. If in Spanish, respond in Spanish.
+    If the user profile specifies a preferred language, that takes priority.
 
 ### Answer"""
 
