@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -296,6 +296,121 @@ async def delete_user_conversation(
     await session.delete(conv)
     await session.flush()
     return True
+
+
+async def edit_message_and_truncate(
+    session: AsyncSession,
+    conversation_id: str,
+    message_id: str,
+    user_id: str,
+    new_content: str,
+) -> dict:
+    """Edit a user message and delete everything after it.
+
+    1. Verify ownership and that the message is a user message.
+    2. Delete all messages created after the edited message.
+    3. Delete agent_executions started after the edited message.
+    4. Delete HITL requests created after the edited message.
+    5. Delete conversation summaries that cover turns beyond the edit point.
+    6. Update the message content.
+
+    Returns ``{"deleted_messages": int, "deleted_summaries": int}``
+    or raises ``ValueError`` if not found / not a user message.
+    """
+    uid = _to_uuid(user_id)
+    cid = _to_uuid(conversation_id)
+    mid = _to_uuid(message_id)
+
+    # ── 1. Verify conversation ownership ──
+    conv = (await session.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == cid,
+            Conversation.user_id == uid,
+        )
+    )).scalar_one_or_none()
+    if not conv:
+        raise ValueError("Conversation not found")
+
+    # ── 2. Verify message exists and is a user message ──
+    msg = (await session.execute(
+        select(Message).where(
+            Message.message_id == mid,
+            Message.conversation_id == cid,
+        )
+    )).scalar_one_or_none()
+    if not msg:
+        raise ValueError("Message not found")
+    if msg.role != "user":
+        raise ValueError("Only user messages can be edited")
+
+    edit_timestamp = msg.created_at
+
+    # ── 3. Count the turn number of this message ──
+    # A "turn" = one user message. Count user messages up to and including this one.
+    turn_number = (await session.execute(
+        select(func.count(Message.message_id)).where(
+            Message.conversation_id == cid,
+            Message.role == "user",
+            Message.created_at <= edit_timestamp,
+        )
+    )).scalar() or 0
+
+    # ── 4. Update the message content BEFORE bulk deletes ──
+    # (bulk sa_delete can expire ORM objects in the same session)
+    msg.content = new_content
+    await session.flush()
+
+    # ── 5. Delete all messages AFTER the edited message ──
+    del_msgs = await session.execute(
+        sa_delete(Message).where(
+            Message.conversation_id == cid,
+            Message.created_at > edit_timestamp,
+        )
+    )
+    deleted_messages = del_msgs.rowcount
+
+    # ── 6. Delete agent executions after the edit point ──
+    await session.execute(
+        sa_delete(AgentExecution).where(
+            AgentExecution.conversation_id == cid,
+            AgentExecution.started_at > edit_timestamp,
+        )
+    )
+
+    # ── 7. Delete HITL requests after the edit point ──
+    await session.execute(
+        sa_delete(HitlRequest).where(
+            HitlRequest.conversation_id == cid,
+            HitlRequest.created_at > edit_timestamp,
+        )
+    )
+
+    # ── 8. Trim conversation summaries ──
+    # Each summary covers N turns. Walk through summaries in order and
+    # delete any whose range extends into or beyond `turn_number`.
+    # (turn_number is the turn being re-run, so keep only turns < turn_number)
+    summaries = (await session.execute(
+        select(ConversationSummary)
+        .where(ConversationSummary.conversation_id == cid)
+        .order_by(ConversationSummary.created_at.asc())
+    )).scalars().all()
+
+    deleted_summaries = 0
+    cumulative_turns = 0
+    for s in summaries:
+        cumulative_turns += s.turns_covered
+        # This summary's range ends at cumulative_turns.
+        # If it extends to turn_number or beyond, delete it.
+        if cumulative_turns >= turn_number:
+            await session.delete(s)
+            deleted_summaries += 1
+
+    await session.flush()
+
+    return {
+        "deleted_messages": deleted_messages,
+        "deleted_summaries": deleted_summaries,
+    }
 
 
 async def load_conversation_messages_full(

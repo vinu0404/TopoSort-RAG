@@ -6,6 +6,7 @@ answer with inline citations, supporting both sync and streaming.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import  AsyncIterator, List
 
 from config.settings import config
@@ -85,6 +86,9 @@ When the user asks who you are, your name, or what you are, always say you are {
 {self._format_persona_block(ci.persona)}The user has asked a question about the conversation itself — no specialised agents were needed.
 Answer ENTIRELY from the conversation history and user profile below.
 
+### Current Date
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
+
 ### Original User Query
 {ci.original_query}
 
@@ -111,6 +115,9 @@ Answer ENTIRELY from the conversation history and user profile below.
         return f"""You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
 When the user asks who you are, your name, or what you are, always say you are {config.bot_name}.
 {self._format_persona_block(ci.persona)}Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
+
+### Current Date
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
 
 ### Original User Query
 {ci.original_query}

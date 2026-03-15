@@ -659,6 +659,37 @@ async def delete_conversation(
     return {"deleted": True, "conversation_id": conversation_id}
 
 
+@router.put("/conversations/{conversation_id}/messages/{message_id}/edit", tags=["conversations"])
+async def edit_message(
+    conversation_id: str,
+    message_id: str,
+    body: Dict[str, Any],
+    session: AsyncSession = Depends(db_session),
+    auth_user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Edit a user message and truncate all messages after it."""
+    content = body.get("content", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content cannot be empty")
+
+    from database.helpers import edit_message_and_truncate
+
+    try:
+        result = await edit_message_and_truncate(
+            session, conversation_id, message_id, auth_user_id, content,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    await session.commit()
+    return {
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "deleted_messages": result["deleted_messages"],
+        "deleted_summaries": result["deleted_summaries"],
+    }
+
+
 # ── Persona CRUD ────────────────────────────────────────────────────────
 
 

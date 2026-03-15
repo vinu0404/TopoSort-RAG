@@ -2170,7 +2170,7 @@ async function switchConversation(conversationId) {
     }
     for (const m of msgs) {
       if (m.role === 'user') {
-        addUserMessage(m.content);
+        addUserMessage(m.content, m.message_id);
       } else if (m.role === 'assistant') {
         const el = createAssistantMessage();
         appendToAssistant(el, m.content);
@@ -3337,16 +3337,116 @@ function confirmDeleteFile(docId, filename) {
 }
 
 // ── Messages ────────────────────────────────────────────────
-function addUserMessage(text) {
+function addUserMessage(text, messageId) {
   welcomeEl.style.display = 'none';
   const div = document.createElement('div');
   div.className = 'msg user';
+  if (messageId) div.dataset.messageId = messageId;
+  const editBtn = messageId ? `<button class="msg-edit-btn" onclick="editMessage(this)" title="Edit & rerun">&#9998;</button>` : '';
   div.innerHTML = `
+    ${editBtn}
     <div class="msg-label">You</div>
     <div class="msg-content">${escapeHtml(text)}</div>
   `;
   messagesEl.appendChild(div);
   scrollToBottom();
+}
+
+function editMessage(btn) {
+  if (isProcessing) return;
+  const msgDiv = btn.closest('.msg.user');
+  const contentEl = msgDiv.querySelector('.msg-content');
+  const originalText = contentEl.textContent;
+  contentEl.style.display = 'none';
+  btn.style.display = 'none';
+  const editWrap = document.createElement('div');
+  editWrap.className = 'msg-edit-wrap';
+  const ta = document.createElement('textarea');
+  ta.className = 'msg-edit-area';
+  ta.value = originalText;
+  const actions = document.createElement('div');
+  actions.className = 'msg-edit-actions';
+  actions.innerHTML = `
+    <button class="btn-cancel" onclick="cancelEdit(this)">Cancel</button>
+    <button class="btn-save" onclick="saveEditAndRerun(this)">Save & Rerun</button>
+  `;
+  editWrap.appendChild(ta);
+  editWrap.appendChild(actions);
+  msgDiv.appendChild(editWrap);
+  ta.focus();
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function cancelEdit(btn) {
+  const msgDiv = btn.closest('.msg.user');
+  msgDiv.querySelector('.msg-content').style.display = '';
+  const editBtn = msgDiv.querySelector('.msg-edit-btn');
+  if (editBtn) editBtn.style.display = '';
+  msgDiv.querySelector('.msg-edit-wrap').remove();
+}
+
+async function saveEditAndRerun(btn) {
+  const msgDiv = btn.closest('.msg.user');
+  const messageId = msgDiv.dataset.messageId;
+  const newText = msgDiv.querySelector('.msg-edit-area').value.trim();
+  if (!newText) return;
+
+  if (!messageId || !currentConversationId) {
+    showToast('Cannot edit — no message ID');
+    cancelEdit(btn);
+    return;
+  }
+
+  // Disable buttons while saving
+  const saveBtn = msgDiv.querySelector('.btn-save');
+  const cancelBtn = msgDiv.querySelector('.btn-cancel');
+  saveBtn.disabled = true;
+  cancelBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  // 1. Call backend to truncate and update
+  try {
+    const r = await fetch(`${API}/conversations/${currentConversationId}/messages/${messageId}/edit`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ content: newText }),
+    });
+    if (r.status === 401) { doLogout(); return; }
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast(err.detail || 'Failed to edit message');
+      cancelEdit(btn);
+      return;
+    }
+  } catch (err) {
+    console.error('Edit message error:', err);
+    showToast('Error editing message');
+    cancelEdit(btn);
+    return;
+  }
+
+  // 2. Remove all DOM messages after this one
+  const allMsgs = [...messagesEl.querySelectorAll('.msg')];
+  const idx = allMsgs.indexOf(msgDiv);
+  for (let i = allMsgs.length - 1; i > idx; i--) {
+    allMsgs[i].remove();
+  }
+
+  // 3. Update the message content in DOM
+  msgDiv.querySelector('.msg-content').textContent = newText;
+  msgDiv.querySelector('.msg-content').style.display = '';
+  const editBtnEl = msgDiv.querySelector('.msg-edit-btn');
+  if (editBtnEl) editBtnEl.style.display = '';
+  msgDiv.querySelector('.msg-edit-wrap').remove();
+
+  // 4. Re-run the query through normal streaming
+  isProcessing = true;
+  sendBtn.disabled = true;
+  clearPipeline();
+  await sendStreaming(newText);
+  isProcessing = false;
+  sendBtn.disabled = false;
+  queryInput.focus();
 }
 
 function addSystemMessage(text) {

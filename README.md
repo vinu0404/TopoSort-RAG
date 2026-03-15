@@ -196,6 +196,8 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | `POST` | `/conversations/{conversation_id}/share` | JWT | Generate a shareable read-only link for a conversation. Idempotent — returns existing token if already shared. Returns `{ share_token, share_url }`. |
 | `DELETE` | `/conversations/{conversation_id}/share` | JWT | Revoke the share link for a conversation. Returns `{ status: "unshared" }`. |
 | `GET` | `/shared/{share_token}` | No | Public read-only page for a shared conversation. No authentication required. |
+| `DELETE` | `/conversations/{conversation_id}` | JWT | Delete a conversation and all its messages, agent executions, and summaries. Ownership verified. Returns `{ deleted, conversation_id }`. |
+| `PUT` | `/conversations/{conversation_id}/messages/{message_id}/edit` | JWT | Edit a user message and truncate all messages after it. Deletes subsequent messages, agent executions, HITL requests, and stale summaries. Body: `{ content }`. Returns `{ message_id, conversation_id, deleted_messages, deleted_summaries }`. |
 
 ### Personas — `/api/v1/personas`
 
@@ -816,6 +818,95 @@ Skipping Stage 1 when the user has already selected documents provides **faster 
 | RAG Agent | `agents/rag_agent/agent.py` | Extracts from metadata, passes to search tool |
 | Search Tool | `tools/rag_tools.py` | Checks `selected_doc_ids` → skips Stage 1 if present |
 | Frontend | `frontend/index.html` | Checkboxes, scope bar, `_selectedDocIds` state |
+
+---
+
+## Message Edit & Rerun
+
+Users can edit any previous message in a conversation and re-run the query from that point. Everything after the edited message is cleanly truncated — messages, agent executions, HITL requests, and stale conversation summaries.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    participant U as User (Frontend)
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant SSE as Streaming Pipeline
+
+    U->>U: Click pencil icon on a user message
+    U->>U: Edit text in inline textarea
+    U->>API: PUT /conversations/{conv}/messages/{msg}/edit<br/>{ content: "edited text" }
+
+    API->>DB: Verify conversation ownership
+    API->>DB: Verify message is a user message
+    API->>DB: Count turn number (user messages ≤ this one)
+    API->>DB: Update message content
+    API->>DB: DELETE messages WHERE created_at > edit_timestamp
+    API->>DB: DELETE agent_executions WHERE started_at > edit_timestamp
+    API->>DB: DELETE hitl_requests WHERE created_at > edit_timestamp
+    API->>DB: Walk summaries → delete any covering turns ≥ edit turn
+    API-->>U: { deleted_messages, deleted_summaries }
+
+    U->>U: Remove all DOM messages after edited one
+    U->>SSE: POST /query/stream { query: "edited text" }
+    SSE-->>U: New streamed response
+```
+
+### Truncation Logic
+
+```mermaid
+flowchart TD
+    A[User edits message at Turn N] --> B[Update message content]
+    B --> C[Delete all messages after Turn N]
+    C --> D[Delete agent executions after Turn N]
+    D --> E[Delete HITL requests after Turn N]
+    E --> F[Walk conversation summaries in order]
+
+    F --> G{Summary range<br/>reaches Turn N?}
+    G -- No --> H[Keep summary]
+    G -- Yes --> I[Delete summary]
+
+    H --> J{More summaries?}
+    I --> J
+    J -- Yes --> F
+    J -- No --> K[Flush to DB]
+    K --> L[Frontend re-runs edited query via streaming]
+
+    style B fill:#2ecc71,color:#fff
+    style C fill:#e74c3c,color:#fff
+    style D fill:#e74c3c,color:#fff
+    style E fill:#e74c3c,color:#fff
+    style I fill:#e74c3c,color:#fff
+    style H fill:#2ecc71,color:#fff
+```
+
+### Summary Trimming — Precise Approach
+
+Summaries are not blindly deleted. Each summary covers a fixed number of turns (default: 5). The system walks through summaries in chronological order, accumulating the turn range:
+
+| Summary | Turns Covered | Cumulative Range | Edit at Turn 7? |
+|---------|--------------|-----------------|-----------------|
+| Summary 1 | 5 | Turns 1–5 | **Keep** (range < 7) |
+| Summary 2 | 5 | Turns 6–10 | **Delete** (range reaches 7) |
+| Summary 3 | 5 | Turns 11–15 | **Delete** (range past 7) |
+
+Any summary whose cumulative range reaches or exceeds the edited turn number is deleted. Earlier summaries are preserved — they contain valid history that doesn't need regeneration.
+
+### Frontend Behavior
+
+- **Edit button** — pencil icon (✎) appears on hover, only on user messages loaded from history (not live-sent messages without a persisted ID)
+- **Inline editing** — replaces the message bubble with a textarea + Cancel / Save & Rerun buttons
+- **After save** — all messages below the edited one are removed from the DOM, then the edited query is re-sent through the normal streaming pipeline
+- **Error handling** — if the backend call fails, the edit is cancelled and the original message is restored
+
+### Files Involved
+
+| Layer | File | What it does |
+|-------|------|-------------|
+| DB Helper | `database/helpers.py` | `edit_message_and_truncate()` — ownership check, turn counting, cascading deletes, summary trimming |
+| API | `api/routes.py` | `PUT /conversations/{id}/messages/{id}/edit` endpoint |
+| Frontend | `frontend/index.html` | Edit button, inline textarea, DOM cleanup, streaming rerun |
 
 ---
 
@@ -3147,6 +3238,7 @@ async def test_summary_agent_execute():
 - **Long-term memory** is automatically loaded and injected by the Orchestrator into every `AgentInput.long_term_memory`. Pass it to your prompt methods.
 - **Retry/timeout** is handled by `BaseAgent.execute_with_retry()`. Your `execute()` should raise on failure, not catch-and-suppress.
 - **Dependencies** are declared by the Master Agent in the execution plan (`depends_on`). The topological sort ensures your agent only runs after its dependencies complete.
+- **Always inject the current date** into your agent's prompt. Without it, the LLM has no temporal awareness — queries like "recent news", "this week", or "current status" will return stale results. Use `datetime.now(timezone.utc).strftime('%A, %B %d, %Y')` and add a `### Current Date` section near the top of your prompt. This is already done in: Master Agent, Web Search Agent, Mail Agent, and Composer Agent.
 
 ---
 
