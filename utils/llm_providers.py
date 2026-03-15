@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -169,8 +170,12 @@ class OpenAIProvider(BaseLLMProvider):
 
         parsed_data = None
         if output_schema is not None:
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
+                cleaned = re.sub(r"\n?```\s*$", "", cleaned)
             try:
-                parsed_data = json.loads(text)
+                parsed_data = json.loads(cleaned)
             except json.JSONDecodeError:
                 logger.warning("LLM did not return valid JSON; returning raw text")
                 parsed_data = {"raw": text}
@@ -294,8 +299,12 @@ class AnthropicProvider(BaseLLMProvider):
 
         parsed_data = None
         if output_schema is not None:
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
+                cleaned = re.sub(r"\n?```\s*$", "", cleaned)
             try:
-                parsed_data = json.loads(text)
+                parsed_data = json.loads(cleaned)
             except json.JSONDecodeError:
                 logger.warning("LLM did not return valid JSON; returning raw text")
                 parsed_data = {"raw": text}
@@ -390,12 +399,16 @@ class GoogleProvider(BaseLLMProvider):
                 f"{json.dumps(output_schema, indent=2)}"
             )
 
+        gen_config = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if output_schema is not None:
+            gen_config["response_mime_type"] = "application/json"
+
         gen_model = self._genai.GenerativeModel(
             model_name,
-            generation_config=self._genai.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            ),
+            generation_config=self._genai.GenerationConfig(**gen_config),
         )
 
         response = await asyncio.to_thread(
@@ -414,8 +427,12 @@ class GoogleProvider(BaseLLMProvider):
 
         parsed_data = None
         if output_schema is not None:
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*\n?", "", cleaned)
+                cleaned = re.sub(r"\n?```\s*$", "", cleaned)
             try:
-                parsed_data = json.loads(text)
+                parsed_data = json.loads(cleaned)
             except json.JSONDecodeError:
                 logger.warning("LLM did not return valid JSON; returning raw text")
                 parsed_data = {"raw": text}
