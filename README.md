@@ -281,6 +281,18 @@ The analytics endpoint aggregates data from `agent_executions`, `messages`, and 
 | `GET` | `/{job_id}/runs` | JWT | List run history (paginated, newest first). Query params: `limit` (default 20), `offset`. Returns array of run objects. |
 | `GET` | `/{job_id}/runs/{run_id}` | JWT | Get a single run with per-step results. Returns run object with `step_results` array. |
 
+### Artifacts — `/api/v1`
+
+Code agent generates file artifacts (PDFs, charts, CSVs) that are sent to the frontend as base64-encoded SSE events. Users can optionally save artifacts to S3 for persistent storage.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/artifacts/save` | JWT | Save an artifact to S3.But removed from frontend to acess for no use of saving in cloud. Body: `{ conversation_id, filename, artifact_type, content_type, base64_data, agent_id?, agent_name?, preview_data? }`. Decodes base64, uploads to S3, persists DB row. Returns `{ artifact_id, download_url }`. |
+| `GET` | `/artifacts/{artifact_id}/download` | JWT | Get a presigned S3 download URL for a saved artifact. Ownership verified. Returns `{ url, filename, content_type, file_size_bytes, expires_in }`. |
+| `GET` | `/conversations/{conversation_id}/artifacts` | JWT | List all saved artifacts for a conversation (used for history reload). Ownership verified. Returns `{ artifacts: [...] }`. |
+
+**SSE Event:** During streaming, artifacts arrive as `artifact_preview` events with `{ agent_id, filename, artifact_type, content_type, file_size_bytes, preview_data, base64_data }`. The frontend renders inline preview cards with a Download button.
+
 ---
 
 ## Voice Input / Output Architecture
@@ -1859,6 +1871,14 @@ flowchart TD
 | **`user_long_term_memory`** | Persistent user profile extracted by the Memory Extractor | `user_id` (UUID PK, FK), `critical_facts` (JSONB), `preferences` (JSONB), `updated_at` |
 | **`hitl_requests`** | HITL approval requests for agents with dangerous tools | `request_id` (UUID PK), `conversation_id` (FK), `agent_id`, `agent_name`, `tool_names` (TEXT[]), `task_description`, `status` (`pending`/`approved`/`denied`/`timed_out`/`expired`), `user_instructions`, `created_at`, `responded_at`, `expires_at` |
 | **`user_connections`** | OAuth connections per user per provider | `connection_id` (UUID PK), `user_id` (FK), `provider` (VARCHAR), `account_label`, `account_id`, `access_token`, `refresh_token`, `token_type`, `expires_at`, `scopes` (TEXT[]), `provider_meta` (JSONB), `status` (`active`/`expired`/`revoked`/`error`), `connected_at`, `last_refreshed`, `last_used_at`, `error_message` — UNIQUE(`user_id`, `provider`, `account_id`) |
+| **`personas`** | User-defined AI personalities | `persona_id` (UUID PK), `user_id` (FK), `name`, `description`, `is_default` (BOOL), `created_at`, `updated_at` |
+| **`artifacts`** | Code agent file artifacts (PDF, charts, CSV) | `artifact_id` (UUID PK), `conversation_id` (FK), `message_id` (FK, nullable), `agent_id`, `agent_name`, `filename`, `artifact_type`, `content_type`, `file_size_bytes` (BIGINT), `storage_key`, `storage_bucket`, `preview_data` (JSONB), `metadata` (JSONB), `created_at` |
+| **`web_scrape_collections`** | User web scraping collections | `collection_id` (UUID PK), `user_id` (FK), `name`, `description`, `status`, `created_at`, `updated_at` |
+| **`web_scrape_urls`** | URLs within a scraping collection | `url_id` (UUID PK), `collection_id` (FK), `url`, `status`, `title`, `chunk_count`, `error_message`, `created_at`, `scraped_at` |
+| **`scheduled_jobs`** | Cron-based scheduled agent jobs | `job_id` (UUID PK), `user_id` (FK), `name`, `description`, `cron_expression`, `timezone`, `status` (`active`/`paused`/`deleted`), `notification_mode`, `notification_target`, `created_at`, `updated_at` |
+| **`scheduled_job_steps`** | Steps within a scheduled job | `step_id` (UUID PK), `job_id` (FK), `step_order`, `agent_name`, `task`, `tools` (TEXT[]), `depends_on_steps` (INT[]), `created_at` |
+| **`scheduled_job_runs`** | Execution history for scheduled jobs | `run_id` (UUID PK), `job_id` (FK), `status`, `started_at`, `completed_at`, `error_message` |
+| **`scheduled_job_step_results`** | Per-step results within a run | `result_id` (UUID PK), `run_id` (FK), `step_id` (FK), `status`, `output_payload` (JSONB), `error_message`, `started_at`, `completed_at` |
 
 #### `user_long_term_memory` — JSONB Column Detail
 
@@ -1905,7 +1925,7 @@ Every agent receives an **`AgentInput`** and returns an **`AgentOutput`**. These
 | `long_term_memory` | `Dict` | `{critical: {...}, preferences: {...}}` — user profile |
 | `dependency_outputs` | `Dict` | Outputs from upstream agents (`dep_agent_id → data`) |
 | `retry_config` | `Dict` | `{max_retries, timeout, backoff_multiplier}` |
-| `metadata` | `Dict` | `{user_id, query_id, session_id}` |
+| `metadata` | `Dict` | `{user_id, query_id, session_id, conversation_id, persona, active_web_collection_ids, selected_doc_ids}` |
 
 ### Common Output — `AgentOutput`
 
@@ -1922,6 +1942,7 @@ Every agent receives an **`AgentInput`** and returns an **`AgentOutput`**. These
 | `depends_on` | `List[str]` | IDs of upstream agents this depended on |
 | `resource_usage` | `Dict` | `{time_taken_ms, tokens_used, api_calls_made, …}` |
 | `metadata` | `Dict` | `{sources, citations, model_used}` |
+| `artifacts` | `List[ArtifactPreview]` | File artifacts generated by code_agent (PDF, charts, CSV) — empty `[]` for other agents |
 
 ### Per-Agent `data` Output
 
@@ -2912,6 +2933,7 @@ class SlackAgent(BaseAgent):
                     "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
+                artifacts=[],  # Only code_agent populates this
             )
         except Exception:
             logger.exception("[SlackAgent] Error")
@@ -3050,6 +3072,7 @@ class GitHubAgent(BaseAgent):
                     "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
+                artifacts=[],  # Only code_agent populates this
             )
         except Exception:
             logger.exception("[GitHubAgent] Error")
@@ -3490,9 +3513,9 @@ class SummaryPrompts:
         history_context = ""
         if conversation_history:
             history_context = "\n### Recent conversation\n"
-            for msg in conversation_history[-4:]:
+            for msg in conversation_history[-10:]:
                 role = msg.get("role", "user")
-                text = str(msg.get("content", ""))[:300]
+                text = str(msg.get("content", ""))[:800]
                 history_context += f"- {role}: {text}\n"
 
         current_date = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
@@ -3602,12 +3625,21 @@ class SummaryAgent(BaseAgent):
                     "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
+                artifacts=[],  # Only code_agent populates this with file artifacts
             )
 
         except Exception:
             logger.exception("[SummaryAgent] Error for input: %s", task_config)
             raise   # let execute_with_retry handle retries
 ```
+
+> **Note on Persona Support**
+>
+> Most agents do **NOT** need to handle persona — only two agents use it:
+> - **Composer Agent** — Applies persona to the final user-facing response
+> - **Code Agent** — Applies persona to generated files (PDFs, charts) that are directly served to users
+>
+> The Composer Agent handles persona styling for all other agents' outputs, so you don't need to extract or pass persona in your custom agent. The persona is already available in `task_config.metadata["persona"]` if you ever need it for a special use case (e.g., an agent that generates user-facing content directly).
 
 ---
 
