@@ -3370,12 +3370,47 @@ async function showRunDetail(jobId, runId) {
       }
     }
 
-    const composedHtml = composedAnswer
-      ? `<div style="margin-bottom:14px;padding:12px;background:#f0f7ff;border:1px solid #d0e3ff;border-radius:8px;">
+    let composedHtml = '';
+    if (composedAnswer) {
+      let rawText = composedAnswer;
+      const sources = [];
+      // Parse trailing Sources: block (same as finalizeAssistant)
+      const sourcesMatch = rawText.match(/\n\n?Sources:\n([\s\S]*)$/);
+      if (sourcesMatch) {
+        const block = sourcesMatch[1];
+        const lines = block.trim().split('\n');
+        for (const line of lines) {
+          const m = line.match(/^\[(\d+)\]\s*(.+?)(?:\s*\((.+)\))?\s*$/);
+          if (m) {
+            const idx = parseInt(m[1]) - 1;
+            const rawUrl = m[3] ? m[3].replace(/\)+$/, '').trim() : null;
+            if (!sources[idx]) sources[idx] = { source: m[2].trim(), url: rawUrl };
+            else if (!sources[idx].url && rawUrl) sources[idx].url = rawUrl;
+          }
+        }
+        rawText = rawText.slice(0, sourcesMatch.index).trimEnd();
+      }
+      // Render markdown
+      let rendered = renderMarkdown(rawText);
+      // Make [1], [2] etc clickable
+      rendered = rendered.replace(/\[(\d+)\]/g, (match, num) => {
+        const idx = parseInt(num) - 1;
+        const src = sources[idx];
+        if (src && src.url) return `<a class="inline-ref" href="${src.url}" target="_blank" title="${escapeHtml(src.source || src.url)}">[${num}]</a>`;
+        if (src && src.source) return `<span class="inline-ref" title="${escapeHtml(src.source)}">[${num}]</span>`;
+        return match;
+      });
+      // Sources button
+      const validSources = sources.filter(Boolean);
+      const sourcesBtn = validSources.length
+        ? `<div style="margin-top:8px;"><button onclick='showSourcesPopup(${JSON.stringify(validSources).replace(/'/g,"&#39;")})' style="background:none;border:1px solid #d0e3ff;border-radius:6px;padding:4px 10px;font-size:0.75rem;color:#1a73e8;cursor:pointer;">${validSources.length} source${validSources.length>1?'s':''}</button></div>`
+        : '';
+      composedHtml = `<div style="margin-bottom:14px;padding:12px;background:#f0f7ff;border:1px solid #d0e3ff;border-radius:8px;">
           <div style="font-weight:700;font-size:0.85rem;color:#1a73e8;margin-bottom:6px;">Composed Answer</div>
-          <div style="font-size:0.82rem;color:#333;line-height:1.6;white-space:pre-wrap;max-height:400px;overflow-y:auto;">${escapeHtml(composedAnswer)}</div>
-        </div>`
-      : '';
+          <div class="msg-content" style="font-size:0.82rem;color:#333;line-height:1.6;max-height:400px;overflow-y:auto;">${rendered}</div>
+          ${sourcesBtn}
+        </div>`;
+    }
 
     const stepsHtml = (run.step_results || []).map(sr => {
       const statusCls = sr.status === 'success' ? 'color:#4CAF50' : sr.status === 'failed' ? 'color:#d9534f' : 'color:#FF9800';
