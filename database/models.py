@@ -329,3 +329,22 @@ class ScheduledJobStepResult(Base):
     resource_usage = Column(JSONB, default=dict)
 
     run = relationship("ScheduledJobRun", back_populates="step_results")
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+
+    artifact_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="CASCADE"), nullable=False)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("messages.message_id", ondelete="SET NULL"), nullable=True)
+    agent_id = Column(Text, nullable=False)
+    agent_name = Column(String(64), nullable=False)
+    filename = Column(String(512), nullable=False)
+    artifact_type = Column(String(32), nullable=False)
+    content_type = Column(String(128), nullable=False)
+    file_size_bytes = Column(BigInteger, nullable=False, default=0)
+    storage_key = Column(String(1024), nullable=False)
+    storage_bucket = Column(String(128), nullable=True)
+    preview_data = Column(JSONB, default=dict)
+    metadata_ = Column("metadata", JSONB, default=dict)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

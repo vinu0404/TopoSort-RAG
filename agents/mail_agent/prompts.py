@@ -40,9 +40,9 @@ class MailPrompts:
         conv_section = ""
         if conversation_history:
             conv_section = "\n### Conversation History\n"
-            for turn in conversation_history[-6:]:
+            for turn in conversation_history[-10:]:
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
-                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:300]
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
                 conv_section += f"  {role}: {content}\n"
 
         return f"""You are the Gmail Action Planner for a multi-agent RAG system.
@@ -128,9 +128,9 @@ Return EXACTLY this JSON:
         conv_section = ""
         if conversation_history:
             conv_section = "\n### Conversation History\n"
-            for turn in conversation_history[-6:]:
+            for turn in conversation_history[-10:]:
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
-                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:300]
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
                 conv_section += f"  {role}: {content}\n"
 
         return f"""You are a Professional Email Composer for a multi-agent RAG system.

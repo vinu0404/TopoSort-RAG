@@ -1148,3 +1148,119 @@ async def demo_credentials() -> Dict[str, Any]:
         "password": config.demo_user_password,
         "display_name": config.demo_user_display_name,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Artifact endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/artifacts/save", tags=["artifacts"])
+async def save_artifact_endpoint(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """
+    Save an artifact from the frontend (user clicked Save on a preview).
+    Accepts base64-encoded file data, uploads to S3, persists DB row.
+    """
+    import base64
+    import uuid as _uuid
+    from storage.s3 import upload_file, build_artifact_storage_key, generate_presigned_url
+    from database.helpers import save_artifact
+    from database.models import Conversation
+
+    body = await request.json()
+    conversation_id = body.get("conversation_id")
+    filename = body.get("filename", "artifact")
+    artifact_type = body.get("artifact_type", "text")
+    content_type = body.get("content_type", "application/octet-stream")
+    base64_data = body.get("base64_data", "")
+
+    if not conversation_id or not base64_data:
+        raise HTTPException(status_code=400, detail="conversation_id and base64_data required")
+
+    # Verify conversation ownership
+    from sqlalchemy import select
+    conv = (await session.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == conversation_id,
+            Conversation.user_id == user_id,
+        )
+    )).scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    file_bytes = base64.b64decode(base64_data)
+    artifact_id = str(_uuid.uuid4())
+    storage_key = build_artifact_storage_key(user_id, conversation_id, artifact_id, filename)
+    upload_file(file_bytes, storage_key, content_type=content_type)
+
+    await save_artifact(
+        session,
+        artifact_id=artifact_id,
+        conversation_id=conversation_id,
+        agent_id=body.get("agent_id", ""),
+        agent_name=body.get("agent_name", "code_agent"),
+        filename=filename,
+        artifact_type=artifact_type,
+        content_type=content_type,
+        file_size_bytes=len(file_bytes),
+        storage_key=storage_key,
+        preview_data=body.get("preview_data", {}),
+    )
+    await session.commit()
+
+    download_url = generate_presigned_url(storage_key)
+    return {
+        "artifact_id": artifact_id,
+        "download_url": download_url,
+    }
+
+
+@router.get("/artifacts/{artifact_id}/download", tags=["artifacts"])
+async def download_artifact(
+    artifact_id: str,
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Generate a presigned download URL for an artifact (verifies ownership)."""
+    from storage.s3 import generate_presigned_url
+    from database.helpers import get_artifact_for_user
+
+    artifact = await get_artifact_for_user(session, artifact_id, user_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    url = generate_presigned_url(storage_key=artifact.storage_key)
+    return {
+        "url": url,
+        "filename": artifact.filename,
+        "content_type": artifact.content_type,
+        "file_size_bytes": artifact.file_size_bytes,
+        "expires_in": config.s3_presign_expiry,
+    }
+
+
+@router.get("/conversations/{conversation_id}/artifacts", tags=["artifacts"])
+async def list_conversation_artifacts(
+    conversation_id: str,
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """List all saved artifacts for a conversation (for history reload)."""
+    from database.helpers import list_artifacts_for_conversation
+    from database.models import Conversation
+    from sqlalchemy import select
+
+    conv = (await session.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == conversation_id,
+            Conversation.user_id == user_id,
+        )
+    )).scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    artifacts = await list_artifacts_for_conversation(session, conversation_id)
+    return {"artifacts": artifacts}

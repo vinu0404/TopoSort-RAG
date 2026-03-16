@@ -287,3 +287,26 @@ CREATE TABLE IF NOT EXISTS scheduled_job_step_results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sjsr_run ON scheduled_job_step_results(run_id);
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Artifacts (chat-generated files: charts, CSVs, PDFs, images)
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    artifact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id  UUID NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+    message_id       UUID REFERENCES messages(message_id) ON DELETE SET NULL,
+    agent_id         TEXT NOT NULL,
+    agent_name       VARCHAR(64) NOT NULL,
+    filename         VARCHAR(512) NOT NULL,
+    artifact_type    VARCHAR(32) NOT NULL,
+    content_type     VARCHAR(128) NOT NULL,
+    file_size_bytes  BIGINT NOT NULL DEFAULT 0,
+    storage_key      VARCHAR(1024) NOT NULL,
+    storage_bucket   VARCHAR(128),
+    preview_data     JSONB DEFAULT '{}',
+    metadata         JSONB DEFAULT '{}',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_conversation ON artifacts(conversation_id);

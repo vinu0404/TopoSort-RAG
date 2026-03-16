@@ -281,6 +281,11 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
         })
 
         yield _sse_event("status", {"phase": "executing"})
+
+        # Load persona early so it can be passed to agents (like code_agent)
+        persona_data = await get_conversation_persona(session, conv_id)
+        persona_ctx = PersonaContext(**persona_data) if persona_data else None
+
         if plan.execution_plan.agents:
             registry = ToolRegistry()
             agent_instances = build_agent_instances(
@@ -295,10 +300,12 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                 "user_id": user_id,
                 "query_id": plan.query_id,
                 "session_id": sess_id,
+                "conversation_id": str(conv_id),
                 "long_term_memory": long_term.model_dump(),
                 "conversation_history": conversation_history,
                 "active_web_collection_ids": request.active_web_collection_ids,
                 "selected_doc_ids": request.selected_doc_ids,
+                "persona": persona_data,  # Pass persona dict to agents
             }
 
             # ── HITL-aware orchestration ────────────────────────────
@@ -342,6 +349,19 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                 "sources": agent_sources,
             })
 
+            # Emit artifact preview events (before composition)
+            if hasattr(output, "artifacts") and output.artifacts:
+                for art in output.artifacts:
+                    yield _sse_event("artifact_preview", {
+                        "agent_id": agent_id,
+                        "filename": art.filename,
+                        "artifact_type": art.artifact_type,
+                        "content_type": art.content_type,
+                        "file_size_bytes": art.file_size_bytes,
+                        "preview_data": art.preview_data,
+                        "base64_data": art.base64_data,
+                    })
+
         yield _sse_event("status", {"phase": "composing"})
 
         if request.model and request.model in _VALID_MODELS:
@@ -360,9 +380,6 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
                     all_sources.append(Source(agent=ao.agent_id, **{k: v for k, v in s.items() if k in Source.model_fields}))
                 elif isinstance(s, Source):
                     all_sources.append(s)
-
-        persona_data = await get_conversation_persona(session, conv_id)
-        persona_ctx = PersonaContext(**persona_data) if persona_data else None
 
         composer_input = ComposerInput(
             query_id=plan.query_id,

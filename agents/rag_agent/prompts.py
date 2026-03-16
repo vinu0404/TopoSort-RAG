@@ -57,7 +57,7 @@ return fewer.
     def synthesis_prompt(
         query: str,
         chunks: List[Dict[str, Any]],
-        conversation_context: str ,
+        conversation_history: list | None = None,
         long_term_memory: Dict[str, Any] | None = None,
     ) -> str:
         context = ""
@@ -71,8 +71,12 @@ return fewer.
             context += f"\n[Source {i+1}: {source_label}]\n{c.get('text', '')}\n"
 
         conv_section = ""
-        if conversation_context:
-            conv_section = f"\n### Conversation History\n{conversation_context}\n"
+        if conversation_history:
+            conv_section = "\n### Conversation History\n"
+            for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
+                conv_section += f"  {role}: {content}\n"
 
         profile_section = format_user_profile(long_term_memory or {}, header="User Profile (personalise your output)")
 
@@ -103,9 +107,18 @@ Your job is to answer the user's question using ONLY the provided document sourc
 ### Answer"""
 
     @staticmethod
-    def query_expansion_prompt(query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> str:
+    def query_expansion_prompt(query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any], conversation_history: list | None = None) -> str:
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
         dependency_str = ", ".join(f"{k}={v}" for k, v in dependency_outputs.items()) if dependency_outputs else "none"
+
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n### Conversation History\n"
+            for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
+                conv_section += f"  {role}: {content}\n"
+
         return f"""You are a Query Expansion Expert. Generate a alternative search querie
 that capture different aspects of the user's information need.You can use the original query, the extracted entities, and outputs from other agents to create a more comprehensive query for document retrieval.
 
@@ -117,7 +130,7 @@ that capture different aspects of the user's information need.You can use the or
 
 ### Dependency Outputs from other agents
 {dependency_str}
-
+{conv_section}
 ### Instructions
 - alternative should approach the topic from a different angle.
 - Include synonyms, related terms like dates or persons or any important context, or more specific/general versions.

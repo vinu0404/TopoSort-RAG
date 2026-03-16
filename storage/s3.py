@@ -68,6 +68,16 @@ def build_storage_key(user_id: str, doc_id: str, filename: str) -> str:
     return f"uploads/{user_id}/{doc_id}/{safe_name}"
 
 
+def build_artifact_storage_key(
+    user_id: str, conversation_id: str, artifact_id: str, filename: str,
+) -> str:
+    """
+    Artifact storage path:  ``artifacts/{user_id}/{conversation_id}/{artifact_id}/{filename}``
+    """
+    safe_name = _sanitize_filename(filename)
+    return f"artifacts/{user_id}/{conversation_id}/{artifact_id}/{safe_name}"
+
+
 # ── Upload ───────────────────────────────────────────────────────────────────
 
 def upload_file(

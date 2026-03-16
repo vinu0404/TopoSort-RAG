@@ -205,9 +205,9 @@ Respond ONLY with valid JSON matching this schema:
         conv_section = ""
         if conversation_history:
             conv_section = "### Recent Conversation\n"
-            for turn in conversation_history[-6:]:
+            for turn in conversation_history[-10:]:
                 role = turn.get("role", "user")
-                content = str(turn.get("content", ""))[:300]
+                content = str(turn.get("content", ""))[:800]
                 conv_section += f"  {role}: {content}\n"
 
         memory_section = ""

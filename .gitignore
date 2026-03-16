@@ -7,6 +7,7 @@ prod.env
 start.txt
 # C extensions
 *.so
+OUTPUT_DIR/
 file/
 # Distribution / packaging
 .Python

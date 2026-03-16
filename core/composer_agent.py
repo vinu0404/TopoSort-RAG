@@ -229,12 +229,12 @@ When the user asks who you are, your name, or what you are, always say you are {
         if not turns:
             return "(no prior conversation)"
         lines = []
-        for t in turns[-6:]:
+        for t in turns[-10:]:
             if hasattr(t, "user_query"):
-                lines.append(f"  User: {t.user_query[:300]}")
-                lines.append(f"  Assistant: {t.composer_answer[:300]}")
+                lines.append(f"  User: {t.user_query[:800]}")
+                lines.append(f"  Assistant: {t.composer_answer[:800]}")
             elif isinstance(t, dict):
-                lines.append(f"  {t.get('role', 'user')}: {str(t.get('content', ''))[:300]}")
+                lines.append(f"  {t.get('role', 'user')}: {str(t.get('content', ''))[:800]}")
         return "\n".join(lines) if lines else "(no prior conversation)"
 
 

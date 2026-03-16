@@ -46,7 +46,7 @@ class RAGAgent(BaseAgent):
             user_id = task_config.metadata.get("user_id", "default")
             active_web_ids = task_config.metadata.get("active_web_collection_ids", [])
             selected_doc_ids = task_config.metadata.get("selected_doc_ids", [])
-            enhanced_query, expand_tokens = await self._expand_query(original_query, entities, dependency_outputs)
+            enhanced_query, expand_tokens = await self._expand_query(original_query, entities, dependency_outputs, task_config.conversation_history)
             tokens_used += expand_tokens
 
             logger.info(f"[RAGAgent] Original query: {original_query}")
@@ -76,12 +76,11 @@ class RAGAgent(BaseAgent):
             tokens_used += rerank_tokens
 
             sources = self._extract_sources(reranked_chunks)
-            conversation_context = task_config.conversation_history
-            
+
             synthesis_prompt = self.prompts.synthesis_prompt(
-                query=enhanced_query,  
+                query=enhanced_query,
                 chunks=reranked_chunks,
-                conversation_context=conversation_context,
+                conversation_history=task_config.conversation_history,
                 long_term_memory=task_config.long_term_memory,
             )
             
@@ -151,7 +150,7 @@ class RAGAgent(BaseAgent):
 
 
 
-    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any]) -> tuple[str, int]:
+    async def _expand_query(self, query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any], conversation_history: list | None = None) -> tuple[str, int]:
         """
         Expand the original query using LLM to generate a more comprehensive search query.
         
@@ -165,7 +164,7 @@ class RAGAgent(BaseAgent):
         """
         
         try:
-            prompt = self.prompts.query_expansion_prompt(query, entities, dependency_outputs)
+            prompt = self.prompts.query_expansion_prompt(query, entities, dependency_outputs, conversation_history)
             
             result = await self.llm.generate(
                 prompt=prompt,
