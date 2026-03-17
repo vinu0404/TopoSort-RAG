@@ -78,6 +78,11 @@ def create_app() -> FastAPI:
             except Exception:
                 logger.exception("Failed to seed demo user")
 
+        # Security: warn about insecure default secrets
+        from security.config import validate_secrets
+        for _warn in validate_secrets():
+            logger.warning("SECURITY: %s", _warn)
+
         logger.info("Application ready to accept requests.")
         yield
     app = FastAPI(
@@ -87,13 +92,16 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS
+    # CORS — use security config for hardened origins
+    from security.config import get_cors_config
+    cors_cfg = get_cors_config()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=cors_cfg["allow_origins"],
+        allow_credentials=cors_cfg["allow_credentials"],
+        allow_methods=cors_cfg["allow_methods"],
+        allow_headers=cors_cfg["allow_headers"],
+        expose_headers=cors_cfg["expose_headers"],
     )
 
     register_middleware(app)
