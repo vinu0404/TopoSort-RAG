@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_task, wrap_entities, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.prompt_utils import format_user_profile
 
 
@@ -81,7 +83,11 @@ class CodePrompts:
     ) -> str:
         dep_context = CodePrompts._format_dependency_context(dependency_outputs)
 
-        entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        safe_task = sanitize_user_input(task).text
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
 
         profile_section = format_user_profile(long_term_memory or {})
 
@@ -92,21 +98,22 @@ class CodePrompts:
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n### Conversation History\n"
+            conv_lines = ""
             for turn in conversation_history[-10:]:
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "\n### Conversation History\n" + wrap_conversation_history(conv_lines)
 
         persona_section = CodePrompts._format_persona_block(persona)
 
-        return f"""You are an Expert Developer in a multi-agent RAG system.
+        return f"""{DELIMITER_SYSTEM_PROMPT}
 
-### Task
-{task}
+You are an Expert Developer in a multi-agent RAG system.
 
-### Entities
-{entity_str}
+{wrap_task(safe_task)}
+
+{wrap_entities(entity_str)}
 {dep_context}
 {profile_section}
 {conv_section}

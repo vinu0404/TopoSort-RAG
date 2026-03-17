@@ -15,6 +15,7 @@ import tempfile
 from typing import Any, Dict, List
 
 from tools import tool
+from security.code_validator import validate_and_log
 
 logger = logging.getLogger("code_tools")
 
@@ -76,6 +77,17 @@ async def execute_code(code: str, language: str = "python", timeout: int = 30) -
     """
     if language != "python":
         return {"error": f"Unsupported language: {language}", "exit_code": 1}
+
+    # Security: validate code before execution
+    validation = validate_and_log(code, "code_agent")
+    if not validation.is_safe:
+        logger.warning("[execute_code] Code blocked: %s", validation.violations[:5])
+        return {
+            "error": "Code validation failed",
+            "violations": validation.violations,
+            "risk_level": validation.risk_level,
+            "exit_code": 1,
+        }
 
     with tempfile.TemporaryDirectory(prefix="mrag_code_") as tmpdir:
         # Strip any LLM-generated OUTPUT_DIR reassignment so our preamble is authoritative

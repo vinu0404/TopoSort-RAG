@@ -13,6 +13,8 @@ from typing import Any, Dict, List
 
 from config.model_list import AgentRegistry
 from config.settings import config
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_user_query, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.llm_providers import BaseLLMProvider, get_llm_provider
 from utils.schemas import (
     AgentTask,
@@ -204,24 +206,28 @@ Respond ONLY with valid JSON matching this schema:
 
         conv_section = ""
         if conversation_history:
-            conv_section = "### Recent Conversation\n"
+            conv_lines = ""
             for turn in conversation_history[-10:]:
                 role = turn.get("role", "user")
                 content = str(turn.get("content", ""))[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "### Recent Conversation\n" + wrap_conversation_history(conv_lines)
 
         memory_section = ""
         if long_term_memory:
             memory_section = f"### User Profile\n{long_term_memory}\n"
 
-        return f"""You are the Master Planning Agent for a multi-agent RAG system.
+        sanitized_query = sanitize_user_input(query).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are the Master Planning Agent for a multi-agent RAG system.
 Your job is to analyse the user's query, extract entities, and create an optimal execution plan.
 
 ### Current Date & Time
 {datetime.now(timezone.utc).strftime('%A, %B %d, %Y %H:%M UTC')}
 
-### User Query
-{query}
+{wrap_user_query(sanitized_query)}
 
 ### Available Agents
 {agent_ref}

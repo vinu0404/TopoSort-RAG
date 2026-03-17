@@ -2166,6 +2166,214 @@ Read flow:    DB column → ciphertext → decrypt_token() → plaintext_token
 - Tokens stored before encryption was enabled are handled gracefully (auto-detected and returned as-is)
 - All encryption/decryption is done inside `token_manager.py` — no other code needs to know about it
 
+---
+
+## Security Guardrails
+
+The system implements multi-layer defense against prompt injection, code execution attacks, and API abuse. The `security/` module provides reusable utilities for all agents.
+
+### Architecture Overview
+
+```mermaid
+flowchart TB
+    subgraph Input["User Input Layers"]
+        API[API Request] --> RL[Rate Limiter<br/>Redis-backed]
+        RL --> IV[Input Validator<br/>Blocklist patterns]
+        IV --> SAN[Sanitization<br/>Escape + detect]
+    end
+
+    subgraph Prompts["Prompt Construction"]
+        SAN --> DEL[Delimiters<br/>XML-style wrappers]
+        DEL --> PROMPT[Agent Prompt<br/>+ DELIMITER_SYSTEM_PROMPT]
+    end
+
+    subgraph Execution["Code Execution"]
+        CODE[LLM-generated code] --> CV[Code Validator<br/>AST + regex]
+        CV -->|Safe| EXEC[Subprocess]
+        CV -->|Blocked| REJECT[Reject + log]
+    end
+
+    subgraph Response["Response Layer"]
+        PROMPT --> LLM[LLM Call]
+        LLM --> HEADERS[Security Headers<br/>CSP, X-Frame-Options]
+        HEADERS --> ERR[Error Sanitization<br/>No stack traces]
+    end
+```
+
+### Security Module Files
+
+| File | Purpose |
+|------|---------|
+| `security/sanitization.py` | Input sanitization, injection pattern detection |
+| `security/delimiters.py` | XML-style delimiters to mark user content |
+| `security/validators.py` | Query blocklist, input validation |
+| `security/code_validator.py` | AST-based code safety checking |
+| `security/rate_limiter.py` | Redis-backed per-user rate limiting |
+| `security/middleware.py` | Security headers, error sanitization |
+| `security/config.py` | CORS config, secret validation |
+
+### Prompt Injection Defense
+
+All agent prompts must sanitize user inputs and wrap them with delimiters:
+
+```python
+from security.sanitization import sanitize_user_input
+from security.delimiters import (
+    wrap_user_query,
+    wrap_task,
+    wrap_entities,
+    wrap_conversation_history,
+    DELIMITER_SYSTEM_PROMPT,
+)
+
+# 1. Sanitize user input — escapes control chars, detects injection patterns
+safe_task = sanitize_user_input(task).text
+safe_entity_str = ", ".join(
+    f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+    for k, v in entities.items()
+) if entities else "none"
+
+# 2. Wrap with delimiters — marks content as DATA, not instructions
+# 3. Prepend DELIMITER_SYSTEM_PROMPT — tells LLM to treat delimited content as data only
+
+prompt = f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are an Agent in a multi-agent RAG system.
+
+{wrap_task(safe_task)}
+
+{wrap_entities(safe_entity_str)}
+... rest of prompt ...
+"""
+```
+
+#### Sanitization Functions
+
+| Function | Use Case | Max Length |
+|----------|----------|-----------|
+| `sanitize_user_input(text)` | User queries, task descriptions, entities | 50,000 |
+| `sanitize_document_chunk(text, source)` | RAG-retrieved document content | 8,000 |
+| `sanitize_web_content(text, url)` | Web-scraped content (highest risk) | 10,000 |
+
+Each returns a `SanitizationResult` with:
+- `text` — sanitized output
+- `was_modified` — boolean
+- `detected_patterns` — list of matched injection pattern names
+- `risk_score` — 0.0 to 1.0
+
+#### Injection Patterns Detected
+
+- `ignore previous instructions`, `disregard all`, `you are now`
+- Role injection: `system:`, `assistant:`, `human:`
+- Model tokens: `<|...|>`, `[INST]`, `<<SYS>>`
+- Jailbreak attempts: `DAN`, `developer mode`
+
+#### Delimiter Wrappers
+
+| Wrapper | Output Tags |
+|---------|-------------|
+| `wrap_user_query(query)` | `<\|user_query\|>...<\/\|user_query\|>` |
+| `wrap_task(task)` | `<\|task_description\|>...<\/\|task_description\|>` |
+| `wrap_entities(str)` | `<\|entities\|>...<\/\|entities\|>` |
+| `wrap_conversation_history(str)` | `<\|conversation_history\|>...<\/\|conversation_history\|>` |
+| `wrap_document_chunk(text, source, idx)` | `<\|document_chunk\|>...<\/\|document_chunk\|>` |
+| `wrap_web_content(text, url)` | `<\|web_content\|>...<\/\|web_content\|>` |
+
+### Code Execution Safety
+
+The `code_agent` uses HITL approval + pre-execution validation:
+
+```python
+# tools/code_tools.py
+from security.code_validator import validate_and_log
+
+@tool("code_agent", requires_approval=True)
+async def execute_code(code: str, language: str = "python", timeout: int = 30):
+    # Security: validate BEFORE subprocess
+    validation = validate_and_log(code, "code_agent")
+    if not validation.is_safe:
+        return {"error": "Code validation failed", "violations": validation.violations}
+
+    # ... proceed with subprocess execution ...
+```
+
+#### Blocked Imports
+
+`os`, `sys`, `subprocess`, `shutil`, `socket`, `requests`, `urllib`, `pickle`, `ctypes`, `multiprocessing`, `importlib`, `builtins`, `code`, `pty`, `signal`, `gc`
+
+#### Allowed Imports
+
+`json`, `math`, `datetime`, `collections`, `re`, `csv`, `io`, `pandas`, `matplotlib`, `numpy`, `reportlab`, `statistics`
+
+#### Dangerous Patterns Blocked
+
+- `os.system(`, `subprocess.`, `Popen(`
+- `eval(`, `exec(`, `compile(`
+- `__builtins__`, `__subclasses__`, `__globals__`
+- Path traversal: `../`, `.env`, `credentials`, `id_rsa`
+
+### Rate Limiting
+
+Redis-backed sliding window rate limiter:
+
+| Category | Limit | Window |
+|----------|-------|--------|
+| `standard` | 100 requests | 60 seconds |
+| `streaming` | 20 requests | 60 seconds |
+| `code_execution` | 10 requests | 60 seconds |
+| `auth` | 10 requests | 60 seconds |
+
+```python
+# Usage in endpoints
+from security.rate_limiter import check_rate_limit
+
+@router.post("/query/stream")
+async def stream_query(
+    request: QueryRequest,
+    raw_request: Request,
+    ...
+):
+    await check_rate_limit(raw_request, "streaming")  # Raises 429 if exceeded
+    ...
+```
+
+### Security Headers
+
+All responses include:
+
+| Header | Value |
+|--------|-------|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `X-XSS-Protection` | `1; mode=block` |
+| `Content-Security-Policy` | `default-src 'self'; ...` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` |
+
+### Error Sanitization
+
+Unhandled exceptions are caught and sanitized:
+- Full stack trace logged internally with `request_id`
+- Client receives: `{"error": "internal_error", "request_id": "abc123"}`
+- No file paths, line numbers, or internal details exposed
+
+### Startup Secret Validation
+
+At startup, the system warns about insecure defaults:
+
+```python
+# main.py lifespan
+from security.config import validate_secrets
+for warning in validate_secrets():
+    logger.warning("SECURITY: %s", warning)
+```
+
+Warnings issued for:
+- Default `JWT_SECRET` (`"change-me-jwt-secret-key"`)
+- `JWT_SECRET` shorter than 32 characters
+- Default `OAUTH_STATE_SECRET`
+- Default `TOKEN_ENCRYPTION_KEY`
+
 ### OAuth Connector Flow
 
 ```mermaid
@@ -2814,6 +3022,92 @@ Create `agents/<provider>_agent/` with three files: `__init__.py`, `prompts.py`,
 | **ContextVar service** | SDK requires a client/service object (e.g. `googleapiclient`) | `prepare_*_service()` → ContextVar → `_get_service()` | Gmail |
 | **Token pass-through** | REST API via `httpx` — no SDK object needed | `get_active_token()` → pass `token` to each tool call | Slack, GitHub |
 
+#### Slack Agent — `agents/slack_agent/prompts.py`
+
+Connector agents need prompts for action planning. The LLM decides which API action to take based on the user's task.
+
+```python
+# agents/slack_agent/prompts.py
+
+"""Slack agent prompts — action planning for Slack workspace operations."""
+
+from __future__ import annotations
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_task, wrap_entities, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
+from utils.prompt_utils import format_user_profile
+
+
+class SlackPrompts:
+
+    @staticmethod
+    def action_prompt(
+        task: str,
+        entities: Dict[str, Any],
+        dependency_outputs: Dict[str, Any] | None = None,
+        long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
+    ) -> str:
+        dep_context = ""
+        if dependency_outputs:
+            dep_context = "\n### Context from other agents\n"
+            for aid, data in dependency_outputs.items():
+                dep_context += f"- **{aid}**: {str(data)[:400]}\n"
+
+        # Security: sanitize entities
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
+
+        profile = format_user_profile(long_term_memory or {})
+
+        # Security: wrap conversation history
+        conv_section = ""
+        if conversation_history:
+            conv_lines = ""
+            for msg in conversation_history[-10:]:
+                role = msg.get("role", "user")
+                text = str(msg.get("content", ""))[:800]
+                conv_lines += f"- {role}: {text}\n"
+            conv_section = wrap_conversation_history(conv_lines)
+
+        # Security: sanitize task
+        safe_task = sanitize_user_input(task).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are the Slack Action Planner for a multi-agent RAG system.
+
+### Current Date
+{datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
+
+{wrap_task(safe_task)}
+
+{wrap_entities(entity_str)}
+{dep_context}
+{profile}
+{conv_section}
+
+### Available Actions
+| Action | When to use |
+|--------|-------------|
+| search_messages | Search for messages across workspace |
+| list_channels | List available channels |
+| read_channel | Read recent messages from a channel |
+| send_message | Send a message to a channel |
+
+### Output (JSON)
+Return EXACTLY:
+{{
+    "action": "search_messages | list_channels | read_channel | send_message",
+    "params": {{"channel": "...", "query": "...", "message": "..."}},
+    "reasoning": "brief explanation"
+}}"""
+```
+
 #### Slack Agent — `agents/slack_agent/agent.py` (token pass-through)
 
 ```python
@@ -2938,6 +3232,97 @@ class SlackAgent(BaseAgent):
         except Exception:
             logger.exception("[SlackAgent] Error")
             raise
+```
+
+#### GitHub Agent — `agents/github_agent/prompts.py` (HITL-aware)
+
+GitHub agent has HITL-protected tools (`create_repo`, `create_pr`). The prompts must handle both read-only operations and write operations that need user approval.
+
+```python
+# agents/github_agent/prompts.py
+
+"""GitHub agent prompts — action planning for repo management, issues, and PRs."""
+
+from __future__ import annotations
+from typing import Any, Dict
+
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_task, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
+from utils.prompt_utils import format_user_profile
+
+
+class GitHubPrompts:
+
+    @staticmethod
+    def action_prompt(
+        task: str,
+        entities: Dict[str, Any],
+        dependency_outputs: Dict[str, Any] | None = None,
+        long_term_memory: Dict[str, Any] | None = None,
+        conversation_history: list | None = None,
+    ) -> str:
+        dep_context = ""
+        if dependency_outputs:
+            dep_context = "\n### Context from other agents\n"
+            for aid, data in dependency_outputs.items():
+                dep_context += f"- **{aid}**: {str(data)[:500]}\n"
+
+        profile = format_user_profile(long_term_memory or {})
+
+        # Security: wrap conversation history
+        history_context = ""
+        if conversation_history:
+            conv_lines = ""
+            for msg in conversation_history[-10:]:
+                role = msg.get("role", "user")
+                text = str(msg.get("content", ""))[:800]
+                conv_lines += f"- {role}: {text}\n"
+            history_context = "\n### Recent conversation\n" + wrap_conversation_history(conv_lines)
+
+        # Security: sanitize entities
+        entities_str = ""
+        if entities:
+            entities_str = "\n### Extracted entities\n"
+            for k, v in entities.items():
+                entities_str += f"- {sanitize_user_input(str(k)).text}: {sanitize_user_input(str(v)).text}\n"
+
+        # Security: sanitize task
+        safe_task = sanitize_user_input(task).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a GitHub Integration Agent in a multi-agent system.
+
+{wrap_task(safe_task)}
+{dep_context}
+{profile}
+{history_context}
+{entities_str}
+
+### Available Actions
+- **list_repos** — list the authenticated user's repositories (no owner/repo needed)
+- **repo_info**   — get metadata for a specific repository (owner, repo required)
+- **list_issues** — list issues in a repository (owner, repo required)
+- **list_prs**    — list pull requests in a repository (owner, repo required)
+- **create_repo** — create a new repository (name required) ⚠️ requires HITL approval
+- **create_pr**   — create a pull request (owner, repo, title, head, base required) ⚠️ requires HITL approval
+
+### Instructions
+1. Parse the user's request to determine which action to take.
+2. Extract the required parameters (owner, repo, name, etc.) from the task and entities.
+3. If the user mentions a repo like "owner/repo", split it into owner and repo.
+4. If the user asks about their repos without specifying one, use **list_repos**.
+5. For create operations, include a clear description/body.
+
+### Output format
+Return JSON:
+```json
+{{
+  "action": "list_repos | repo_info | list_issues | list_prs | create_repo | create_pr",
+  "params": {{...}},
+  "reasoning": "why this action"
+}}
+```"""
 ```
 
 #### GitHub Agent — `agents/github_agent/agent.py` (token pass-through)
@@ -3474,15 +3859,24 @@ Create a folder `agents/summary_agent/` with three files:
 
 Every prompt class follows the same pattern: static methods that accept task data + `long_term_memory` and return a formatted prompt string. Use the shared `format_user_profile()` from `utils/prompt_utils.py` — **do not** duplicate it in your prompt class.
 
+**IMPORTANT — Security Guardrails**: All user-supplied data (task, entities, conversation history) must be sanitized and wrapped with delimiters to prevent prompt injection attacks. See the [Security Guardrails](#security-guardrails) section for details.
+
 ```python
 # agents/summary_agent/prompts.py
 
-"""Summary agent prompts — production-quality, personalised."""
+"""Summary agent prompts — production-quality, personalised, secure."""
 
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+from security.sanitization import sanitize_user_input
+from security.delimiters import (
+    wrap_task,
+    wrap_entities,
+    wrap_conversation_history,
+    DELIMITER_SYSTEM_PROMPT,
+)
 from utils.prompt_utils import format_user_profile
 
 
@@ -3503,33 +3897,40 @@ class SummaryPrompts:
             for aid, data in dependency_outputs.items():
                 dep_context += f"- **{aid}**: {str(data)[:500]}\n"
 
-        entity_str = (
-            ", ".join(f"{k}={v}" for k, v in entities.items())
-            if entities else "none"
-        )
+        # Security: sanitize entities
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
 
         profile = format_user_profile(long_term_memory or {})
 
+        # Security: wrap conversation history with delimiters
         history_context = ""
         if conversation_history:
-            history_context = "\n### Recent conversation\n"
+            history_lines = ""
             for msg in conversation_history[-10:]:
                 role = msg.get("role", "user")
                 text = str(msg.get("content", ""))[:800]
-                history_context += f"- {role}: {text}\n"
+                history_lines += f"- {role}: {text}\n"
+            history_context = "\n### Recent conversation\n" + wrap_conversation_history(history_lines)
 
         current_date = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
 
-        return f"""You are a Summarisation Expert in a multi-agent RAG system.
+        # Security: sanitize task and wrap with delimiters
+        safe_task = sanitize_user_input(task).text
+
+        # Security: prepend DELIMITER_SYSTEM_PROMPT to instruct LLM
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Summarisation Expert in a multi-agent RAG system.
 
 ### Current Date
 {current_date}
 
-### Task
-{task}
+{wrap_task(safe_task)}
 
-### Entities
-{entity_str}
+{wrap_entities(entity_str)}
 {dep_context}
 {profile}
 {history_context}

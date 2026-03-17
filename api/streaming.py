@@ -26,11 +26,13 @@ import logging
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import db_session, get_current_user_id
+from security.rate_limiter import check_rate_limit
+from security.validators import validate_query_input
 from config.model_list import AgentRegistry
 from config.settings import config, model_provider_for, _VALID_MODELS
 from core.composer_agent import ComposerAgent
@@ -87,9 +89,14 @@ router = APIRouter(tags=["streaming"])
 @router.post("/query/stream")
 async def stream_query(
     request: QueryRequest,
+    raw_request: Request,
     session: AsyncSession = Depends(db_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    # Security: rate limit and input validation
+    await check_rate_limit(raw_request, "streaming")
+    validate_query_input(request.query)
+
     return StreamingResponse(
         _stream_events(request, session, user_id),
         media_type="text/event-stream",
@@ -534,9 +541,12 @@ async def _stream_events(request: QueryRequest, session: AsyncSession, user_id: 
 @router.post("/query/recompose-stream")
 async def recompose_stream(
     request: RecomposeRequest,
+    raw_request: Request,
     session: AsyncSession = Depends(db_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    await check_rate_limit(raw_request, "streaming")
+
     return StreamingResponse(
         _recompose_events(request, session, user_id),
         media_type="text/event-stream",
