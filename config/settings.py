@@ -86,10 +86,11 @@ class Settings(BaseSettings):
     show_demo_credentials_on_login: bool = True
 
     # ── Security Secrets ──────────────────────────────────────────────────
-    jwt_secret: str = "change-me-jwt-secret-key"      
-    jwt_expiry_seconds: int = 604800                   
-    oauth_state_secret: str = "change-me-oauth-state" 
+    jwt_secret: str = "change-me-jwt-secret-key"
+    jwt_expiry_seconds: int = 604800
+    oauth_state_secret: str = "change-me-oauth-state"
     token_encryption_key: str = "encryptmeplease"                       # Fernet key for encrypting OAuth tokens at rest
+    rate_limit_enabled: bool = True
 
     # ── OAuth Connectors ─────────────────────────────────────────────────
     google_client_id: str = ""          # Google OAuth Web App client ID

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from security.sanitization import sanitize_user_input, sanitize_document_chunk
+from security.delimiters import wrap_user_query, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.prompt_utils import format_user_profile
 
 
@@ -14,11 +16,13 @@ class RAGPrompts:
 
     @staticmethod
     def rerank_prompt(query: str, chunks: List[Dict[str, Any]]) -> str:
-        return f"""You are a Document Relevance Expert. Your job is to rank document chunks
+        safe_query = sanitize_user_input(query).text
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Document Relevance Expert. Your job is to rank document chunks
 by how well they answer the user's query.
 
-### User Query
-{query}
+{wrap_user_query(safe_query)}
 
 ### Document Chunks
 {RAGPrompts._format_chunks(chunks)}
@@ -68,23 +72,29 @@ return fewer.
             source_label = source
             if section:
                 source_label += f" > {section}"
-            context += f"\n[Source {i+1}: {source_label}]\n{c.get('text', '')}\n"
+            chunk_text = c.get("text", "")
+            sanitized = sanitize_document_chunk(chunk_text, source_label)
+            context += f"\n[Source {i+1}: {source_label}]\n{sanitized.text}\n"
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n### Conversation History\n"
+            conv_lines = ""
             for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "\n### Conversation History\n" + wrap_conversation_history(conv_lines)
 
         profile_section = format_user_profile(long_term_memory or {}, header="User Profile (personalise your output)")
 
-        return f"""You are a Knowledge Synthesis Expert in a multi-agent RAG system.
+        safe_query = sanitize_user_input(query).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Knowledge Synthesis Expert in a multi-agent RAG system.
 Your job is to answer the user's question using ONLY the provided document sources.
 
-### User Query
-{query}
+{wrap_user_query(safe_query)}
 {conv_section}
 {profile_section}
 ### Document Sources
@@ -108,22 +118,29 @@ Your job is to answer the user's question using ONLY the provided document sourc
 
     @staticmethod
     def query_expansion_prompt(query: str, entities: Dict[str, Any], dependency_outputs: Dict[str, Any], conversation_history: list | None = None) -> str:
-        entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
         dependency_str = ", ".join(f"{k}={v}" for k, v in dependency_outputs.items()) if dependency_outputs else "none"
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n### Conversation History\n"
+            conv_lines = ""
             for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "\n### Conversation History\n" + wrap_conversation_history(conv_lines)
 
-        return f"""You are a Query Expansion Expert. Generate a alternative search querie
+        safe_query = sanitize_user_input(query).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Query Expansion Expert. Generate a alternative search querie
 that capture different aspects of the user's information need.You can use the original query, the extracted entities, and outputs from other agents to create a more comprehensive query for document retrieval.
 
-### Original Query
-{query}
+{wrap_user_query(safe_query)}
 
 ### Extracted Entities
 {entity_str}

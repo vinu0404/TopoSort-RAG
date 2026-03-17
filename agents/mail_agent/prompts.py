@@ -13,7 +13,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_task, wrap_entities, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.prompt_utils import format_user_profile
 
 
@@ -33,19 +34,27 @@ class MailPrompts:
             for aid, data in dependency_outputs.items():
                 dep_context += f"- **{aid}**: {str(data)[:400]}\n"
 
-        entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
 
         profile_section = format_user_profile(long_term_memory or {}, header="User Profile (use for sign-off name and email tone)")
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n### Conversation History\n"
+            conv_lines = ""
             for turn in conversation_history[-10:]:
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = wrap_conversation_history(conv_lines)
 
-        return f"""You are the Gmail Action Planner for a multi-agent RAG system.
+        safe_task = sanitize_user_input(task).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are the Gmail Action Planner for a multi-agent RAG system.
 
 ### Current Date
 {datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
@@ -53,11 +62,9 @@ class MailPrompts:
 ### Your Task
 Determine what Gmail action to take for the user's request and provide the needed parameters.
 
-### User Request
-{task}
+{wrap_task(safe_task)}
 
-### Extracted Entities
-{entity_str}
+{wrap_entities(entity_str)}
 {dep_context}
 {profile_section}
 {conv_section}
@@ -127,16 +134,20 @@ Return EXACTLY this JSON:
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n### Conversation History\n"
+            conv_lines = ""
             for turn in conversation_history[-10:]:
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = wrap_conversation_history(conv_lines)
 
-        return f"""You are a Professional Email Composer for a multi-agent RAG system.
+        safe_task = sanitize_user_input(task).text
 
-### Task
-{task}
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Professional Email Composer for a multi-agent RAG system.
+
+{wrap_task(safe_task)}
 
 ### Entities
 {entities}

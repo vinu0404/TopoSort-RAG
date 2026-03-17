@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_task, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.prompt_utils import format_user_profile
 
 
@@ -29,22 +31,26 @@ class GitHubPrompts:
 
         history_context = ""
         if conversation_history:
-            history_context = "\n### Recent conversation\n"
+            conv_lines = ""
             for msg in conversation_history[-10:]:
                 role = msg.get("role", "user")
                 text = str(msg.get("content", ""))[:800]
-                history_context += f"- {role}: {text}\n"
+                conv_lines += f"- {role}: {text}\n"
+            history_context = "\n### Recent conversation\n" + wrap_conversation_history(conv_lines)
 
         entities_str = ""
         if entities:
             entities_str = "\n### Extracted entities\n"
             for k, v in entities.items():
-                entities_str += f"- {k}: {v}\n"
+                entities_str += f"- {sanitize_user_input(str(k)).text}: {sanitize_user_input(str(v)).text}\n"
 
-        return f"""You are a GitHub Integration Agent in a multi-agent system.
+        safe_task = sanitize_user_input(task).text
 
-### Task
-{task}
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a GitHub Integration Agent in a multi-agent system.
+
+{wrap_task(safe_task)}
 {dep_context}
 {profile}
 {history_context}

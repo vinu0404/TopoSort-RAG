@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import  AsyncIterator, List
 
 from config.settings import config
+from security.sanitization import sanitize_user_input
+from security.delimiters import wrap_user_query, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.llm_providers import BaseLLMProvider
 from utils.schemas import (
     AgentOutput,
@@ -80,8 +82,12 @@ class ComposerAgent:
         # Detect conversation-memory queries (no agents dispatched)
         is_memory_query = not successful and not partial and not completely_failed
 
+        safe_query = sanitize_user_input(ci.original_query).text
+
         if is_memory_query:
-            return f"""You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
+            return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
 When the user asks who you are, your name, or what you are, always say you are {config.bot_name}.with the following persona:{self._format_persona_block(ci.persona)} tuned to answer questions about the conversation history and user profile.
 {self._format_persona_block(ci.persona)}The user has asked a question about the conversation itself — no specialised agents were needed.
 Answer ENTIRELY from the conversation history and user profile below.
@@ -89,8 +95,7 @@ Answer ENTIRELY from the conversation history and user profile below.
 ### Current Date
 {datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
 
-### Original User Query
-{ci.original_query}
+{wrap_user_query(safe_query)}
 
 ### User Profile
 {ci.long_term_memory.model_dump() if hasattr(ci.long_term_memory, 'model_dump') else ci.long_term_memory}
@@ -112,15 +117,16 @@ Answer ENTIRELY from the conversation history and user profile below.
 
 ### Answer"""
 
-        return f"""You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are {config.bot_name}, the Final Response Composer for a multi-agent RAG system.
 When the user asks who you are, your name, or what you are, always say you are {config.bot_name}.
 {self._format_persona_block(ci.persona)}Your job is to synthesise outputs from specialised agents into one coherent, polished answer.
 
 ### Current Date
 {datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
 
-### Original User Query
-{ci.original_query}
+{wrap_user_query(safe_query)}
 
 ### User Profile
 {ci.long_term_memory.model_dump() if hasattr(ci.long_term_memory, 'model_dump') else ci.long_term_memory}

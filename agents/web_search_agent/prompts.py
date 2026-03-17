@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from security.sanitization import sanitize_user_input, sanitize_web_content
+from security.delimiters import wrap_task, wrap_entities, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
 from utils.prompt_utils import format_user_profile
 
 
@@ -27,18 +29,26 @@ class WebSearchPrompts:
             for aid, data in dependency_outputs.items():
                 dep_context += f"- **{aid}**: {str(data)[:400]}\n"
 
-        entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
         long_term_memory_str=" \n\n### User Profile\n" + format_user_profile(long_term_memory or {}) if long_term_memory else ""
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n\n### Conversation History\n"
+            conv_lines = ""
             for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "\n\n### Conversation History\n" + wrap_conversation_history(conv_lines)
 
-        return f"""You are the Web Search Strategist for a multi-agent RAG system.
+        safe_task = sanitize_user_input(task).text
+
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are the Web Search Strategist for a multi-agent RAG system.
 
 ### Current Date
 {datetime.now(timezone.utc).strftime('%A, %B %d, %Y')}
@@ -46,11 +56,9 @@ class WebSearchPrompts:
 ### Your Task
 Decide the best search strategy and generate an optimised search query for the task below.Use the context from other agents, user profile, and conversation history to inform your decision.
 
-### Task
-{task}
+{wrap_task(safe_task)}
 
-### Extracted Entities
-{entity_str}
+{wrap_entities(entity_str)}
 {dep_context}
 {long_term_memory_str}
 {conv_section}
@@ -84,19 +92,28 @@ Return EXACTLY this JSON structure, nothing else:
         long_term_memory: Dict[str, Any] | None = None,
         conversation_history: list | None = None,
     ) -> str:
-        # Format search results
+        # Format search results — sanitize web content
         results_text = ""
         for i, r in enumerate(search_results[:10], 1):
-            results_text += f"\n[{i}] **{r.get('title', 'Untitled')}**\n"
+            title = sanitize_user_input(r.get("title", "Untitled")).text
+            snippet = sanitize_web_content(
+                r.get("snippet", "")[:400],
+                url=r.get("url", ""),
+            ).text
+            results_text += f"\n[{i}] **{title}**\n"
             results_text += f"    URL: {r.get('url', '')}\n"
-            results_text += f"    Snippet: {r.get('snippet', '')[:400]}\n"
+            results_text += f"    Snippet: {snippet}\n"
 
-        # Format fetched pages
+        # Format fetched pages — sanitize web content
         pages_text = ""
         if fetched_pages:
             for i, p in enumerate(fetched_pages, 1):
+                page_content = sanitize_web_content(
+                    p.get("content", "")[:3000],
+                    url=p.get("url", ""),
+                ).text
                 pages_text += f"\n--- Fetched Page {i}: {p.get('url', '')} ---\n"
-                pages_text += f"{p.get('content', '')[:3000]}\n"
+                pages_text += f"{page_content}\n"
 
         # Tavily's own answer
         tavily_section = ""
@@ -113,16 +130,20 @@ Return EXACTLY this JSON structure, nothing else:
 
         conv_section = ""
         if conversation_history:
-            conv_section = "\n\n### Conversation History\n"
+            conv_lines = ""
             for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
                 role = turn.get("role", "user") if isinstance(turn, dict) else "user"
                 content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
-                conv_section += f"  {role}: {content}\n"
+                conv_lines += f"  {role}: {content}\n"
+            conv_section = "\n\n### Conversation History\n" + wrap_conversation_history(conv_lines)
 
-        return f"""You are a Research Synthesis Expert in a multi-agent RAG system.Your job is to answer the user's question by synthesising information from the web search results and any fetched page content. Use the context from other agents, user profile, and conversation history to inform your answer.
+        safe_task = sanitize_user_input(task).text
 
-### Original Task
-{task}
+        return f"""{DELIMITER_SYSTEM_PROMPT}
+
+You are a Research Synthesis Expert in a multi-agent RAG system.Your job is to answer the user's question by synthesising information from the web search results and any fetched page content. Use the context from other agents, user profile, and conversation history to inform your answer.
+
+{wrap_task(safe_task)}
 {dep_context}
 {tavily_section}
 {profile_section}
@@ -145,10 +166,14 @@ Return EXACTLY this JSON structure, nothing else:
 
     @staticmethod
     def search_query_prompt(task: str, entities: Dict[str, Any]) -> str:
-        entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
+        safe_task = sanitize_user_input(task).text
+        entity_str = ", ".join(
+            f"{sanitize_user_input(str(k)).text}={sanitize_user_input(str(v)).text}"
+            for k, v in entities.items()
+        ) if entities else "none"
         return f"""Generate a concise, keyword-rich web search query for the following task.
 Return ONLY the search query string, nothing else.
 
-Task: {task}
+Task: {safe_task}
 Entities: {entity_str}
 """
