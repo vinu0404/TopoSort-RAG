@@ -251,8 +251,10 @@ class Orchestrator:
                 "user_id": context.get("user_id", ""),
                 "query_id": context.get("query_id", ""),
                 "session_id": context.get("session_id"),
+                "conversation_id": context.get("conversation_id", ""),
                 "active_web_collection_ids": context.get("active_web_collection_ids", []),
                 "selected_doc_ids": context.get("selected_doc_ids", []),
+                "persona": context.get("persona"),  # Pass persona to agents
             },
             hitl_context=hitl_decision,
         )

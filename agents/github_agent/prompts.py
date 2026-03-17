@@ -30,9 +30,9 @@ class GitHubPrompts:
         history_context = ""
         if conversation_history:
             history_context = "\n### Recent conversation\n"
-            for msg in conversation_history[-4:]:
+            for msg in conversation_history[-10:]:
                 role = msg.get("role", "user")
-                text = str(msg.get("content", ""))[:300]
+                text = str(msg.get("content", ""))[:800]
                 history_context += f"- {role}: {text}\n"
 
         entities_str = ""

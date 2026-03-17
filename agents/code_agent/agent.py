@@ -8,7 +8,7 @@ from typing import  List
 from agents.base_agent import BaseAgent
 from agents.code_agent.prompts import CodePrompts
 from config.settings import config
-from utils.schemas import AgentInput, AgentOutput
+from utils.schemas import AgentInput, AgentOutput, ArtifactPreview
 import logging
 logger = logging.getLogger("code_agent")
 
@@ -29,12 +29,16 @@ class CodeAgent(BaseAgent):
             linter = self.get_tool("code_linter")
             effective_task = await self._effective_task(task_config)
 
+            # Extract persona from metadata (passed by orchestrator)
+            persona = task_config.metadata.get("persona") if task_config.metadata else None
+
             prompt = self.prompts.code_generation_prompt(
                 task=effective_task,
                 entities=task_config.entities,
                 dependency_outputs=task_config.dependency_outputs,
                 long_term_memory=task_config.long_term_memory,
                 conversation_history=task_config.conversation_history,
+                persona=persona,
             )
             code_result = await self.llm.generate(
                 prompt=prompt,
@@ -58,7 +62,13 @@ class CodeAgent(BaseAgent):
                 )
             result = await execute_code(code)
 
-            logger.info(f"[CodeAgent] Output: {result}")
+            # Extract artifact previews from code execution
+            raw_artifacts = result.get("artifacts", [])
+            artifact_previews = [ArtifactPreview(**a) for a in raw_artifacts]
+
+            logger.info(f"[CodeAgent] Output: exit_code={result.get('exit_code')}, artifacts={len(artifact_previews)}")
+            if result.get("exit_code") != 0:
+                logger.warning(f"[CodeAgent] stderr: {result.get('stderr', '')[:500]}")
             return AgentOutput(
                 agent_id=task_config.agent_id,
                 agent_name=self.agent_name,
@@ -76,6 +86,7 @@ class CodeAgent(BaseAgent):
                     "tokens_used": tokens_used,
                 },
                 depends_on=list(task_config.dependency_outputs.keys()),
+                artifacts=artifact_previews,
             )
 
         except Exception:

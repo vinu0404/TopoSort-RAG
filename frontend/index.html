@@ -1893,6 +1893,79 @@
     .rail-btn svg { width: 18px; height: 18px; }
     .side-panel { position: fixed; left: 40px; top: 0; bottom: 0; z-index: 900; box-shadow: 4px 0 16px rgba(0,0,0,0.1); }
   }
+
+  /* ── Artifact Preview Cards ───────────────────────────────── */
+  .artifact-card {
+    display: flex; flex-direction: column; gap: 10px;
+    background: linear-gradient(135deg, #f8fafc 0%, #e8f4fd 100%);
+    border: 1px solid #d0e3f1; border-radius: 12px;
+    padding: 14px 16px; margin: 12px 0; max-width: 400px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .artifact-card-header {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .artifact-icon {
+    width: 40px; height: 40px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: #fff; border: 1px solid #e0e0e0;
+  }
+  .artifact-icon svg { width: 22px; height: 22px; stroke: #1a73e8; }
+  .artifact-icon.csv { background: #e8f5e9; }
+  .artifact-icon.csv svg { stroke: #388e3c; }
+  .artifact-icon.chart { background: #fff3e0; }
+  .artifact-icon.chart svg { stroke: #f57c00; }
+  .artifact-icon.pdf { background: #ffebee; }
+  .artifact-icon.pdf svg { stroke: #d32f2f; }
+  .artifact-icon.code { background: #ede7f6; }
+  .artifact-icon.code svg { stroke: #7b1fa2; }
+  .artifact-icon.json { background: #e3f2fd; }
+  .artifact-icon.json svg { stroke: #1976d2; }
+  .artifact-meta { flex: 1; min-width: 0; }
+  .artifact-filename {
+    font-weight: 600; font-size: 0.9rem; color: #333;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .artifact-size { font-size: 0.75rem; color: #888; }
+  .artifact-preview-area {
+    background: #fff; border: 1px solid #e8e8e8; border-radius: 8px;
+    padding: 10px; max-height: 200px; overflow: auto; font-size: 0.8rem;
+  }
+  .artifact-preview-area img {
+    max-width: 100%; max-height: 180px; border-radius: 4px;
+  }
+  .artifact-preview-area pre {
+    margin: 0; white-space: pre-wrap; word-break: break-all;
+    font-family: 'Fira Code', monospace; font-size: 0.75rem;
+  }
+  .artifact-preview-area table {
+    width: 100%; border-collapse: collapse; font-size: 0.72rem;
+  }
+  .artifact-preview-area th, .artifact-preview-area td {
+    border: 1px solid #e0e0e0; padding: 4px 6px; text-align: left;
+  }
+  .artifact-preview-area th { background: #f5f5f5; font-weight: 600; }
+  .artifact-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .artifact-btn {
+    padding: 6px 14px; font-size: 0.8rem; border-radius: 6px;
+    border: 1px solid #d0d0d0; background: #fff; color: #333;
+    cursor: pointer; font-weight: 500; display: flex; align-items: center; gap: 5px;
+    transition: all 0.15s ease;
+  }
+  .artifact-btn:hover { background: #f5f5f5; }
+  .artifact-btn.primary {
+    background: #1a73e8; color: #fff; border-color: #1a73e8;
+  }
+  .artifact-btn.primary:hover { background: #1557b0; }
+  .artifact-btn svg { width: 14px; height: 14px; }
+  .artifact-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .artifact-saved-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.75rem; color: #388e3c; font-weight: 500;
+  }
+  .artifact-saved-badge svg { width: 14px; height: 14px; stroke: #388e3c; }
 </style>
 </head>
 <body>
@@ -2526,6 +2599,8 @@ async function switchConversation(conversationId) {
         addSystemMessage(m.content);
       }
     }
+    // Load saved artifacts for this conversation
+    await loadConversationArtifacts(conversationId);
   } catch (err) {
     console.error('switchConversation error:', err);
     addSystemMessage('Failed to load conversation');
@@ -4924,6 +4999,153 @@ function finalizeAssistant(msgEl, sources) {
   scrollToBottom();
 }
 
+// ── Artifact Preview ───────────────────────────────────────
+const _artifactIconSVG = {
+  csv: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 17V13M12 17V9M17 17V5"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h1.5a1.5 1.5 0 1 0 0-3H9v6"/></svg>',
+  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>',
+  json: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/></svg>',
+  text: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8M8 9h2"/></svg>',
+};
+
+function _formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function _buildPreviewHtml(data) {
+  const p = data.preview_data || {};
+  const aType = data.artifact_type || 'text';
+
+  if ((aType === 'chart' || aType === 'image') && data.base64_data) {
+    return `<img src="data:${data.content_type};base64,${data.base64_data}" alt="${escapeHtml(data.filename)}">`;
+  }
+  if (aType === 'csv' && p.headers && p.sample_rows) {
+    let html = '<table><thead><tr>' + p.headers.map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr></thead><tbody>';
+    for (const row of p.sample_rows) {
+      html += '<tr>' + row.map(c => `<td>${escapeHtml(String(c))}</td>`).join('') + '</tr>';
+    }
+    html += '</tbody></table>';
+    if (p.total_rows) html += `<div style="color:#888;font-size:0.7rem;margin-top:4px;">${p.total_rows} rows total</div>`;
+    return html;
+  }
+  if (aType === 'json' && p.snippet) {
+    return `<pre>${escapeHtml(p.snippet)}</pre>`;
+  }
+  if ((aType === 'code' || aType === 'text') && p.snippet) {
+    return `<pre>${escapeHtml(p.snippet)}</pre>`;
+  }
+  if (p.snippet) return `<pre>${escapeHtml(p.snippet)}</pre>`;
+  return `<div style="color:#888;font-size:0.8rem;">Preview not available</div>`;
+}
+
+function renderArtifactPreview(data, container) {
+  const target = container || messagesEl;
+  const aType = data.artifact_type || 'text';
+  const iconClass = ['csv','chart','pdf','code','json','image'].includes(aType) ? aType : 'text';
+  const icon = _artifactIconSVG[iconClass] || _artifactIconSVG.text;
+
+  const card = document.createElement('div');
+  card.className = 'artifact-card';
+  card.dataset.filename = data.filename;
+  card.dataset.artifactType = aType;
+
+  card.innerHTML = `
+    <div class="artifact-card-header">
+      <div class="artifact-icon ${iconClass}">${icon}</div>
+      <div class="artifact-meta">
+        <div class="artifact-filename" title="${escapeHtml(data.filename)}">${escapeHtml(data.filename)}</div>
+        <div class="artifact-size">${_formatFileSize(data.file_size_bytes || 0)} &middot; ${aType.toUpperCase()}</div>
+      </div>
+    </div>
+    <div class="artifact-preview-area">${_buildPreviewHtml(data)}</div>
+    <div class="artifact-actions">
+      <button class="artifact-btn" onclick="downloadArtifactLocal(this)" title="Download file">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v9M4 8l4 4 4-4"/><path d="M2 13h12"/></svg> Download
+      </button>
+    </div>
+  `;
+
+  // Store base64 data on the card element for later use
+  card._artifactData = data;
+
+  target.appendChild(card);
+  scrollToBottom();
+}
+
+function downloadArtifactLocal(btnEl) {
+  const card = btnEl.closest('.artifact-card');
+  if (!card || !card._artifactData) return;
+  const d = card._artifactData;
+
+  const binary = atob(d.base64_data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: d.content_type || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = d.filename || 'artifact';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function loadConversationArtifacts(conversationId) {
+  try {
+    const res = await fetch(`${API}/conversations/${conversationId}/artifacts`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const artifacts = data.artifacts || [];
+    for (const art of artifacts) {
+      // Build a saved-state card (no base64 data, just download link)
+      const aType = art.artifact_type || 'text';
+      const iconClass = ['csv','chart','pdf','code','json','image'].includes(aType) ? aType : 'text';
+      const icon = _artifactIconSVG[iconClass] || _artifactIconSVG.text;
+
+      const card = document.createElement('div');
+      card.className = 'artifact-card';
+      card.innerHTML = `
+        <div class="artifact-card-header">
+          <div class="artifact-icon ${iconClass}">${icon}</div>
+          <div class="artifact-meta">
+            <div class="artifact-filename" title="${escapeHtml(art.filename)}">${escapeHtml(art.filename)}</div>
+            <div class="artifact-size">${_formatFileSize(art.file_size_bytes || 0)} &middot; ${aType.toUpperCase()}</div>
+          </div>
+        </div>
+        <div class="artifact-actions">
+          <span class="artifact-saved-badge">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3 3 7-7"/></svg> Saved
+          </span>
+          <button class="artifact-btn" onclick="downloadCloudArtifact('${art.artifact_id}')" title="Download from cloud">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v9M4 8l4 4 4-4"/><path d="M2 13h12"/></svg> Download
+          </button>
+        </div>
+      `;
+      messagesEl.appendChild(card);
+    }
+  } catch (err) {
+    console.error('loadConversationArtifacts error:', err);
+  }
+}
+
+async function downloadCloudArtifact(artifactId) {
+  try {
+    const res = await fetch(`${API}/artifacts/${artifactId}/download`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error('Download failed');
+    const data = await res.json();
+    window.open(data.url, '_blank');
+  } catch (err) {
+    showToast('error', 'Download failed', err.message);
+  }
+}
+
 function showSourcesPopup(sources) {
   // Remove any existing popup
   document.querySelector('.sources-overlay')?.remove();
@@ -5215,6 +5437,11 @@ async function sendStreaming(query) {
         if (data.sources && Array.isArray(data.sources)) {
           sources.push(...data.sources);
         }
+        break;
+
+      case 'artifact_preview':
+        // Render artifact preview card in chat
+        renderArtifactPreview(data);
         break;
 
       case 'done':

@@ -19,7 +19,7 @@ class WebSearchPrompts:
         entities: Dict[str, Any],
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
-        conversation_history: str = "",
+        conversation_history: list | None = None,
     ) -> str:
         dep_context = ""
         if dependency_outputs:
@@ -29,7 +29,14 @@ class WebSearchPrompts:
 
         entity_str = ", ".join(f"{k}={v}" for k, v in entities.items()) if entities else "none"
         long_term_memory_str=" \n\n### User Profile\n" + format_user_profile(long_term_memory or {}) if long_term_memory else ""
-        conversation_history_str = f"\n\n### Conversation History\n{conversation_history}\n" if conversation_history else ""
+
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n\n### Conversation History\n"
+            for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
+                conv_section += f"  {role}: {content}\n"
 
         return f"""You are the Web Search Strategist for a multi-agent RAG system.
 
@@ -46,8 +53,7 @@ Decide the best search strategy and generate an optimised search query for the t
 {entity_str}
 {dep_context}
 {long_term_memory_str}
-{conversation_history_str}
-
+{conv_section}
 ### Available Search Types
 1. **basic**  — Fast general web search (default for most queries)
 2. **news**   — Restrict to recent news articles (use for current events, recent announcements)
@@ -76,7 +82,7 @@ Return EXACTLY this JSON structure, nothing else:
         fetched_pages: List[Dict[str, Any]] | None = None,
         dependency_outputs: Dict[str, Any] | None = None,
         long_term_memory: Dict[str, Any] | None = None,
-        conversation_history: str = "",
+        conversation_history: list | None = None,
     ) -> str:
         # Format search results
         results_text = ""
@@ -104,7 +110,14 @@ Return EXACTLY this JSON structure, nothing else:
                 dep_context += f"- **{aid}**: {str(data)[:400]}\n"
 
         profile_section = format_user_profile(long_term_memory or {})
-        conversation_history_str = f"\n\n### Conversation History\n{conversation_history}\n" if conversation_history else ""
+
+        conv_section = ""
+        if conversation_history:
+            conv_section = "\n\n### Conversation History\n"
+            for turn in (conversation_history[-10:] if isinstance(conversation_history, list) else []):
+                role = turn.get("role", "user") if isinstance(turn, dict) else "user"
+                content = str(turn.get("content", "") if isinstance(turn, dict) else turn)[:800]
+                conv_section += f"  {role}: {content}\n"
 
         return f"""You are a Research Synthesis Expert in a multi-agent RAG system.Your job is to answer the user's question by synthesising information from the web search results and any fetched page content. Use the context from other agents, user profile, and conversation history to inform your answer.
 
@@ -113,7 +126,7 @@ Return EXACTLY this JSON structure, nothing else:
 {dep_context}
 {tavily_section}
 {profile_section}
-{conversation_history_str}
+{conv_section}
 ### Search Results
 {results_text}
 {pages_text}

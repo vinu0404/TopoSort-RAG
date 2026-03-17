@@ -1213,6 +1213,151 @@ All three providers return real token usage from their streaming APIs:
 
 ---
 
+## Chat Artifacts — File Generation & Download
+
+The **Code Agent** can generate files (PDFs, charts, CSVs, images) that appear as **inline preview cards** in the chat. Users can download files directly — no cloud storage required.
+
+### How It Works
+
+```mermaid
+flowchart TD
+    subgraph UserRequest["User Request"]
+        Q["Create a PDF report on AI trends"]
+    end
+
+    subgraph Pipeline["Multi-Agent Pipeline"]
+        MA["Master Agent<br/><i>Plans: web_search → code_agent</i>"]
+        WS["Web Search Agent<br/><i>Gathers research data</i>"]
+        CA["Code Agent<br/><i>Generates PDF with reportlab</i>"]
+    end
+
+    subgraph FileCapture["File Capture (code_tools.py)"]
+        TD["TempDir created<br/><i>OUTPUT_DIR injected</i>"]
+        EX["Code executes<br/><i>Writes files to OUTPUT_DIR</i>"]
+        SC["Scan for files<br/><i>Read → Base64 encode</i>"]
+        CL["TempDir auto-deleted<br/><i>Only base64 remains in memory</i>"]
+    end
+
+    subgraph SSE["SSE Events"]
+        AP["artifact_preview event<br/><i>filename, type, base64_data</i>"]
+    end
+
+    subgraph Frontend["Frontend"]
+        PC["Preview Card<br/><i>Icon + filename + size</i>"]
+        DL["Download Button<br/><i>Blob from base64</i>"]
+    end
+
+    Q --> MA
+    MA --> WS
+    WS -->|"Research data"| CA
+    CA --> TD
+    TD --> EX
+    EX --> SC
+    SC --> CL
+    CL --> AP
+    AP --> PC
+    PC --> DL
+```
+
+### Supported Artifact Types
+
+| Type | Extensions | Preview | Libraries |
+|------|-----------|---------|-----------|
+| **PDF** | `.pdf` | "Download to view" | `reportlab` |
+| **Chart** | `.png`, `.jpg` (with plot/chart/graph in name) | Inline image | `matplotlib` |
+| **Image** | `.png`, `.jpg`, `.gif`, `.svg` | Inline image | — |
+| **CSV** | `.csv` | Table preview (headers + 5 rows) | `csv`, `pandas` |
+| **JSON** | `.json` | Formatted snippet | `json` |
+| **Code** | `.py`, `.js`, `.sql`, etc. | Syntax snippet (20 lines) | — |
+
+### Persona-Aware Content Generation
+
+When a **persona** is selected, the Code Agent generates content that matches the persona's tone and style:
+
+```mermaid
+flowchart LR
+    subgraph Context["Context Passed to Code Agent"]
+        P["Persona<br/><i>name + description</i>"]
+        D["Dependency Data<br/><i>Web search results, docs</i>"]
+        U["User Profile<br/><i>detail_level, tone</i>"]
+    end
+
+    subgraph CodeAgent["Code Agent"]
+        PR["Prompt includes:<br/>- Persona instructions<br/>- Upstream data<br/>- Detail level"]
+        GEN["Generate code that<br/>writes persona-styled content"]
+    end
+
+    subgraph Output["Generated Artifact"]
+        PDF["PDF with persona tone<br/><i>e.g., 'Dear friend...' vs<br/>'Executive Summary...'</i>"]
+    end
+
+    P --> PR
+    D --> PR
+    U --> PR
+    PR --> GEN
+    GEN --> PDF
+```
+
+**Example — Same Request, Different Personas:**
+
+| Persona | PDF Content Style |
+|---------|------------------|
+| **Professor** | "This comprehensive analysis examines the methodological implications of AI adoption rates across sectors, as evidenced by recent empirical studies..." |
+| **Friend** | "Hey! So I looked into this AI stuff for you, and honestly, the numbers are pretty wild. Here's what's going on..." |
+| **Lover** | "My dear, I've put together this special report just for you. Let me walk you through these fascinating findings with care..." |
+| **Einstein** | "Consider, if you will, a thought experiment: what happens when artificial minds begin to outnumber tasks requiring human cognition?..." |
+
+### Data Flow from Upstream Agents
+
+The Code Agent receives **dependency_outputs** containing data from agents that ran earlier in the pipeline:
+
+```python
+# In code_agent prompt, dependency_outputs might contain:
+{
+    "web_search_agent_39bfdb4f": {
+        "search_query": "AI adoption rates 2026",
+        "tavily_answer": "According to recent reports...",
+        "search_results": [...],
+        "sources": [...]
+    }
+}
+```
+
+The Code Agent then:
+1. Parses the search results
+2. Extracts key facts, quotes, and statistics
+3. Generates a properly formatted PDF/chart using the data
+4. Applies the persona's tone to all text content
+
+### Frontend Artifact Card
+
+```
+┌─────────────────────────────────────────────┐
+│ 📄 impact_report.pdf                        │
+│    2.1 KB · PDF                             │
+├─────────────────────────────────────────────┤
+│ Preview not available for PDF               │
+├─────────────────────────────────────────────┤
+│                              [Download]     │
+└─────────────────────────────────────────────┘
+```
+
+- **Download**: Creates a Blob from base64 data and triggers browser download
+- **No Save button**: Artifacts are ephemeral — download if needed, gone on refresh
+- **No cloud storage**: Files exist only as base64 in the SSE stream
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `tools/code_tools.py` | `execute_code()` — runs Python, captures files from OUTPUT_DIR |
+| `agents/code_agent/prompts.py` | Prompt with persona instructions, dependency data formatting |
+| `agents/code_agent/agent.py` | Wires persona from metadata, builds ArtifactPreview objects |
+| `api/streaming.py` | Emits `artifact_preview` SSE events |
+| `frontend/index.html` | `renderArtifactPreview()`, `downloadArtifactLocal()` |
+
+---
+
 ## Long term Memory Extraction Pipeline
 
 Every user query passes through a **parallel memory extraction layer** that runs alongside the Master Agent — zero added latency. The extractor uses an LLM to detect personal data (name, company, job title, tone preferences, etc.) and persists any new findings to PostgreSQL for future conversations.

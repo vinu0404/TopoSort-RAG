@@ -193,6 +193,21 @@ class AgentOutput(BaseModel):
         }
     )
 
+    artifacts: List["ArtifactPreview"] = Field(
+        default_factory=list,
+        description="Files produced by this agent (charts, CSVs, code files, etc.)",
+    )
+
+
+class ArtifactPreview(BaseModel):
+    """Lightweight artifact descriptor — travels inside AgentOutput and SSE events."""
+    filename: str
+    artifact_type: str                              # csv|chart|code|image|json|text|pdf
+    content_type: str                               # MIME type
+    file_size_bytes: int = 0
+    preview_data: Dict[str, Any] = Field(default_factory=dict)
+    base64_data: str = ""                           # full file as base64 — frontend holds this
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Memory Schemas

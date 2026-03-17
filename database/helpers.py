@@ -817,25 +817,51 @@ async def create_hitl_request(
     Returns the ``request_id`` (UUID string) so the caller can poll for a
     decision later.
     """
+    import uuid as _uuid
+    from sqlalchemy.exc import IntegrityError
+
     cid = _to_uuid(conversation_id)
     now = datetime.now(timezone.utc)
-    row = HitlRequest(
-        conversation_id=cid,
-        agent_id=agent_id,
-        agent_name=agent_name,
-        tool_names=tool_names,
-        task_description=task_description,
-        status="pending",
-        created_at=now,
-        expires_at=now + timedelta(seconds=timeout_seconds),
-    )
-    session.add(row)
-    await session.commit()
-    logger.info(
-        "HITL request created: request_id=%s  agent=%s  tools=%s",
-        row.request_id, agent_name, tool_names,
-    )
-    return str(row.request_id)
+
+    # Clean up expired/stale HITL requests for this conversation first
+    try:
+        await session.execute(
+            sa_delete(HitlRequest).where(
+                HitlRequest.conversation_id == cid,
+                HitlRequest.status == "pending",
+                HitlRequest.expires_at < now,
+            )
+        )
+    except Exception:
+        pass
+
+    for attempt in range(3):
+        row = HitlRequest(
+            request_id=_uuid.uuid4(),
+            conversation_id=cid,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            tool_names=tool_names,
+            task_description=task_description,
+            status="pending",
+            created_at=now,
+            expires_at=now + timedelta(seconds=timeout_seconds),
+        )
+        session.add(row)
+        try:
+            await session.flush()
+            await session.commit()
+            logger.info(
+                "HITL request created: request_id=%s  agent=%s  tools=%s",
+                row.request_id, agent_name, tool_names,
+            )
+            return str(row.request_id)
+        except IntegrityError:
+            await session.rollback()
+            logger.warning("HITL request UUID collision (attempt %d), retrying...", attempt + 1)
+
+    # Final fallback — should never reach here
+    raise RuntimeError("Failed to create HITL request after 3 attempts")
 
 
 async def poll_hitl_decision(
@@ -1931,3 +1957,88 @@ async def load_scheduled_job_with_steps(
         .order_by(ScheduledJobStep.step_order)
     )
     return job, list(step_result.scalars().all())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Artifact helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def save_artifact(
+    session: AsyncSession,
+    *,
+    artifact_id: str,
+    conversation_id: str,
+    agent_id: str,
+    agent_name: str,
+    filename: str,
+    artifact_type: str,
+    content_type: str,
+    file_size_bytes: int,
+    storage_key: str,
+    storage_bucket: str | None = None,
+    preview_data: dict | None = None,
+    message_id: str | None = None,
+) -> None:
+    from database.models import Artifact
+    from config.settings import config
+    session.add(Artifact(
+        artifact_id=_to_uuid(artifact_id),
+        conversation_id=_to_uuid(conversation_id),
+        message_id=_to_uuid(message_id) if message_id else None,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        filename=filename,
+        artifact_type=artifact_type,
+        content_type=content_type,
+        file_size_bytes=file_size_bytes,
+        storage_key=storage_key,
+        storage_bucket=storage_bucket or config.s3_bucket,
+        preview_data=preview_data or {},
+    ))
+    await session.flush()
+
+
+async def get_artifact_for_user(
+    session: AsyncSession,
+    artifact_id: str,
+    user_id: str,
+):
+    """Return artifact only if owned by user (via conversation)."""
+    from database.models import Artifact, Conversation
+    aid = _to_uuid(artifact_id)
+    uid = _to_uuid(user_id)
+    result = await session.execute(
+        select(Artifact)
+        .join(Conversation, Artifact.conversation_id == Conversation.conversation_id)
+        .where(Artifact.artifact_id == aid, Conversation.user_id == uid)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_artifacts_for_conversation(
+    session: AsyncSession,
+    conversation_id: str,
+) -> list[dict]:
+    """Return all artifacts for a conversation, oldest first."""
+    from database.models import Artifact
+    cid = _to_uuid(conversation_id)
+    result = await session.execute(
+        select(Artifact)
+        .where(Artifact.conversation_id == cid)
+        .order_by(Artifact.created_at.asc())
+    )
+    return [
+        {
+            "artifact_id": str(a.artifact_id),
+            "agent_id": a.agent_id,
+            "agent_name": a.agent_name,
+            "filename": a.filename,
+            "artifact_type": a.artifact_type,
+            "content_type": a.content_type,
+            "file_size_bytes": a.file_size_bytes,
+            "storage_key": a.storage_key,
+            "preview_data": a.preview_data or {},
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in result.scalars()
+    ]

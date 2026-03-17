@@ -1,12 +1,13 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
-*$py.class
-# C extensions
-*.so
+*$py.class\
 dev.env
 prod.env
 start.txt
+# C extensions
+*.so
+OUTPUT_DIR/
 file/
 # Distribution / packaging
 .Python
