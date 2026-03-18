@@ -35,7 +35,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = (
-            "geolocation=(), microphone=(), camera=()"
+            "geolocation=(), camera=()"
         )
 
         # Content-Security-Policy — tune per your frontend needs
@@ -45,6 +45,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "font-src 'self' data:; "
+            "media-src 'self' blob:; "
             "connect-src 'self' https: wss:; "
             "frame-ancestors 'none';"
         )
