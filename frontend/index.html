@@ -2663,7 +2663,7 @@ async function deleteConversation(conversationId) {
       method: 'DELETE', headers: authHeaders(),
     });
     if (r.status === 401) { doLogout(); return; }
-    if (!r.ok) { showToast('Failed to delete conversation'); return; }
+    if (!r.ok) { showShareToast('Failed to delete conversation'); return; }
     // Remove from sidebar
     const el = document.querySelector(`.conv-item[onclick*="${conversationId}"]`);
     if (el) el.remove();
@@ -2675,11 +2675,11 @@ async function deleteConversation(conversationId) {
     }
   } catch (err) {
     console.error('deleteConversation error:', err);
-    showToast('Error deleting conversation');
+    showShareToast('Error deleting conversation');
   }
 }
 
-function showToast(msg) {
+function showShareToast(msg) {
   const t = document.getElementById('shareToast');
   t.textContent = msg;
   t.classList.add('visible');
@@ -2697,7 +2697,7 @@ async function toggleShare() {
       });
       if (!res.ok) throw new Error('Failed to unshare');
       delete _convShareMap[currentConversationId];
-      showToast('Share link removed');
+      showShareToast('Share link removed');
     } else {
       // Share
       const res = await fetch(`${API}/conversations/${currentConversationId}/share`, {
@@ -2709,12 +2709,12 @@ async function toggleShare() {
       const url = location.origin + data.share_url;
       try { await navigator.clipboard.writeText(url); }
       catch { /* clipboard may fail in insecure context */ }
-      showToast('Link copied to clipboard!');
+      showShareToast('Link copied to clipboard!');
     }
     updateShareBtn();
   } catch (err) {
     console.error('toggleShare error:', err);
-    showToast('Failed to update share status');
+    showShareToast('Failed to update share status');
   }
 }
 
