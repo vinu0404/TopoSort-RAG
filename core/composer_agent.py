@@ -11,7 +11,7 @@ from typing import  AsyncIterator, List
 
 from config.settings import config
 from security.sanitization import sanitize_user_input
-from security.delimiters import wrap_user_query, wrap_conversation_history, DELIMITER_SYSTEM_PROMPT
+from security.delimiters import wrap_user_query, DELIMITER_SYSTEM_PROMPT
 from utils.llm_providers import BaseLLMProvider
 from utils.schemas import (
     AgentOutput,
