@@ -46,28 +46,27 @@ def _publish_status(user_id: str, doc_id: str, status: str, **extra: Any) -> Non
     autoretry_for=(Exception,),
     dont_autoretry_for=(SoftTimeLimitExceeded, ValueError),
     max_retries=3,
-    retry_backoff=True,         
-    retry_backoff_max=120,      
-    retry_jitter=True,           
+    retry_backoff=True,
+    retry_backoff_max=120,
+    retry_jitter=True,
     acks_late=True,
-    rate_limit="20/m",         
+    rate_limit="20/m",
 )
 def process_document_task(
     self: Task,
     user_id: str,
     doc_id: str,
     filename: str,
-    file_bytes_hex: str,
     content_type: str = "application/octet-stream",
-    storage_key: str | None = None,
+    storage_key: str = "",
 ) -> Dict[str, Any]:
     """
     Celery task entry point.  Bridges sync → async via asyncio.run().
-    Handles S3 upload + full document processing so the API is non-blocking.
+    Downloads file from S3 (uploaded by API) and runs full document processing.
     """
     return asyncio.run(
         _process_document_async(
-            self, user_id, doc_id, filename, file_bytes_hex,
+            self, user_id, doc_id, filename,
             content_type, storage_key,
         )
     )
@@ -78,11 +77,10 @@ async def _process_document_async(
     user_id: str,
     doc_id: str,
     filename: str,
-    file_bytes_hex: str,
     content_type: str = "application/octet-stream",
-    storage_key: str | None = None,
+    storage_key: str = "",
 ) -> Dict[str, Any]:
-    """Async implementation: S3 upload → parse → chunk → embed → store."""
+    """Async implementation: S3 download → parse → chunk → embed → store."""
     from sqlalchemy.ext.asyncio import (
         AsyncSession,
         async_sessionmaker,
@@ -91,14 +89,11 @@ async def _process_document_async(
 
     from database.helpers import update_document_status
     from document_pipeline.document_processor import process_document
-    from storage.s3 import upload_file, build_storage_key
+    from storage.s3 import download_file
 
-    file_bytes = bytes.fromhex(file_bytes_hex)
-
-    # ── S3 upload (offloaded from API) ───────────────────────────
-    s_key = storage_key or build_storage_key(user_id, doc_id, filename)
-    upload_file(file_bytes, s_key, content_type=content_type)
-    logger.info("S3 upload done for doc %s (%s)", doc_id, filename)
+    # ── Download file from S3 (uploaded by API) ──────────────────
+    file_bytes = download_file(storage_key)
+    logger.info("S3 download done for doc %s (%d bytes)", doc_id, len(file_bytes))
 
     # ── Document processing pipeline ─────────────────────────────
     _engine = create_async_engine(

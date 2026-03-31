@@ -1555,7 +1555,7 @@ flowchart TD
 
 ## RAG Document Pipeline — How Documents Are Processed
 
-Document processing is **fully asynchronous**. The upload endpoint saves a DB record with `storage_key` and `storage_bucket`, then dispatches a **Celery task** per file via **Redis**. Each Celery worker handles both the **S3 upload** and the heavy pipeline (parsing, chunking, embedding) — so the API response is instant regardless of how many files are uploaded. Multiple workers process files **in parallel**. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
+Document processing is **fully asynchronous**. The upload endpoint **uploads to S3 first** (ensuring file durability), saves a DB record with `storage_key`, then dispatches a **Celery task** per file via **Redis** with only the `storage_key` (not file bytes). Each Celery worker **downloads from S3** and runs the heavy pipeline (parsing, chunking, embedding). Multiple workers process files **in parallel**. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
 
 ### Upload & Storage Flow
 
@@ -1565,20 +1565,22 @@ flowchart TD
 
     Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i>"]
 
-    API --> DB["Save DB record per file<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
+    API --> S3Upload["Upload to S3<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
 
-    DB -->|"Celery .delay() per file<br/>(file bytes hex-encoded)"| Queue["Redis Task Queue<br/><i>broker — one task per file</i>"]
+    S3Upload --> DB["Save DB record per file<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
 
-    API -->|"instant response"| Response["Return { documents: [{doc_id, filename, status}] }<br/><i>No S3 upload blocking the API</i>"]
+    DB -->|"Celery .delay() per file<br/>(storage_key only — no file bytes)"| Queue["Redis Task Queue<br/><i>broker — one task per file</i>"]
+
+    DB -->|"response after S3 + DB"| Response["Return { documents: [{doc_id, filename, status}] }<br/><i>File safe in S3 before async processing</i>"]
 
     Queue --> Worker
 
-    subgraph Worker["Celery Workerk<br/><i>autoretry ×3 · exponential backoff · soft 5 min / hard 6 min<br/>multiple files processed in parallel across workers</i>"]
+    subgraph Worker["Celery Worker<br/><i>autoretry ×3 · exponential backoff · soft 5 min / hard 6 min<br/>multiple files processed in parallel across workers</i>"]
         direction TB
 
-        S3["Upload to S3<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
+        S3Download["Download from S3<br/><i>download_file(storage_key)</i>"]
 
-        S3 --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
+        S3Download --> Status1["DB → status = processing<br/>Redis Pub/Sub → SSE"]
         Status1 --> Parser["Parser<br/><i>Extract raw text</i>"]
 
         Parser -->|"PDF"| PyMuPDF["PyMuPDF<br/>page.get_text()<br/><i>+ &lt;!-- PAGE N --&gt; markers</i>"]
@@ -1594,7 +1596,7 @@ flowchart TD
         RawContent --> Parallel
 
         subgraph Parallel["Parallel: description ‖ chunking"]
-        
+
             direction LR
             Describe["LLM generates<br/>document description<br/><i>2-3 sentences covering<br/>type, topics, scope</i>"]
             Chunker["Structure-Aware Chunker<br/><i>regex structure analysis,<br/>section splitting,<br/>1024-token chunks,<br/>table chunks kept intact,<br/>UUID per chunk,<br/>parent-child relationships,<br/>page number extraction</i>"]
@@ -1618,7 +1620,8 @@ flowchart TD
     style Upload fill:#2196F3,color:#fff
     style API fill:#2196F3,color:#fff
     style Response fill:#2196F3,color:#fff
-    style S3 fill:#FF9800,color:#fff
+    style S3Upload fill:#FF9800,color:#fff
+    style S3Download fill:#FF9800,color:#fff
     style DB fill:#FF9800,color:#fff
     style Queue fill:#e53935,color:#fff
     style Worker fill:#e53935,color:#fff
