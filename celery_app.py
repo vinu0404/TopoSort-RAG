@@ -53,5 +53,5 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     redbeat_redis_url=config.celery_broker_url,
     redbeat_key_prefix="mrag:redbeat:",
-    beat_max_loop_interval=10,          # check for new/changed entries every 15s
+    beat_max_loop_interval=10,          # check for new/changed entries every 10s
 )

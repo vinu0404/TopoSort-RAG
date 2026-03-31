@@ -88,7 +88,7 @@ async def prepare_gmail_service(user_id: str) -> None:
 
     current_user_id.set(user_id)
     _current_gmail_service.set(service)
-    _current_sender_email.set(sender_email or config.gmail_sender_email)
+    _current_sender_email.set(sender_email)
 
     logger.debug("Gmail service ready for user=%s sender=%s", user_id, sender_email)
 
@@ -153,7 +153,7 @@ def _build_mime_message(
     """Create a base64url-encoded RFC 2822 message."""
     mime = MIMEMultipart()
     mime["to"] = to
-    mime["from"] = _current_sender_email.get("") or config.gmail_sender_email
+    mime["from"] = _current_sender_email.get("")
     mime["subject"] = subject
     if cc:
         mime["cc"] = cc
