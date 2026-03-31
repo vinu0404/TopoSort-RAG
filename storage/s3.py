@@ -108,6 +108,34 @@ def upload_file(
     return {"bucket": bucket, "key": storage_key, "size": len(file_bytes)}
 
 
+# ── Download ──────────────────────────────────────────────────────────────────
+
+def download_file(
+    storage_key: str,
+    bucket: str | None = None,
+) -> bytes:
+    """
+    Download file bytes from S3.
+
+    Used by Celery workers to retrieve files uploaded by the API.
+    """
+    bucket = bucket or config.s3_bucket
+    client = _get_client()
+
+    try:
+        response = client.get_object(Bucket=bucket, Key=storage_key)
+        file_bytes = response["Body"].read()
+    except ClientError:
+        logger.exception("Failed to download S3 object %s", storage_key)
+        raise
+
+    logger.info("Downloaded %s (%d bytes) from s3://%s/%s",
+                storage_key.rsplit("/", 1)[-1],
+                len(file_bytes), bucket, storage_key)
+
+    return file_bytes
+
+
 # ── Pre-signed URL ───────────────────────────────────────────────────────────
 
 def generate_presigned_url(
