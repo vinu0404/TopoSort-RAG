@@ -100,11 +100,47 @@ CREATE TABLE IF NOT EXISTS documents (
     storage_bucket  VARCHAR(128),            -- bucket name
     file_size_bytes BIGINT,                  -- original file size
     content_type    VARCHAR(128),            -- MIME type (application/pdf, ...)
+    file_hash       VARCHAR(64),             -- SHA-256 of file content for deduplication
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_user   ON documents(user_id);
-CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(user_id, processing_status);
+CREATE INDEX IF NOT EXISTS idx_documents_user      ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_status    ON documents(user_id, processing_status);
+CREATE INDEX IF NOT EXISTS idx_documents_user_hash ON documents(user_id, file_hash) WHERE file_hash IS NOT NULL;
+
+-- Web scrape collections ────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS web_scrape_collections (
+    collection_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name              VARCHAR(256) NOT NULL,
+    is_active         BOOLEAN NOT NULL DEFAULT FALSE,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | scraping | ready | partial | failed
+    total_pages       INT DEFAULT 0,
+    total_chunks      INT DEFAULT 0,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wsc_user   ON web_scrape_collections(user_id);
+CREATE INDEX IF NOT EXISTS idx_wsc_active ON web_scrape_collections(user_id, is_active);
+
+CREATE TABLE IF NOT EXISTS web_scrape_urls (
+    url_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    collection_id     UUID NOT NULL REFERENCES web_scrape_collections(collection_id) ON DELETE CASCADE,
+    url               TEXT NOT NULL,
+    depth             INT NOT NULL DEFAULT 1,
+    status            VARCHAR(16) NOT NULL DEFAULT 'pending',
+                      -- pending | scraping | ready | failed
+    pages_scraped     INT DEFAULT 0,
+    chunks_created    INT DEFAULT 0,
+    error_message     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wsu_collection ON web_scrape_urls(collection_id);
 
 -- Web scrape collections ────────────────────────────────────────────────────
 

@@ -105,6 +105,7 @@ from database.helpers import (
     resolve_hitl_request,
     revoke_share_token,
     save_document_record,
+    check_document_hashes,
     get_document_statuses,
     update_conversation_title,
 )
@@ -113,8 +114,8 @@ from tools.registry import ToolRegistry
 from utils.schemas import HitlUserResponse, Source
 from utils.llm_providers import get_llm_provider
 from utils.schemas import (
-    ComposerInput, PersonaCreate, PersonaContext, PersonaUpdate, QueryRequest,
-    WebScrapeCollectionCreate, WebScrapeToggle,
+    ComposerInput, HashCheckRequest, PersonaCreate, PersonaContext, PersonaUpdate,
+    QueryRequest, WebScrapeCollectionCreate, WebScrapeToggle,
 )
 from core.title_generator import generate_title
 
@@ -334,66 +335,111 @@ async def handle_query(
     }
 
 
+@router.post("/documents/check-hash", tags=["documents"])
+async def check_document_hash(
+    payload: HashCheckRequest,
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """Check which of the provided file hashes already exist for this user.
+
+    Frontend sends SHA-256 hashes of file contents before uploading.
+    Returns the subset that are duplicates so the client can skip them.
+    """
+    hashes = [item.hash for item in payload.files]
+    matches = await check_document_hashes(session, user_id, hashes)
+    return {"duplicates": matches}
+
+
 @router.post("/documents/upload", tags=["documents"])
 async def upload_documents(
     files: List[UploadFile] = File(...),
     session: AsyncSession = Depends(db_session),
     user_id: str = Depends(get_current_user_id),
 ) -> Dict[str, Any]:
-    """
-    Accept one or more files.  Uploads each to S3 immediately, creates a DB
-    record with status='pending', and enqueues a Celery task per file.
-    The Celery worker downloads from S3 and processes — so this endpoint
-    returns as soon as uploads complete.
+    """Accept one or more files via streaming multipart upload.
+
+    Phase 1: Prepare per-file metadata (no byte reads yet).
+    Phase 2: Stream all files to S3 concurrently — each file uses multipart
+             upload so RAM stays at ~5 MB per file regardless of file size.
+             S3 part uploads run in a thread pool; the event loop interleaves
+             all file streams so they upload in parallel.
+    Phase 3: DB inserts sequentially on the shared async session.
+    Phase 4: Celery tasks dispatched for all successfully stored docs.
     """
     import uuid as _uuid
-    from storage.s3 import build_storage_key, upload_file
+    from storage.s3 import build_storage_key, multipart_upload_file
 
     await ensure_user_exists(session, user_id)
 
-    accepted: List[Dict[str, str]] = []
-
+    # Phase 1 — build per-file metadata without reading bytes yet
+    file_data: List[Dict[str, Any]] = []
     for f in files:
         if not f.filename:
             continue
         doc_id = str(_uuid.uuid4())
-        file_bytes = await f.read()
         ct = f.content_type or "application/octet-stream"
         s_key = build_storage_key(user_id, doc_id, f.filename)
+        file_data.append({"f": f, "filename": f.filename, "doc_id": doc_id, "ct": ct, "s_key": s_key})
 
-        # Upload to S3 first — file is safe before any async processing
-        upload_file(file_bytes, s_key, content_type=ct)
+    if not file_data:
+        raise HTTPException(status_code=400, detail="No valid files provided")
 
-        # Persist a 'pending' record in the DB (file already in S3)
+    # Phase 2 — stream all files to S3 concurrently
+    # One thread-pool executor shared across all files for S3 part uploads.
+    # Concurrency = min(files * 2, 16): each file may have multiple parts in flight.
+    s3_pool = ThreadPoolExecutor(max_workers=min(len(file_data) * 2, 16))
+    try:
+        stream_results = await asyncio.gather(
+            *[
+                multipart_upload_file(
+                    d["f"], d["s_key"], d["ct"], config.s3_bucket, executor=s3_pool
+                )
+                for d in file_data
+            ],
+            return_exceptions=True,
+        )
+    finally:
+        s3_pool.shutdown(wait=False)
+
+    # Phase 3 — DB inserts sequentially (shared session is not concurrent-safe)
+    accepted: List[Dict[str, Any]] = []
+    for d, result in zip(file_data, stream_results):
+        if isinstance(result, Exception):
+            logger.error("Upload failed for %s: %s", d["filename"], result)
+            continue
+        file_hash, file_size = result
         await save_document_record(
             session,
             user_id=user_id,
-            doc_id=doc_id,
-            filename=f.filename,
+            doc_id=d["doc_id"],
+            filename=d["filename"],
             qdrant_collection=f"user_{user_id}_documents",
             processing_status="pending",
-            storage_key=s_key,
+            storage_key=d["s_key"],
             storage_bucket=config.s3_bucket,
-            file_size_bytes=len(file_bytes),
-            content_type=ct,
+            file_size_bytes=file_size,
+            content_type=d["ct"],
+            file_hash=file_hash,
         )
-        await session.commit()
-
-        # Enqueue Celery task — worker downloads from S3 + processes
-        process_document_task.delay(
-            user_id=user_id,
-            doc_id=doc_id,
-            filename=f.filename,
-            content_type=ct,
-            storage_key=s_key,
-        )
-
-        accepted.append({"doc_id": doc_id, "filename": f.filename, "status": "pending"})
+        accepted.append(d)
 
     if not accepted:
-        raise HTTPException(status_code=400, detail="No valid files provided")
+        raise HTTPException(status_code=500, detail="All file uploads failed")
 
-    return {"documents": accepted}
+    await session.commit()
+
+    # Phase 4 — dispatch one Celery task per successfully stored doc
+    for d in accepted:
+        process_document_task.delay(
+            user_id=user_id,
+            doc_id=d["doc_id"],
+            filename=d["filename"],
+            content_type=d["ct"],
+            storage_key=d["s_key"],
+        )
+
+    return {"documents": [{"doc_id": d["doc_id"], "filename": d["filename"], "status": "pending"} for d in accepted]}
 
 
 @router.get("/documents/status", tags=["documents"])

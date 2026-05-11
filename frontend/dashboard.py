@@ -1,8 +1,14 @@
 """
-Usage:
-    python dashboard.py
+Admin Dashboard server.
 
-Then open dashboard.html in your browser at http://localhost:8080
+Usage:
+    python frontend/dashboard.py
+
+Then open http://localhost:8080/dashboard.html
+
+Environment detection (from DATABASE_URL in .env):
+  - host = localhost / 127.0.0.1  →  DEV  mode: tries Docker psql, falls back to asyncpg
+  - host = anything else          →  PROD mode: asyncpg direct, no Docker
 """
 
 import json
@@ -11,198 +17,303 @@ import subprocess
 import sys
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
-    """HTTP handler that serves static files and provides API endpoints."""
 
-    TABLE_NAMES = [
-        'users', 'sessions', 'conversations', 'messages',
-        'agent_executions', 'documents', 'conversation_summaries',
-        'user_long_term_memory', 'hitl_requests', 'user_connections',
-        'personas', 'web_scrape_collections', 'web_scrape_urls',
-        'scheduled_jobs', 'scheduled_job_steps', 'scheduled_job_runs',
-        'scheduled_job_step_results', 'artifacts',
-    ]
+    # Tables excluded from discovery (Alembic internals, PostGIS, etc.)
+    _EXCLUDED_TABLES = {'alembic_version', 'spatial_ref_sys'}
 
-    SNAPSHOT_SQL = """
-        SELECT json_build_object(
-            'users', (SELECT json_agg(row_to_json(t)) FROM users t),
-            'sessions', (SELECT json_agg(row_to_json(t)) FROM sessions t),
-            'conversations', (SELECT json_agg(row_to_json(t)) FROM conversations t),
-            'messages', (SELECT json_agg(row_to_json(t)) FROM (SELECT * FROM messages ORDER BY created_at ASC, CASE role WHEN 'user' THEN 0 WHEN 'system' THEN 1 ELSE 2 END) t),
-            'agent_executions', (SELECT json_agg(row_to_json(t)) FROM agent_executions t),
-            'documents', (SELECT json_agg(row_to_json(t)) FROM documents t),
-            'conversation_summaries', (SELECT json_agg(row_to_json(t)) FROM conversation_summaries t),
-            'user_long_term_memory', (SELECT json_agg(row_to_json(t)) FROM user_long_term_memory t),
-            'hitl_requests', (SELECT json_agg(row_to_json(t)) FROM hitl_requests t),
-            'user_connections', (SELECT json_agg(row_to_json(t)) FROM user_connections t),
-            'personas', (SELECT json_agg(row_to_json(t)) FROM personas t),
-            'web_scrape_collections', (SELECT json_agg(row_to_json(t)) FROM web_scrape_collections t),
-            'web_scrape_urls', (SELECT json_agg(row_to_json(t)) FROM web_scrape_urls t),
-            'scheduled_jobs', (SELECT json_agg(row_to_json(t)) FROM scheduled_jobs t),
-            'scheduled_job_steps', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_steps t),
-            'scheduled_job_runs', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_runs t),
-            'scheduled_job_step_results', (SELECT json_agg(row_to_json(t)) FROM scheduled_job_step_results t),
-            'artifacts', (SELECT json_agg(row_to_json(t)) FROM artifacts t)
-        ) AS data;
+    # Per-table SQL overrides — used when a table needs custom ordering/filtering.
+    # Key: table name.  Value: the inner SELECT (no wrapping json_agg needed here,
+    # that is added by _build_snapshot_sql automatically).
+    _TABLE_SQL_OVERRIDES = {
+        'messages': (
+            "SELECT * FROM messages "
+            "ORDER BY created_at ASC, "
+            "CASE role WHEN 'user' THEN 0 WHEN 'system' THEN 1 ELSE 2 END"
+        ),
+    }
+
+    # SQL to list all user-created tables in the public schema
+    _DISCOVERY_SQL = """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+        ORDER BY table_name;
     """
-    
+
+    def _build_snapshot_sql(self, table_names: list[str]) -> str:
+        """Build a single json_build_object query from the discovered table list."""
+        parts = []
+        for name in table_names:
+            if name in self._TABLE_SQL_OVERRIDES:
+                inner = (
+                    f"SELECT json_agg(row_to_json(t)) "
+                    f"FROM ({self._TABLE_SQL_OVERRIDES[name]}) t"
+                )
+            else:
+                inner = f"SELECT json_agg(row_to_json(t)) FROM {name} t"
+            parts.append(f"'{name}', ({inner})")
+        return f"SELECT json_build_object({', '.join(parts)}) AS data;"
+
+    # ── CORS ─────────────────────────────────────────────────────────
+
     def end_headers(self):
-        """Add CORS headers to allow browser access."""
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
-    
+
     def do_OPTIONS(self):
-        """Handle CORS preflight requests."""
         self.send_response(200)
         self.end_headers()
-    
+
     def do_GET(self):
-        """Handle GET requests for API endpoints and static files."""
         parsed = urlparse(self.path)
-        
         if parsed.path == '/api/db-snapshot':
             self.handle_db_snapshot()
-        
-        # API endpoint: fetch Qdrant collections
         elif parsed.path == '/api/qdrant-collections':
             self.handle_qdrant_collections()
-        
-        # API endpoint: get container status
         elif parsed.path == '/api/container-status':
             self.handle_container_status()
-        
-        # Serve static files (HTML, CSS, JS)
         else:
             super().do_GET()
-    
+
+    # ── Environment detection ─────────────────────────────────────────
+
+    def _parse_database_url(self):
+        """Parse DATABASE_URL into components. Returns None if not configured."""
+        raw = self.get_config_value('DATABASE_URL')
+        if not raw:
+            return None
+        # Normalise driver prefix so urlparse can handle it
+        clean = raw
+        for prefix in ('postgresql+asyncpg://', 'postgresql+psycopg2://', 'postgres://'):
+            if clean.startswith(prefix):
+                clean = 'postgresql://' + clean[len(prefix):]
+                break
+        p = urlparse(clean)
+        return {
+            'host':     p.hostname or 'localhost',
+            'port':     p.port or 5432,
+            'user':     p.username or 'postgres',
+            'password': p.password or '',
+            'database': (p.path or '/postgres').lstrip('/') or 'postgres',
+        }
+
+    def _is_local_db(self, db_info):
+        """True when the DB host is on the same machine (dev mode)."""
+        return db_info['host'] in ('localhost', '127.0.0.1', '::1')
+
+    # ── DB snapshot ───────────────────────────────────────────────────
+
     def handle_db_snapshot(self):
-        """Fetch all tables from PostgreSQL via Docker or DATABASE_URL fallback."""
         try:
-            container = self.find_container('postgres')
-            if container:
-                print(f"Found PostgreSQL container: {container}")
-                output = self._fetch_db_snapshot_via_docker(container)
-                data = self._parse_snapshot_json(output)
-                self._normalize_snapshot(data)
-                print(f"Successfully parsed data with {sum(len(v) for v in data.values())} total rows")
-                self.send_json_response(data)
+            db_info = self._parse_database_url()
+            if not db_info:
+                self.send_error_response(500, "DATABASE_URL not set in .env")
                 return
 
-            database_url = self.get_config_value('DATABASE_URL')
-            if not database_url:
-                self.send_error_response(500, "DATABASE_URL is missing and no PostgreSQL container was found")
-                return
+            if self._is_local_db(db_info):
+                container = self.find_container('postgres')
+                if container:
+                    print(f"[DEV] Using Docker container: {container}")
+                    table_names, data = self._fetch_via_docker(container, db_info)
+                else:
+                    print("[DEV] No Docker container — falling back to asyncpg")
+                    table_names, data = self._fetch_via_asyncpg(
+                        self.get_config_value('DATABASE_URL')
+                    )
+            else:
+                print(f"[PROD] Remote DB at {db_info['host']} — using asyncpg")
+                table_names, data = self._fetch_via_asyncpg(
+                    self.get_config_value('DATABASE_URL')
+                )
 
-            print("No PostgreSQL container found. Using DATABASE_URL fallback.")
-            data = self._fetch_db_snapshot_via_database_url(database_url)
-            self._normalize_snapshot(data)
-            print(f"Successfully fetched data with {sum(len(v) for v in data.values())} total rows")
-            self.send_json_response(data)
-        
+            # Ensure every discovered table has at least an empty list
+            for t in table_names:
+                if data.get(t) is None:
+                    data[t] = []
+
+            # Include table list in response so the frontend needs no hardcoded list
+            self.send_json_response({'tables': table_names, **data})
+
         except subprocess.TimeoutExpired:
-            print("ERROR: Database query timeout")
-            self.send_error_response(504, "Database query timeout")
-        
-        except UnicodeDecodeError as e:
-            error_msg = f"Unicode encoding error: {str(e)}"
-            print(f"ERROR: {error_msg}")
-            self.send_error_response(500, error_msg)
-        
+            self.send_error_response(504, "Database query timed out")
         except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
-            print(f"ERROR: {error_msg}")
             import traceback
             traceback.print_exc()
-            self.send_error_response(500, error_msg)
-    
+            self.send_error_response(500, str(e))
+
+    def _psql(self, container, db_info, sql):
+        """Run a SQL string inside a Docker postgres container. Returns stdout."""
+        result = subprocess.run(
+            ['docker', 'exec', container,
+             'psql', '-U', db_info['user'], '-d', db_info['database'],
+             '-c', sql, '-t', '-A'],
+            capture_output=True, text=True,
+            timeout=15, encoding='utf-8', errors='replace',
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"psql error: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    def _fetch_via_docker(self, container, db_info) -> tuple[list[str], dict]:
+        """Discover tables then fetch snapshot via docker exec psql."""
+        # Step 1 — discover tables
+        raw_tables = self._psql(container, db_info, self._DISCOVERY_SQL)
+        table_names = [
+            t for t in raw_tables.splitlines()
+            if t and t not in self._EXCLUDED_TABLES
+        ]
+        print(f"[DEV] Discovered {len(table_names)} tables: {table_names}")
+
+        # Step 2 — fetch all data in one query
+        snapshot_sql = self._build_snapshot_sql(table_names)
+        raw_data = self._psql(container, db_info, snapshot_sql)
+        first_line = raw_data.split('\n')[0] if '\n' in raw_data else raw_data
+        try:
+            data = json.loads(first_line)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"JSON parse error: {e}; got: {first_line[:200]}")
+        return table_names, data
+
+    def _fetch_via_asyncpg(self, database_url) -> tuple[list[str], dict]:
+        """Discover tables then fetch snapshot via asyncpg."""
+        import asyncio
+        import asyncpg
+
+        dsn = database_url
+        for prefix in ('postgresql+asyncpg://', 'postgresql+psycopg2://'):
+            if dsn.startswith(prefix):
+                dsn = 'postgresql://' + dsn[len(prefix):]
+                break
+
+        excluded = self._EXCLUDED_TABLES
+        discovery_sql = self._DISCOVERY_SQL
+
+        async def run():
+            conn = await asyncpg.connect(dsn)
+            try:
+                # Step 1 — discover tables
+                rows = await conn.fetch(discovery_sql)
+                table_names = [
+                    r['table_name'] for r in rows
+                    if r['table_name'] not in excluded
+                ]
+                print(f"Discovered {len(table_names)} tables: {table_names}")
+
+                # Step 2 — fetch snapshot
+                snapshot_sql = self._build_snapshot_sql(table_names)
+                raw = await conn.fetchval(snapshot_sql)
+                if raw is None:
+                    data = {}
+                elif isinstance(raw, str):
+                    data = json.loads(raw)
+                else:
+                    data = dict(raw)
+                return table_names, data
+            finally:
+                await conn.close()
+
+        return asyncio.run(run())
+
+    # ── Qdrant ────────────────────────────────────────────────────────
+
     def handle_qdrant_collections(self):
-        """Fetch Qdrant collections via localhost or QDRANT_URL fallback."""
         try:
             import urllib.request
-            
-            qdrant_url = 'http://localhost:6333'
-            if not self.find_container('qdrant'):
-                qdrant_url = (self.get_config_value('QDRANT_URL') or '').rstrip('/')
-                if not qdrant_url:
-                    self.send_error_response(500, "QDRANT_URL is missing and no Qdrant container was found")
+
+            db_info = self._parse_database_url()
+            is_local = db_info and self._is_local_db(db_info)
+
+            # Dev default: localhost:6333  |  Prod: must be set in QDRANT_URL
+            qdrant_url = (self.get_config_value('QDRANT_URL') or '').rstrip('/')
+            if not qdrant_url:
+                if is_local:
+                    qdrant_url = 'http://localhost:6333'
+                else:
+                    self.send_error_response(
+                        500,
+                        "QDRANT_URL not set — required for non-local environments"
+                    )
                     return
 
+            req = urllib.request.Request(f'{qdrant_url}/collections')
+            api_key = self.get_config_value('QDRANT_API_KEY')
+            if api_key:
+                req.add_header('api-key', api_key)
+
             try:
-                req = urllib.request.Request(f'{qdrant_url}/collections')
-                api_key = self.get_config_value('QDRANT_API_KEY')
-                if api_key:
-                    req.add_header('api-key', api_key)
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    data = json.loads(response.read())
-                    self.send_json_response(data)
-            
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    self.send_json_response(json.loads(resp.read()))
             except Exception as e:
                 self.send_json_response({
                     'status': 'error',
-                    'message': f'Could not connect to Qdrant API: {str(e)}',
-                    'collections': []
+                    'message': f'Cannot reach Qdrant at {qdrant_url}: {e}',
+                    'collections': [],
                 })
-        
+
         except Exception as e:
-            self.send_error_response(500, f"Error: {str(e)}")
-    
+            self.send_error_response(500, str(e))
+
+    # ── Container / env status ────────────────────────────────────────
+
     def handle_container_status(self):
-        """Check if PostgreSQL and Qdrant containers are running."""
         try:
-            postgres = self.find_container('postgres')
-            qdrant = self.find_container('qdrant')
-            database_url = self.get_config_value('DATABASE_URL')
-            qdrant_url = self.get_config_value('QDRANT_URL')
-            
+            db_info = self._parse_database_url()
+            is_local = db_info and self._is_local_db(db_info)
+            env_mode = 'dev' if is_local else 'prod'
+
+            postgres_container = self.find_container('postgres') if is_local else None
+            qdrant_container  = self.find_container('qdrant')  if is_local else None
+            qdrant_url = (self.get_config_value('QDRANT_URL') or '').rstrip('/')
+
             self.send_json_response({
+                'env_mode': env_mode,
+                'db': {
+                    'host':     db_info['host'] if db_info else None,
+                    'database': db_info['database'] if db_info else None,
+                    'using':    'docker' if (is_local and postgres_container) else 'asyncpg',
+                },
                 'postgres': {
-                    'running': postgres is not None,
-                    'container': postgres,
-                    'fallback_configured': bool(database_url),
+                    'running':   postgres_container is not None,
+                    'container': postgres_container,
                 },
                 'qdrant': {
-                    'running': qdrant is not None,
-                    'container': qdrant,
-                    'fallback_configured': bool(qdrant_url),
+                    'running':   qdrant_container is not None,
+                    'container': qdrant_container,
+                    'url':       qdrant_url or ('http://localhost:6333' if is_local else None),
                 },
             })
-        
+
         except Exception as e:
-            self.send_error_response(500, f"Error: {str(e)}")
-    
+            self.send_error_response(500, str(e))
+
+    # ── Utilities ─────────────────────────────────────────────────────
+
     def find_container(self, name_pattern):
-        """Find a running Docker container by name pattern."""
+        """Return the first running Docker container whose name contains name_pattern."""
         try:
-            cmd = ['docker', 'ps', '--format', '{{.Names}}']
             result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=5,
-                encoding='utf-8',
-                errors='replace'
+                ['docker', 'ps', '--format', '{{.Names}}'],
+                capture_output=True, text=True, timeout=5,
+                encoding='utf-8', errors='replace',
             )
-            
             if result.returncode != 0:
                 return None
-            
-            containers = result.stdout.strip().split('\n')
-            for container in containers:
-                if name_pattern.lower() in container.lower():
-                    return container
-            
+            for name in result.stdout.strip().split('\n'):
+                if name_pattern.lower() in name.lower():
+                    return name
             return None
-        
         except Exception:
             return None
 
     def get_config_value(self, key):
-        """Read config value from process env or project .env file."""
+        """Read a config key from process env, then from the project .env file."""
         value = os.getenv(key)
         if value:
             return value.strip().strip('"').strip("'")
@@ -224,103 +335,44 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         return None
 
-    def _fetch_db_snapshot_via_docker(self, container):
-        cmd = [
-            'docker', 'exec', container,
-            'psql', '-U', 'postgres', '-d', 'mrag',
-            '-c', self.SNAPSHOT_SQL,
-            '-t', '-A'
-        ]
-
-        print(f"Executing: {' '.join(cmd[:4])}...")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding='utf-8',
-            errors='replace'
-        )
-
-        if result.returncode != 0:
-            raise RuntimeError(f"PostgreSQL error: {result.stderr}")
-
-        output = result.stdout.strip()
-        return output.split('\n')[0] if '\n' in output else output
-
-    def _fetch_db_snapshot_via_database_url(self, database_url):
-        import asyncio
-        import asyncpg
-
-        dsn = database_url.replace('postgresql+asyncpg://', 'postgresql://')
-
-        async def run_query():
-            conn = await asyncpg.connect(dsn)
-            try:
-                raw = await conn.fetchval(self.SNAPSHOT_SQL)
-                if raw is None:
-                    return {}
-                if isinstance(raw, str):
-                    return json.loads(raw)
-                if isinstance(raw, dict):
-                    return raw
-                return dict(raw)
-            finally:
-                await conn.close()
-
-        return asyncio.run(run_query())
-
-    def _parse_snapshot_json(self, output):
-        print(f"Received {len(output)} characters of data")
-        try:
-            return json.loads(output)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"JSON parse error: {str(e)}; First 200 chars: {output[:200]}")
-
-    def _normalize_snapshot(self, data):
-        for table in self.TABLE_NAMES:
-            if data.get(table) is None:
-                data[table] = []
-    
     def send_json_response(self, data):
-        """Send a JSON response."""
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
-    
+
     def send_error_response(self, code, message):
-        """Send an error response."""
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps({'error': message}).encode())
 
+    def log_message(self, fmt, *args):
+        # Suppress noisy GET /dashboard.html 200 lines; keep errors
+        if args and str(args[1]) not in ('200', '304'):
+            super().log_message(fmt, *args)
+
 
 def main():
-    """Start the dashboard server."""
-    port = 8080
-    
+    port = int(os.getenv('DASHBOARD_PORT', '8080'))
+
     print("=" * 60)
-    print("MRAG Database Dashboard Server")
+    print("MRAG Database Dashboard")
     print("=" * 60)
-    print(f"Starting server on http://localhost:{port}")
-    print(f"\nOpen dashboard.html in your browser, or visit:")
     print(f"  http://localhost:{port}/dashboard.html")
-    print("\nAPI Endpoints:")
-    print(f"  GET /api/db-snapshot          - Fetch all PostgreSQL tables")
-    print(f"  GET /api/qdrant-collections   - Fetch Qdrant collections")
-    print(f"  GET /api/container-status     - Check container status")
-    print("\nPress Ctrl+C to stop")
+    print()
+    print("  Auto-detects environment from DATABASE_URL in .env:")
+    print("    localhost  →  DEV  (Docker psql → asyncpg fallback)")
+    print("    remote     →  PROD (asyncpg direct)")
+    print()
+    print("  Press Ctrl+C to stop")
     print("=" * 60)
-    
+
     server = HTTPServer(('localhost', port), DashboardHandler)
-    
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n\nShutting down server...")
+        print("\nShutting down.")
         server.shutdown()
 
 

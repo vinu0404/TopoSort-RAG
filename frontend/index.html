@@ -4034,13 +4034,69 @@ chatMain.addEventListener('drop', (e) => {
 let _pendingDocIds = [];  // doc_ids being tracked for status
 let _docStatusSource = null;  // SSE EventSource for real-time updates
 
+async function _computeFileHash(file) {
+  const buf = await file.arrayBuffer();
+  const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function uploadFiles(fileList) {
   if (!currentUser) { authOverlay.classList.remove('hidden'); return; }
-  const form = new FormData();
-  for (const f of fileList) form.append('files', f);
 
-  uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" id="_uploading_temp"><span class="dot dot-pending"></span> Uploading ${fileList.length} file(s)…</div>`);
+  const files = Array.from(fileList);
+  if (!files.length) return;
+
+  uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" id="_uploading_temp"><span class="dot dot-pending"></span> Checking ${files.length} file(s)…</div>`);
   uploadBar.classList.add('visible');
+
+  // Compute SHA-256 for all files in parallel using Web Crypto API
+  const hashes = await Promise.all(files.map(f => _computeFileHash(f)));
+  const fileItems = files.map((f, i) => ({ hash: hashes[i], filename: f.name }));
+
+  // Pre-flight duplicate check
+  let duplicateMap = {};  // hash -> existing_filename
+  try {
+    const checkRes = await fetch(`${API}/documents/check-hash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ files: fileItems }),
+    });
+    if (checkRes.status === 401) { doLogout(); return; }
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      for (const dup of (checkData.duplicates || [])) {
+        duplicateMap[dup.hash] = dup.filename;
+      }
+    }
+  } catch (e) { /* network error on check — proceed with upload anyway */ }
+
+  // Show duplicate warnings and filter them out
+  const tempEl = document.getElementById('_uploading_temp');
+  if (tempEl) tempEl.remove();
+
+  const filesToUpload = [];
+  for (let i = 0; i < files.length; i++) {
+    const existingName = duplicateMap[hashes[i]];
+    if (existingName) {
+      uploadBar.insertAdjacentHTML('beforeend',
+        `<div class="doc-status" style="color:#e6a817">` +
+        `<span class="dot" style="background:#e6a817"></span>` +
+        `<span>"${files[i].name}" already uploaded as "${existingName}" — skipping</span></div>`);
+    } else {
+      filesToUpload.push(files[i]);
+    }
+  }
+
+  if (!filesToUpload.length) {
+    addSystemMessage('All selected files are already uploaded — nothing to do.');
+    fileInput.value = '';
+    return;
+  }
+
+  uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" id="_uploading_temp2"><span class="dot dot-pending"></span> Uploading ${filesToUpload.length} file(s)…</div>`);
+
+  const form = new FormData();
+  for (const f of filesToUpload) form.append('files', f);
 
   try {
     const r = await fetch(`${API}/documents/upload`, {
@@ -4050,29 +4106,28 @@ async function uploadFiles(fileList) {
     });
     if (r.status === 401) { doLogout(); return; }
     const data = await r.json();
+    const tempEl2 = document.getElementById('_uploading_temp2'); if (tempEl2) tempEl2.remove();
     if (!r.ok) {
-      const tempEl2 = document.getElementById('_uploading_temp'); if (tempEl2) tempEl2.remove();
-      uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${data.detail || 'Failed'}</div>`);
+      uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${data.detail || 'Upload failed'}</div>`);
+      fileInput.value = '';
       return;
     }
 
     // Render initial per-file status rows
     const docs = data.documents || [];
     _pendingDocIds = _pendingDocIds.concat(docs.map(d => d.doc_id));
-    const tempEl = document.getElementById('_uploading_temp');
-    if (tempEl) tempEl.remove();
     for (const d of docs) {
       uploadBar.insertAdjacentHTML('beforeend',
         `<div class="doc-status" data-docid="${d.doc_id}">` +
         `<span class="dot dot-${d.processing_status || d.status}"></span>` +
         `<span>${d.filename} — ${d.processing_status || d.status}</span></div>`);
     }
-    addSystemMessage(`${docs.length} file(s) queued for processing`);
+    if (docs.length) addSystemMessage(`${docs.length} file(s) queued for processing`);
 
     // Open SSE stream for real-time status updates
     startDocStatusSSE();
   } catch (err) {
-    const tempEl3 = document.getElementById('_uploading_temp'); if (tempEl3) tempEl3.remove();
+    const tempEl2 = document.getElementById('_uploading_temp2'); if (tempEl2) tempEl2.remove();
     uploadBar.insertAdjacentHTML('beforeend', `<div class="doc-status" style="color:#d9534f">${err.message}</div>`);
   }
   fileInput.value = '';

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# Apply any pending DB migrations before starting services
+python -m alembic upgrade head
+
 # Start Celery worker in background (document processing + scheduled job execution)
 python -m celery -A celery_app worker --loglevel=info --pool=threads --concurrency=4 &
 
