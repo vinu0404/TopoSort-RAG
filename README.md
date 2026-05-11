@@ -241,6 +241,7 @@ All endpoints (except auth and health) require a JWT token in the `Authorization
 | `GET` | `/agents` | No | List all registered agents and their capabilities. Returns `{ agents: [...] }`. |
 | `POST` | `/query` | JWT | Non-streaming query. Body: `{ query, session_id?, conversation_id?, model? }`. Returns `{ answer, sources, agents_used, session_id, conversation_id }`. The optional `model` field overrides the default LLM (e.g. `gpt-4o`, `claude-sonnet-4-20250514`, `gemini-2.0-flash`). |
 | `POST` | `/query/stream` | JWT | Streaming query via SSE. Same body as `/query`. Emits SSE events: `status`, `plan`, `hitl_required`, `token`, `sources`, `done`, `error`. |
+| `POST` | `/documents/check-hash` | JWT | Pre-upload duplicate check. Body: `{ files: [{hash, filename}, ...] }`. Returns `{ duplicates: [{hash, existing_filename, doc_id}] }`. No file bytes — hash only. |
 | `POST` | `/documents/upload` | JWT | Upload one or more files (PDF, DOCX, Excel, CSV, TXT, MD). Multipart form: `files`. Returns `{ documents: [{ doc_id, filename, status }] }`. Processing runs async via Celery. |
 | `GET` | `/documents/status` | JWT | List all documents and their processing status for the authenticated user. Returns `{ documents: [...] }`. |
 | `GET` | `/documents/status/stream` | JWT | SSE stream of real-time document processing status updates (Redis Pub/Sub). Events: `doc_status`. |
@@ -1586,6 +1587,75 @@ flowchart TD
     style Error fill:#f44336,color:#fff
     style Done fill:#4CAF50,color:#fff
 ```
+
+---
+
+## Duplicate File Detection — Content-Hash Pre-Check
+
+Before any bytes are uploaded, the frontend computes a SHA-256 hash of each selected file and asks the backend whether the user already has that content. Duplicate files are blocked **before** the upload, saving bandwidth, S3 storage, and Celery processing time.
+
+### How It Works
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend (Browser)
+    participant API as FastAPI
+    participant DB as PostgreSQL
+
+    User->>FE: Select file(s)
+
+    Note over FE: Web Crypto API — full arrayBuffer()<br/>crypto.subtle.digest('SHA-256', buf)<br/>All files hashed in parallel (Promise.all)
+
+    FE->>API: POST /documents/check-hash<br/>{ files: [{hash, filename}, ...] }
+    Note over FE,API: Hash only — no file bytes sent
+
+    API->>DB: SELECT doc_id, filename, file_hash<br/>WHERE user_id=? AND file_hash IN (?)<br/>AND processing_status != 'failed'
+    DB-->>API: Matching rows (if any)
+    API-->>FE: { duplicates: [{hash, existing_filename, doc_id}] }
+
+    alt Duplicates found
+        FE->>User: ⚠ Amber warning per file:<br/>"'report.pdf' already uploaded as 'old_report.pdf' — skipping"
+        Note over FE: Duplicate files removed from upload set
+    end
+
+    alt All files are duplicates
+        FE->>User: Toast — nothing to upload, abort
+    else At least one new file
+        FE->>API: POST /documents/upload<br/>(only non-duplicate files)
+        Note over API: Server computes SHA-256 during<br/>multipart S3 streaming — stores<br/>authoritative hash in DB
+    end
+```
+
+### Key Design Decisions
+
+| Decision | Reason |
+|----------|--------|
+| **Hash only in pre-check** | No wasted upload bandwidth on files that already exist |
+| **Frontend hash = UX, server hash = authoritative** | Frontend hash triggers pre-check warning. Server recomputes hash during S3 streaming — stored hash is always from the actual bytes received |
+| **Per-user deduplication only** | Hash check is scoped to `WHERE user_id = ?` — different users can upload the same file independently |
+| **Skip `failed` documents** | A failed processing attempt doesn't block re-upload of the same content |
+| **Web Crypto API** | Zero dependencies, runs natively in all modern browsers — no library needed |
+
+### Hash Storage
+
+The `documents` table has a `file_hash VARCHAR(64)` column with a partial index:
+
+```sql
+CREATE INDEX idx_documents_user_hash ON documents(user_id, file_hash)
+WHERE file_hash IS NOT NULL;
+```
+
+This makes the duplicate lookup a fast index scan even with thousands of documents per user.
+
+### Latency Breakdown
+
+| Step | Time | Notes |
+|------|------|-------|
+| Frontend SHA-256 hash | ~50–200 ms/file | Depends on file size; all files hashed in parallel |
+| `POST /documents/check-hash` | ~20–50 ms | Index scan, returns immediately |
+| **Total pre-check overhead** | **~70–250 ms** | One-time cost before upload begins |
+| Upload saved on duplicate | Full upload time | For a 10 MB PDF: saves ~500 ms–2 s of S3 multipart streaming |
 
 ---
 
