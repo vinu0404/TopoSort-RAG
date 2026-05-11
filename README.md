@@ -1661,7 +1661,7 @@ This makes the duplicate lookup a fast index scan even with thousands of documen
 
 ## RAG Document Pipeline — How Documents Are Processed
 
-Document processing is **fully asynchronous**. The upload endpoint **uploads to S3 first** (ensuring file durability), saves a DB record with `storage_key`, then dispatches a **Celery task** per file via **Redis** with only the `storage_key` (not file bytes). Each Celery worker **downloads from S3** and runs the heavy pipeline (parsing, chunking, embedding). Multiple workers process files **in parallel**. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
+Document processing is **fully asynchronous**. The upload endpoint streams all files to S3 **concurrently** using multipart upload (5 MB parts — RAM usage stays ~5 MB per file regardless of file size), computes a **SHA-256 hash** of each file during streaming, saves DB records with `storage_key` and `file_hash`, then dispatches a **Celery task** per file via **Redis** with only the `storage_key` (not file bytes). Each Celery worker **downloads from S3** and runs the heavy pipeline (parsing, chunking, embedding). Multiple workers process files **in parallel**. Real-time status updates (`pending → processing → ready / failed`) are pushed to the frontend via **Redis Pub/Sub → SSE**.
 
 ### Upload & Storage Flow
 
@@ -1671,9 +1671,14 @@ flowchart TD
 
     Upload --> API["FastAPI upload endpoint<br/><i>POST /documents/upload</i>"]
 
-    API --> S3Upload["Upload to S3<br/><i>Backblaze B2 / AWS S3 / MinIO</i><br/>key: uploads/{user_id}/{doc_id}/{filename}"]
+    API --> S3Parallel
 
-    S3Upload --> DB["Save DB record per file<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type</i>"]
+    subgraph S3Parallel["asyncio.gather — all files streamed concurrently"]
+        direction LR
+        S3Upload["Multipart S3 upload per file<br/><i>5 MB parts · ThreadPoolExecutor<br/>SHA-256 computed during streaming<br/>~5 MB RAM per file</i>"]
+    end
+
+    S3Parallel --> DB["Save DB record per file<br/><i>status=pending, storage_key,<br/>storage_bucket, file_size_bytes,<br/>content_type, file_hash</i>"]
 
     DB -->|"Celery .delay() per file<br/>(storage_key only — no file bytes)"| Queue["Redis Task Queue<br/><i>broker — one task per file</i>"]
 
