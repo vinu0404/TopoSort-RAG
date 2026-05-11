@@ -363,6 +363,15 @@ class RecomposeRequest(BaseModel):
     model: str  # required — the model to recompose with
 
 
+class HashFileItem(BaseModel):
+    hash: str
+    filename: str
+
+
+class HashCheckRequest(BaseModel):
+    files: List[HashFileItem]
+
+
 class MasterAgentInput(BaseModel):
     query_id: str
     user_id: str

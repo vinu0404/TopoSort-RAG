@@ -100,11 +100,13 @@ CREATE TABLE IF NOT EXISTS documents (
     storage_bucket  VARCHAR(128),            -- bucket name
     file_size_bytes BIGINT,                  -- original file size
     content_type    VARCHAR(128),            -- MIME type (application/pdf, ...)
+    file_hash       VARCHAR(64),             -- SHA-256 of file content for deduplication
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_user   ON documents(user_id);
-CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(user_id, processing_status);
+CREATE INDEX IF NOT EXISTS idx_documents_user      ON documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_status    ON documents(user_id, processing_status);
+CREATE INDEX IF NOT EXISTS idx_documents_user_hash ON documents(user_id, file_hash) WHERE file_hash IS NOT NULL;
 
 -- Web scrape collections ────────────────────────────────────────────────────
 

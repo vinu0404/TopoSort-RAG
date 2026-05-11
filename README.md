@@ -111,7 +111,42 @@ CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
 ```
 
-### 4. Start the Backend (FastAPI)
+### 4. Apply Database Migrations (Alembic)
+
+Migrations live in `alembic/versions/`. Run them once after first setup, and again whenever the schema changes.
+
+```bash
+# First-time setup only — tells Alembic the existing schema is the baseline
+uv run python -m alembic stamp base
+
+# Apply all pending migrations (creates/alters tables)
+uv run python -m alembic upgrade head
+```
+
+**Everyday workflow** — after changing a model in `database/models.py`:
+
+```bash
+# 1. Edit database/models.py
+# 2. Auto-generate a migration from the diff
+uv run python -m alembic revision --autogenerate -m "describe your change"
+
+# 3. Review the generated file in alembic/versions/ — always check before applying
+# 4. Apply it
+uv run python -m alembic upgrade head
+```
+
+**Other useful commands:**
+
+```bash
+uv run python -m alembic current           # which revision the DB is at
+uv run python -m alembic history           # full migration history
+uv run python -m alembic upgrade head --sql  # preview SQL without running it
+uv run python -m alembic downgrade -1      # roll back one migration
+```
+
+> **Note:** `alembic.ini` reads `DATABASE_URL` from your `.env` via `config/settings.py` — no separate DB URL config needed.
+
+### 5. Start the Backend (FastAPI)
 
 ```bash
 python main.py
@@ -119,7 +154,7 @@ python main.py
 
 The server starts on **http://localhost:8000**. The frontend is served at the root (`/`), and the API docs are at `/docs`.
 
-### 5. Start the Celery Worker (Document Processing)
+### 6. Start the Celery Worker (Document Processing)
 
 In a **separate terminal** (with the venv activated):
 
@@ -142,7 +177,7 @@ The Celery worker processes uploaded documents asynchronously. Without it, file 
 - `max_retries=3` — automatic retry with exponential backoff
 - `rate_limit=20/m` — prevents embedding API throttling
 
-### 6. Start Celery Beat (Scheduled Jobs)
+### 7. Start Celery Beat (Scheduled Jobs)
 
 In a **separate terminal** (with the venv activated):
 
@@ -153,7 +188,7 @@ celery -A celery_app beat --scheduler=redbeat.RedBeatScheduler --loglevel=info
 
 Without Beat running, scheduled jobs will be created and stored in the database, but they will **not** fire at their cron times. You can still trigger them manually via the API or UI.
 
-### 7. Start the Admin Dashboard (Optional)
+### 8. Start the Admin Dashboard (Optional)
 
 In a **separate terminal**:
 
@@ -170,8 +205,9 @@ The dashboard connects to PostgreSQL via Docker and displays all database tables
 
 ```
 Terminal 1:  docker compose up -d
-Terminal 2:  python main.py                                    # FastAPI  → :8000
-Terminal 3:  python -m celery -A celery_app worker --pool=solo # Celery   → processes uploads + jobs
+             uv run python -m alembic upgrade head             # Migrations → apply schema
+Terminal 2:  python main.py                                    # FastAPI   → :8000
+Terminal 3:  python -m celery -A celery_app worker --pool=solo # Celery    → processes uploads + jobs
 Terminal 4:  celery -A celery_app beat --scheduler=redbeat.RedBeatScheduler  # Beat → cron triggers
 Terminal 5:  cd frontend && python dashboard.py                # Dashboard → :8080  (optional)
 ```

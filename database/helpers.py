@@ -604,6 +604,7 @@ async def save_document_record(
     storage_bucket: str | None = None,
     file_size_bytes: int | None = None,
     content_type: str | None = None,
+    file_hash: str | None = None,
 ) -> None:
     """Persist document metadata to the ``documents`` table."""
     uid = _to_uuid(user_id)
@@ -623,9 +624,41 @@ async def save_document_record(
             storage_bucket=storage_bucket,
             file_size_bytes=file_size_bytes,
             content_type=content_type,
+            file_hash=file_hash,
         )
     )
     await session.flush()
+
+
+async def check_document_hashes(
+    session: AsyncSession,
+    user_id: str,
+    hashes: list[str],
+) -> list[dict]:
+    """Return documents whose file_hash matches any of the given hashes for this user.
+
+    Only considers documents that are not permanently failed (i.e., pending,
+    processing, or ready) so a re-upload after a failed ingestion is allowed.
+    """
+    from sqlalchemy import select
+
+    if not hashes:
+        return []
+
+    uid = _to_uuid(user_id)
+    stmt = (
+        select(Document.doc_id, Document.filename, Document.file_hash)
+        .where(
+            Document.user_id == uid,
+            Document.file_hash.in_(hashes),
+            Document.processing_status != "failed",
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {"hash": row.file_hash, "filename": str(row.filename), "doc_id": str(row.doc_id)}
+        for row in rows
+    ]
 
 
 async def get_document_for_user(

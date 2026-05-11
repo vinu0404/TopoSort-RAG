@@ -31,19 +31,24 @@ celery = Celery(
     backend=config.celery_result_backend,
 )
 
+import os as _os
+
 celery.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    task_acks_late=True,                 
-    worker_prefetch_multiplier=1,        
-    task_reject_on_worker_lost=True,     
-    result_expires=3600,                 
-    task_soft_time_limit=300,           
-    task_time_limit=360,                  
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    task_reject_on_worker_lost=True,
+    result_expires=3600,
+    task_soft_time_limit=300,
+    task_time_limit=360,
     task_default_retry_delay=10,
     task_max_retries=3,
-    worker_concurrency=4,                 
+    # I/O-bound pipeline — 2× CPU count exploits thread-level parallelism
+    worker_concurrency=_os.cpu_count() * 2,
+    # Recycle workers after N tasks to prevent memory accumulation from large docs
+    worker_max_tasks_per_child=50,
 )
 
 celery.conf.update(

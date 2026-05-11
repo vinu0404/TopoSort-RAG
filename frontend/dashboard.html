@@ -78,6 +78,13 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--text4); transition: all 0.3s;
   }
+  .env-badge {
+    font-size: 0.62rem; font-weight: 600; letter-spacing: 0.6px;
+    padding: 3px 8px; border-radius: 4px; text-transform: uppercase;
+    border: 1px solid var(--border2);
+  }
+  .env-badge.dev  { color: var(--amber); background: var(--amber-bg); border-color: rgba(245,158,11,0.3); }
+  .env-badge.prod { color: var(--accent); background: var(--accent-bg); border-color: var(--accent-b); }
   .status-pill.connected .sdot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
   .status-pill.error .sdot { background: var(--red); box-shadow: 0 0 6px var(--red); }
 
@@ -479,6 +486,7 @@
   <div class="topbar-sep"></div>
   <span class="topbar-label">Admin Dashboard</span>
   <div class="topbar-right">
+    <span class="env-badge" id="envBadge" style="display:none"></span>
     <div class="status-pill" id="statusPill">
       <span class="sdot"></span>
       <span id="statusLabel">Connecting…</span>
@@ -586,26 +594,32 @@
 // ═════════════════════════════════════════════════════════════════
 // Constants
 // ═════════════════════════════════════════════════════════════════
-const TABLES = [
-  { name: 'users',                  icon: '👤' },
-  { name: 'sessions',               icon: '🔗' },
-  { name: 'conversations',          icon: '💬' },
-  { name: 'messages',               icon: '📨' },
-  { name: 'agent_executions',       icon: '🤖' },
-  { name: 'documents',              icon: '📄' },
-  { name: 'conversation_summaries', icon: '📝' },
-  { name: 'user_long_term_memory',  icon: '🧠' },
-  { name: 'hitl_requests',           icon: '✋' },
-  { name: 'user_connections',         icon: '🔗' },
-  { name: 'personas',                icon: '🎭' },
-  { name: 'web_scrape_collections', icon: '🌐' },
-  { name: 'web_scrape_urls',        icon: '🔗' },
-  { name: 'scheduled_jobs',         icon: '⏰' },
-  { name: 'scheduled_job_steps',    icon: '📋' },
-  { name: 'scheduled_job_runs',     icon: '▶️' },
-  { name: 'scheduled_job_step_results', icon: '📊' },
-  { name: 'artifacts',                icon: '📎' },
-];
+// Icon map — add entries here for any new table; unknown tables get the default.
+const TABLE_ICON_MAP = {
+  users:                     '👤',
+  sessions:                  '🔗',
+  conversations:             '💬',
+  messages:                  '📨',
+  agent_executions:          '🤖',
+  documents:                 '📄',
+  conversation_summaries:    '📝',
+  user_long_term_memory:     '🧠',
+  hitl_requests:             '✋',
+  user_connections:          '🔌',
+  personas:                  '🎭',
+  web_scrape_collections:    '🌐',
+  web_scrape_urls:           '🔗',
+  scheduled_jobs:            '⏰',
+  scheduled_job_steps:       '📋',
+  scheduled_job_runs:        '▶️',
+  scheduled_job_step_results:'📊',
+  artifacts:                 '📎',
+};
+const TABLE_ICON_DEFAULT = '🗄️';
+
+// TABLES is populated dynamically from the /api/db-snapshot response.
+// Adding a new table via Alembic migration requires zero changes here.
+let TABLES = [];
 
 const BACKEND = window.location.origin;
 const PAGE_SIZE = 50;
@@ -630,8 +644,35 @@ window.addEventListener('DOMContentLoaded', autoConnect);
 
 async function autoConnect() {
   setStatus('connecting');
+  // Fetch env mode + db snapshot in parallel
+  const [statusRes, snapshotRes] = await Promise.allSettled([
+    fetch(`${BACKEND}/api/container-status`),
+    fetch(`${BACKEND}/api/db-snapshot`),
+  ]);
+
+  // Show env badge if we got status info
+  if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
+    try {
+      const s = await statusRes.value.json();
+      const badge = document.getElementById('envBadge');
+      if (s.env_mode) {
+        badge.textContent = s.env_mode.toUpperCase();
+        badge.className = `env-badge ${s.env_mode}`;
+        badge.title = s.env_mode === 'dev'
+          ? `Local DB · ${s.db?.database} via ${s.db?.using}`
+          : `Remote DB · ${s.db?.host} · ${s.db?.database}`;
+        badge.style.display = '';
+      }
+    } catch (_) {}
+  }
+
+  if (snapshotRes.status === 'rejected') {
+    setStatus('error');
+    showConnError(snapshotRes.reason?.message || 'Network error');
+    return;
+  }
   try {
-    const r = await fetch(`${BACKEND}/api/db-snapshot`);
+    const r = snapshotRes.value;
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
@@ -643,22 +684,33 @@ async function autoConnect() {
 }
 
 function ingestData(payload) {
+  // Build TABLES from the server-returned list — no hardcoded names needed.
+  const tableNames = Array.isArray(payload.tables) && payload.tables.length
+    ? payload.tables
+    : Object.keys(payload).filter(k => Array.isArray(payload[k]));
+
+  TABLES = tableNames.map(name => ({
+    name,
+    icon: TABLE_ICON_MAP[name] || TABLE_ICON_DEFAULT,
+  }));
+
   DB = {};
   for (const t of TABLES) DB[t.name] = Array.isArray(payload[t.name]) ? payload[t.name] : [];
+
   setStatus('connected');
   document.getElementById('connectScreen').style.display = 'none';
   document.getElementById('mainLayout').style.display = 'flex';
   buildSidebar();
   buildSummary();
   const first = TABLES.find(t => DB[t.name].length > 0) || TABLES[0];
-  selectTable(first.name);
+  if (first) selectTable(first.name);
 }
 
 function showConnError(msg) {
   document.getElementById('connectScreen').innerHTML = `
     <h2 style="color:var(--red)">Connection Failed</h2>
     <p style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:0.7rem;white-space:pre-wrap;max-width:480px;">${esc(msg)}</p>
-    <div class="hint-box" style="margin-top:8px;">Start FastAPI and open <code>/api/dashboard</code></div>
+    <div class="hint-box" style="margin-top:8px;">Make sure <code>DATABASE_URL</code> is set in <code>.env</code> and run <code>python frontend/dashboard.py</code></div>
     <button class="tb-btn" onclick="autoConnect()" style="padding:10px 28px;margin-top:16px;font-size:0.78rem;">↻ Retry</button>
   `;
 }

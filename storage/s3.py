@@ -8,15 +8,21 @@ which cloud provider is behind it.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import re
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, TYPE_CHECKING
 
 import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 from config.settings import config
+
+if TYPE_CHECKING:
+    from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +112,129 @@ def upload_file(
                 len(file_bytes), bucket, storage_key)
 
     return {"bucket": bucket, "key": storage_key, "size": len(file_bytes)}
+
+
+# ── Multipart streaming upload ───────────────────────────────────────────────
+
+# S3 minimum part size is 5 MB (except for the last part).
+# We read the file in 1 MB chunks and accumulate until we hit 5 MB,
+# then flush a part — keeping RAM usage to ~5 MB per file regardless of size.
+_PART_SIZE = 5 * 1024 * 1024   # 5 MB
+_READ_CHUNK = 1 * 1024 * 1024  # 1 MB read granularity
+
+
+async def multipart_upload_file(
+    f: "UploadFile",
+    storage_key: str,
+    content_type: str = "application/octet-stream",
+    bucket: str | None = None,
+    executor: ThreadPoolExecutor | None = None,
+) -> tuple[str, int]:
+    """Stream an UploadFile to S3 using multipart upload.
+
+    Never holds the full file in memory — only one 5 MB part at a time.
+    S3 part uploads run in a thread-pool executor so the event loop stays free
+    to handle other requests / interleave concurrent file streams.
+
+    Returns:
+        (sha256_hex, total_bytes_written)
+
+    Raises:
+        ValueError: if the file is empty (0 bytes).
+        ClientError: on any S3 API failure (multipart upload is aborted first).
+    """
+    bucket = bucket or config.s3_bucket
+    client = _get_client()
+    loop = asyncio.get_running_loop()
+
+    hasher = hashlib.sha256()
+    total_size = 0
+    buffer = bytearray()
+    parts: list[dict] = []
+    part_number = 1
+
+    # Initiate multipart upload — get the upload_id that ties all parts together
+    mpu = await loop.run_in_executor(
+        executor,
+        lambda: client.create_multipart_upload(
+            Bucket=bucket, Key=storage_key, ContentType=content_type
+        ),
+    )
+    upload_id = mpu["UploadId"]
+
+    async def _flush_part(data: bytes, pn: int) -> dict:
+        resp = await loop.run_in_executor(
+            executor,
+            lambda: client.upload_part(
+                Bucket=bucket,
+                Key=storage_key,
+                UploadId=upload_id,
+                PartNumber=pn,
+                Body=data,
+            ),
+        )
+        return {"PartNumber": pn, "ETag": resp["ETag"]}
+
+    async def _abort():
+        try:
+            await loop.run_in_executor(
+                executor,
+                lambda: client.abort_multipart_upload(
+                    Bucket=bucket, Key=storage_key, UploadId=upload_id
+                ),
+            )
+        except Exception:
+            logger.warning("Failed to abort multipart upload %s", upload_id)
+
+    try:
+        # Stream: read 1 MB chunks, accumulate into 5 MB parts, upload each part
+        while True:
+            chunk = await f.read(_READ_CHUNK)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            total_size += len(chunk)
+            buffer.extend(chunk)
+
+            # Flush full 5 MB parts as they accumulate
+            while len(buffer) >= _PART_SIZE:
+                part_data = bytes(buffer[:_PART_SIZE])
+                del buffer[:_PART_SIZE]
+                parts.append(await _flush_part(part_data, part_number))
+                part_number += 1
+
+        if total_size == 0:
+            await _abort()
+            raise ValueError(f"File is empty: {storage_key}")
+
+        # Upload remaining bytes as the final part (may be < 5 MB — S3 allows this)
+        if buffer:
+            parts.append(await _flush_part(bytes(buffer), part_number))
+
+        # Seal the multipart upload
+        await loop.run_in_executor(
+            executor,
+            lambda: client.complete_multipart_upload(
+                Bucket=bucket,
+                Key=storage_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            ),
+        )
+
+    except Exception:
+        await _abort()
+        raise
+
+    logger.info(
+        "Multipart upload complete: %s (%d bytes, %d part(s)) → s3://%s/%s",
+        storage_key.rsplit("/", 1)[-1],
+        total_size,
+        len(parts),
+        bucket,
+        storage_key,
+    )
+    return hasher.hexdigest(), total_size
 
 
 # ── Download ──────────────────────────────────────────────────────────────────

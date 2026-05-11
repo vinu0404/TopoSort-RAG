@@ -137,6 +137,7 @@ class Document(Base):
     storage_bucket = Column(String(128))
     file_size_bytes = Column(BigInteger)
     content_type = Column(String(128))
+    file_hash = Column(String(64))
     uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="documents")
